@@ -19,6 +19,7 @@ use smithay::backend::renderer::element::memory::{
     MemoryRenderBuffer, MemoryRenderBufferRenderElement,
 };
 use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::utils::{Buffer, RendererSurfaceStateUserData};
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::{Event as SessionEvent, Session};
 use smithay::backend::udev::{self, UdevBackend, UdevEvent};
@@ -31,6 +32,7 @@ use smithay::reexports::drm::control::{Device as _, Mode, ModeTypeFlags, connect
 use smithay::reexports::input::Libinput;
 use smithay::reexports::rustix::fs::OFlags;
 use smithay::utils::{DeviceFd, Point, SERIAL_COUNTER, Scale, Size, Transform};
+use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke};
 
 use crate::render::LiviElement;
@@ -84,6 +86,10 @@ struct Output {
     frame_pending: bool,
     direct: usize,
     needs_redraw: bool,
+    /// Client buffers the queued frame was rendered from, released on its vblank. Some drivers attach no
+    /// implicit fences to dma-bufs (e.g. a V4L2 stateless decoder feeding a PowerVR GPU), so a buffer handed
+    /// back to the client right after queue_frame can be overwritten while the GPU still samples it.
+    held: Vec<Buffer>,
 }
 
 impl Output {
@@ -549,6 +555,7 @@ fn light(
         frame_pending: false,
         direct: 0,
         needs_redraw: true,
+        held: Vec::new(),
     };
     let (lw, lh) = output.logical();
     drm.outputs.push(output);
@@ -681,6 +688,7 @@ fn session_event(state: &mut LiviState, event: SessionEvent) {
                     log::error!("{} did not reset: {e}", output.connector);
                 }
                 output.frame_pending = false;
+                output.held.clear();
                 output.needs_redraw = true;
             }
             rescan(state);
@@ -700,6 +708,7 @@ fn vblank(state: &mut LiviState, crtc: crtc::Handle) {
         log::error!("frame not submitted: {e}");
     }
     output.frame_pending = false;
+    output.held.clear();
     if output.needs_redraw {
         let idx = output.screen_idx;
         render(state, idx);
@@ -729,6 +738,31 @@ pub fn pump(state: &mut LiviState) {
     }
 }
 
+/// Buffers currently attached to the surfaces (and subsurfaces) shown on a screen.
+fn attached_buffers(state: &LiviState, screen_idx: usize) -> Vec<Buffer> {
+    let mut buffers = Vec::new();
+    for t in state
+        .toplevels
+        .iter()
+        .filter(|t| t.screen_idx == screen_idx)
+    {
+        with_surface_tree_downward(
+            t.toplevel.wl_surface(),
+            (),
+            |_, _, _| TraversalAction::DoChildren(()),
+            |_, states, _| {
+                if let Some(data) = states.data_map.get::<RendererSurfaceStateUserData>()
+                    && let Some(buffer) = data.lock().unwrap().buffer()
+                {
+                    buffers.push(buffer.clone());
+                }
+            },
+            |_, _, _| true,
+        );
+    }
+    buffers
+}
+
 pub fn render(state: &mut LiviState, screen_idx: usize) {
     let ready = state.drm.as_ref().is_some_and(|d| {
         d.active
@@ -740,6 +774,7 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
         return;
     }
     let mut parts = crate::render::frame_parts(state, screen_idx);
+    let held = attached_buffers(state, screen_idx);
     let screen_x = state.screens[screen_idx].x as f64;
     let (Some(drm), Some(renderer)) = (state.drm.as_mut(), state.renderer.as_mut()) else {
         return;
@@ -808,6 +843,7 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
     };
     if flipped {
         output.frame_pending = true;
+        output.held = held;
         crate::host::send_frame_callbacks(state);
         return;
     }
