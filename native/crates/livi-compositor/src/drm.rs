@@ -19,14 +19,15 @@ use smithay::backend::renderer::element::memory::{
     MemoryRenderBuffer, MemoryRenderBufferRenderElement,
 };
 use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::sync::SyncPoint;
 use smithay::backend::renderer::utils::{Buffer, RendererSurfaceStateUserData};
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::{Event as SessionEvent, Session};
 use smithay::backend::udev::{self, UdevBackend, UdevEvent};
 use smithay::input::keyboard::{FilterResult, Keysym};
 use smithay::output::OutputModeSource;
-use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay::reexports::calloop::{LoopHandle, channel};
 use smithay::reexports::drm::control::property::ValueType;
 use smithay::reexports::drm::control::{Device as _, Mode, ModeTypeFlags, connector, crtc};
 use smithay::reexports::input::Libinput;
@@ -55,6 +56,8 @@ pub struct DrmState {
     formats: FormatSet,
     import_node: Option<DrmNode>,
     loop_handle: LoopHandle<'static, LiviState>,
+    // frames whose GPU work is still running go here; a thread waits for them and hands them back to the loop
+    gpu_wait: std::sync::mpsc::Sender<(crtc::Handle, SyncPoint)>,
     connectors: Vec<Connector>,
     outputs: Vec<Output>,
     wanted: BTreeSet<usize>,
@@ -91,6 +94,8 @@ struct Output {
     transform: Transform,
     surface: Surface,
     frame_pending: bool,
+    // rendered, waiting for the GPU to finish before it goes to the display
+    drawing: bool,
     direct: usize,
     needs_redraw: bool,
     /// Client buffers the queued frame was rendered from, released on its vblank. Some drivers attach no
@@ -196,6 +201,8 @@ fn start(
     state.seat.add_touch();
 
     let connectors = connectors(&device, false);
+    let gpu_wait = gpu_waiter(handle)?;
+
     log::info!("driving the displays directly on seat {seat}");
     Ok(DrmState {
         session,
@@ -205,6 +212,7 @@ fn start(
         formats,
         import_node,
         loop_handle: handle.clone(),
+        gpu_wait,
         connectors,
         outputs: Vec::new(),
         wanted: BTreeSet::from([0]),
@@ -216,6 +224,33 @@ fn start(
         splash_until: Some(Instant::now() + SPLASH_WAIT),
         splash_timer: false,
     })
+}
+
+/// Waits for the GPU off the event loop: without a fence the display could take, a frame may only be flipped once the
+/// GPU has drawn it (see `render`), and waiting in the loop would hold back input and clients for as long.
+fn gpu_waiter(
+    handle: &LoopHandle<'static, LiviState>,
+) -> Result<std::sync::mpsc::Sender<(crtc::Handle, SyncPoint)>, Box<dyn std::error::Error>> {
+    let (done, finished) = channel::channel::<crtc::Handle>();
+    handle
+        .insert_source(finished, |event, _, state: &mut LiviState| {
+            if let channel::Event::Msg(crtc) = event {
+                drawn(state, crtc);
+            }
+        })
+        .map_err(|e| e.error)?;
+    let (wait, frames) = std::sync::mpsc::channel::<(crtc::Handle, SyncPoint)>();
+    std::thread::Builder::new()
+        .name("gpu-wait".into())
+        .spawn(move || {
+            for (crtc, sync) in frames {
+                let _ = sync.wait();
+                if done.send(crtc).is_err() {
+                    break;
+                }
+            }
+        })?;
+    Ok(wait)
 }
 
 fn open_device(
@@ -564,6 +599,7 @@ fn light(
         transform,
         surface,
         frame_pending: false,
+        drawing: false,
         direct: 0,
         needs_redraw: true,
         held: Vec::new(),
@@ -700,6 +736,7 @@ fn session_event(state: &mut LiviState, event: SessionEvent) {
                 }
                 output.frame_pending = false;
                 output.held.clear();
+                output.drawing = false;
                 output.needs_redraw = true;
             }
             rescan(state);
@@ -726,6 +763,24 @@ fn vblank(state: &mut LiviState, crtc: crtc::Handle) {
     }
 }
 
+/// The GPU has drawn the frame `render` left on `crtc`: it goes to the display now.
+fn drawn(state: &mut LiviState, crtc: crtc::Handle) {
+    let Some(drm) = state.drm.as_mut() else {
+        return;
+    };
+    // gone or reset in the meantime (e.g. after a VT switch): nothing waits for this frame any more
+    let Some(output) = drm.outputs.iter_mut().find(|o| o.crtc == crtc && o.drawing) else {
+        return;
+    };
+    output.drawing = false;
+    if let Err(e) = output.surface.queue_frame(()) {
+        log::error!("display flip: {e}");
+        return;
+    }
+    output.frame_pending = true;
+    crate::host::send_frame_callbacks(state);
+}
+
 pub fn damage(state: &mut LiviState) {
     if let Some(drm) = state.drm.as_mut() {
         for output in &mut drm.outputs {
@@ -741,7 +796,7 @@ pub fn pump(state: &mut LiviState) {
     let due: Vec<usize> = drm
         .outputs
         .iter()
-        .filter(|o| o.needs_redraw && !o.frame_pending)
+        .filter(|o| o.needs_redraw && !o.frame_pending && !o.drawing)
         .map(|o| o.screen_idx)
         .collect();
     for idx in due {
@@ -844,9 +899,9 @@ fn keep_splash(state: &mut LiviState, screen_idx: usize) -> bool {
 pub fn render(state: &mut LiviState, screen_idx: usize) {
     let ready = state.drm.as_ref().is_some_and(|d| {
         d.active
-            && d.outputs
-                .iter()
-                .any(|o| o.screen_idx == screen_idx && !o.frame_pending && o.needs_redraw)
+            && d.outputs.iter().any(|o| {
+                o.screen_idx == screen_idx && !o.frame_pending && !o.drawing && o.needs_redraw
+            })
     });
     if !ready || state.renderer.is_none() {
         return;
@@ -895,15 +950,6 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
     {
         Ok(frame) if frame.is_empty => false,
         Ok(frame) => {
-            // Without a fence the display takes for the GPU's work (no syncobj support in the display driver, or no
-            // fence fd from EGL), the flip must wait until the GPU has drawn the frame; otherwise the display may show
-            // the buffer half drawn, with parts of what it held frames ago. Only implicit sync in the kernel would
-            // cover it, and not every GPU driver puts fences on its buffers (PowerVR's DDK does not).
-            if frame.needs_sync()
-                && let PrimaryPlaneElement::Swapchain(element) = &frame.primary_element
-            {
-                let _ = element.sync.wait();
-            }
             let direct = frame.overlay_elements.len()
                 + usize::from(matches!(
                     frame.primary_element,
@@ -917,6 +963,26 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
                     elements.len()
                 );
                 output.direct = direct;
+            }
+            // Without a fence the display takes for the GPU's work (no syncobj support in the display driver, or no
+            // fence fd from EGL), the flip must wait until the GPU has drawn the frame; otherwise the display may show
+            // the buffer half drawn, with parts of what it held frames ago. Only implicit sync in the kernel would
+            // cover it, and not every GPU driver puts fences on its buffers (PowerVR's DDK does not).
+            if frame.needs_sync()
+                && let PrimaryPlaneElement::Swapchain(element) = &frame.primary_element
+                && !element.sync.is_reached()
+            {
+                if drm
+                    .gpu_wait
+                    .send((output.crtc, element.sync.clone()))
+                    .is_ok()
+                {
+                    output.drawing = true;
+                    // the GPU reads them now; released on the vblank after the flip in `drawn`
+                    output.held = held;
+                    return;
+                }
+                let _ = element.sync.wait();
             }
             match output.surface.queue_frame(()) {
                 Ok(()) => true,
