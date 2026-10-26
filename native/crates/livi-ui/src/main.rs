@@ -379,7 +379,8 @@ fn follow_core(weak: Weak<AppWindow>) -> impl FnMut(Event, &Value) + Send + 'sta
             updates.into_iter().for_each(|u| apply(&ui, u));
             sync_plugin(&ui);
             if !STATE_READY.get()
-                && CLIENT.with_borrow(|c| c.as_ref().is_some_and(|c| c.state()["config"].is_object()))
+                && CLIENT
+                    .with_borrow(|c| c.as_ref().is_some_and(|c| c.state()["config"].is_object()))
             {
                 debug::trace("state complete");
                 STATE_READY.set(true);
@@ -417,7 +418,11 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
             else {
                 return;
             };
-            let j = if step == "next" { (i + 1) % n } else { (i + n - 1) % n };
+            let j = if step == "next" {
+                (i + 1) % n
+            } else {
+                (i + n - 1) % n
+            };
             if let Some(t) = tabs.row_data(j) {
                 ui.set_plugin_page_id(t.plugin.clone());
                 choose(&ui, t.page);

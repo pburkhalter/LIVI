@@ -14,7 +14,9 @@ use std::time::Instant;
 
 use serde_json::Value as Json;
 use slint::{ComponentFactory, Image, Model, ModelRc, SharedString, VecModel};
-use slint_interpreter::{ComponentDefinition, ComponentHandle, ComponentInstance, Compiler, Struct, Value};
+use slint_interpreter::{
+    Compiler, ComponentDefinition, ComponentHandle, ComponentInstance, Struct, Value,
+};
 
 use crate::{AppWindow, Page, PhoneState, TabData, Theme};
 
@@ -86,7 +88,10 @@ fn block_on<F: Future>(fut: F) -> F::Output {
 }
 
 fn text(v: &Json, key: &str) -> Option<String> {
-    v[key].as_str().filter(|s| !s.is_empty()).map(str::to_string)
+    v[key]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// `LIVI --check-plugin <folder>`: compiles a plugin without starting LIVI and reports what is wrong with it.
@@ -112,7 +117,8 @@ pub fn load() {
 fn compile(dir: &Path) -> Result<Plugin, String> {
     let started = Instant::now();
     let manifest: Json = serde_json::from_str(
-        &std::fs::read_to_string(dir.join("plugin.json")).map_err(|e| format!("plugin.json: {e}"))?,
+        &std::fs::read_to_string(dir.join("plugin.json"))
+            .map_err(|e| format!("plugin.json: {e}"))?,
     )
     .map_err(|e| format!("plugin.json: {e}"))?;
     let api = manifest["api"].as_i64().unwrap_or(0);
@@ -123,7 +129,10 @@ fn compile(dir: &Path) -> Result<Plugin, String> {
     let name = text(&manifest, "name").unwrap_or_else(|| file.clone());
 
     let mut compiler = Compiler::default();
-    compiler.set_library_paths(HashMap::from([("livi".to_string(), PathBuf::from(API_DIR))]));
+    compiler.set_library_paths(HashMap::from([(
+        "livi".to_string(),
+        PathBuf::from(API_DIR),
+    )]));
     compiler.set_file_loader(|path: &Path| {
         let ours = path == Path::new(API_DIR).join("api.slint");
         Box::pin(async move { ours.then(|| Ok(API_SOURCE.to_string())) })
@@ -150,7 +159,8 @@ fn compile(dir: &Path) -> Result<Plugin, String> {
     let mut pages = Vec::new();
     for p in manifest["pages"].as_array().into_iter().flatten() {
         let id = text(p, "id").ok_or("a page without \"id\"")?;
-        let component = component(&text(p, "component").ok_or(format!("page {id} names no \"component\""))?)?;
+        let component =
+            component(&text(p, "component").ok_or(format!("page {id} names no \"component\""))?)?;
         let icon = text(p, "icon")
             .and_then(|i| Image::load_from_path(&dir.join(i)).ok())
             .unwrap_or_default();
@@ -283,7 +293,7 @@ pub fn install(ui: &AppWindow, on_action: impl Fn(&str, &str) + 'static) {
 pub fn show_page(ui: &AppWindow) {
     if let Some(p) = plugin() {
         let path = current_path(ui);
-        ui.set_plugin_bars_hidden(p.fullscreen.iter().any(|f| *f == path));
+        ui.set_plugin_bars_hidden(p.fullscreen.contains(&path));
     }
     if ui.get_page() != Page::Plugin {
         SHOWN.set(false);
@@ -322,7 +332,12 @@ fn s(text: impl AsRef<str>) -> Value {
 }
 
 fn record(fields: Vec<(&str, Value)>) -> Value {
-    Value::Struct(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<Struct>())
+    Value::Struct(
+        fields
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect::<Struct>(),
+    )
 }
 
 fn model(items: Vec<Value>) -> Value {
@@ -355,7 +370,12 @@ fn pages(ui: &AppWindow, current: &str) -> Value {
                 let id = tab.plugin.to_string();
                 let title = p
                     .as_ref()
-                    .and_then(|p| p.pages.iter().find(|page| page.id == id).map(|page| page.title.clone()))
+                    .and_then(|p| {
+                        p.pages
+                            .iter()
+                            .find(|page| page.id == id)
+                            .map(|page| page.title.clone())
+                    })
                     .unwrap_or_else(|| id.clone());
                 (format!("/plugin/{id}"), title)
             }
@@ -377,7 +397,13 @@ fn pages(ui: &AppWindow, current: &str) -> Value {
 
 fn media(ui: &AppWindow) -> Value {
     // LIVI's media page shows a dash for a missing text; plugins get an empty one
-    let text = |t: SharedString| s(if t.chars().all(|c| matches!(c, '-' | '—' | '–')) { "" } else { t.as_str() });
+    let text = |t: SharedString| {
+        s(if t.chars().all(|c| matches!(c, '-' | '—' | '–')) {
+            ""
+        } else {
+            t.as_str()
+        })
+    };
     record(vec![
         ("title", text(ui.get_track_title())),
         ("artist", text(ui.get_artist())),
@@ -396,7 +422,10 @@ fn nav(state: &Json) -> Value {
     let n = livi_ui_model::dashboard::nav::nav(state);
     record(vec![
         ("active", Value::Bool(n.active)),
-        ("icon", Value::Image(crate::icons::icon(n.icon).unwrap_or_default())),
+        (
+            "icon",
+            Value::Image(crate::icons::icon(n.icon).unwrap_or_default()),
+        ),
         ("maneuver", s(n.maneuver)),
         ("distance", s(n.distance)),
         ("road", s(n.road)),
@@ -436,7 +465,12 @@ const KNOWN: &[&str] = &[
 fn car(t: &Json) -> Value {
     let f = |key: &str| num(&t[key]);
     let b = |key: &str| Value::Bool(t[key].as_bool().unwrap_or(false));
-    let pair = |key: &str| (Value::Number(f(key).unwrap_or(0.0)), Value::Bool(f(key).is_some()));
+    let pair = |key: &str| {
+        (
+            Value::Number(f(key).unwrap_or(0.0)),
+            Value::Bool(f(key).is_some()),
+        )
+    };
     let (speed, has_speed) = pair("speedKph");
     let (rpm, has_rpm) = pair("rpm");
     let (ambient, has_ambient) = pair("ambientC");
@@ -448,7 +482,10 @@ fn car(t: &Json) -> Value {
         _ => String::new(),
     };
     record(vec![
-        ("known", Value::Bool(t.as_object().is_some_and(|o| !o.is_empty()))),
+        (
+            "known",
+            Value::Bool(t.as_object().is_some_and(|o| !o.is_empty())),
+        ),
         ("speed-kph", speed),
         ("has-speed", has_speed),
         ("rpm", rpm),
