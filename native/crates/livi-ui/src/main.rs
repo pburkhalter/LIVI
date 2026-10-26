@@ -564,7 +564,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = &fixture {
         let state: Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
         *client.state() = state.clone();
-        Follow::default()
+        Follow::starting_at(plugins::start_path())
             .changed(None, &state)
             .into_iter()
             .for_each(|u| apply(&ui, u));
