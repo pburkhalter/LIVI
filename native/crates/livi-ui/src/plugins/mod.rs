@@ -11,10 +11,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use serde_json::Value as Json;
-use slint::ComponentFactory;
+use slint::{ComponentFactory, ModelRc, VecModel};
 use slint_interpreter::{ComponentDefinition, ComponentHandle, ComponentInstance, Value};
 
-use crate::{AppWindow, Page, PhoneState, TabData};
+use crate::{AppWindow, Page, PhoneState, PluginView, TabData};
 use plugin::Plugin;
 
 type ActionHandler = Rc<dyn Fn(&str, &str)>;
@@ -195,20 +195,22 @@ pub fn install(ui: &AppWindow, on_action: impl Fn(&str, &str) + 'static) {
             }
         }
     }
+    let views: Vec<PluginView> = p
+        .pages
+        .iter()
+        .map(|page| PluginView {
+            id: page.id.as_str().into(),
+            factory: factory(page.component.clone()),
+        })
+        .collect();
+    ui.set_plugin_pages(ModelRc::new(VecModel::from(views)));
     println!("[ui] plugin {} installed", p.name);
 }
 
-/// Shows the plugin page `ui.plugin-page-id` if the window is on Page::Plugin, and hides the bars on the pages the
-/// plugin wants full screen.
+/// Hides the bars on the pages the plugin wants full screen; the window shows the plugin page `plugin-page-id` itself.
 pub fn show_page(ui: &AppWindow) {
     let Some(p) = plugin() else { return };
     ui.set_plugin_bars_hidden(p.fullscreen.contains(&current_path(ui)));
-    if ui.get_page() != Page::Plugin {
-        return;
-    }
-    if let Some(page) = p.page(&ui.get_plugin_page_id()) {
-        ui.set_plugin_page(factory(page.component.clone()));
-    }
 }
 
 /// Builds the state for the plugin and hands what changed to all its components on screen.
