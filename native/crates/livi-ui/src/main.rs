@@ -654,9 +654,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.show()?;
     debug::trace("window shown");
     reported(&ui, &client, ui.get_page());
-    if let Ok(page) = std::env::var("LIVI_UI_PAGE") {
+    // empty counts as not set, e.g. from a script that passes an optional page on
+    if let Some(page) = std::env::var("LIVI_UI_PAGE").ok().filter(|p| !p.is_empty()) {
         let page = match page.as_str() {
             "projection" => Page::Projection,
+            "camera" => Page::Camera,
             "settings" => Page::Settings,
             "telemetry" => Page::Telemetry,
             p if p.starts_with("plugin/") => {
