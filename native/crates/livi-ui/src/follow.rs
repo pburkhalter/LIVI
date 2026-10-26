@@ -45,9 +45,18 @@ pub struct Follow {
     phones: overlay::Phone,
     started: bool,
     main_mask: Option<Option<Mask>>,
+    // start page of a UI plugin instead of LIVI's (read on the UI thread, Follow runs on the client's)
+    start: Option<String>,
 }
 
 impl Follow {
+    pub fn starting_at(start: Option<String>) -> Self {
+        Self {
+            start,
+            ..Self::default()
+        }
+    }
+
     pub fn changed(&mut self, keys: Option<&BTreeSet<String>>, state: &Value) -> Vec<Update> {
         let all = keys.is_none_or(|k| k.contains(""));
         let hit = |key: &str| all || keys.is_some_and(|k| k.contains(key));
@@ -156,7 +165,9 @@ impl Follow {
             && !std::mem::replace(&mut self.started, true)
             && std::env::var_os("LIVI_UI_PAGE").is_none()
         {
-            let start = crate::plugins::start_path()
+            let start = self
+                .start
+                .clone()
                 .unwrap_or_else(|| state["system"]["startPage"].as_str().unwrap_or("/").into());
             out.push(Update::Open(start));
         }

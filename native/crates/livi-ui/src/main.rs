@@ -350,7 +350,7 @@ pub(crate) fn detach_video(screen: &str) {
 }
 
 fn follow_core(weak: Weak<AppWindow>) -> impl FnMut(Event, &Value) + Send + 'static {
-    let mut follow = Follow::default();
+    let mut follow = Follow::starting_at(plugins::start_path());
     move |ev, state| {
         let updates = match ev {
             Event::Welcome { version } => {

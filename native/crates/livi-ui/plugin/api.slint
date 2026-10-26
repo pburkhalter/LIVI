@@ -1,7 +1,9 @@
 // LIVI UI plugin API, version 1 (docs/plugins.md). Plugins import it as "@livi/api.slint".
 //
-// Every component LIVI shows from a plugin receives the state in `livi` and reports what the user wants through
-// `action(verb, argument)`:
+// Every component LIVI shows from a plugin inherits Window (the interpreter builds only exported windows; LIVI embeds
+// it into its own) and declares these two members itself:
+//   in property <LiviState> livi;          the state, updated by LIVI
+//   callback action(string, string);      what the user wants, as action(verb, argument):
 //   action("open", path)        show a page: "/projection", "/projection/<app>" (e.g. maps, music, phone), "/media",
 //                               "/telemetry", "/camera", "/settings", "/plugin/<page id>"
 //   action("media", what)       "play-pause", "next" or "prev" for the phone's player
@@ -24,6 +26,7 @@ export struct LiviDate {
     weekday: int,
 }
 
+// Texts are empty when nothing plays.
 export struct LiviMedia {
     title: string,
     artist: string,
@@ -74,8 +77,11 @@ export struct LiviCar {
     night: bool,
 }
 
+// `known`: the values come from the car (a telemetry source); LIVI's defaults and the values saved from the last run
+// keep it false. `source` names who set them ("external", "carplay", "saved", "default").
 export struct LiviClimate {
     known: bool,
+    source: string,
     on: bool,
     auto: bool,
     ac: bool,
@@ -105,6 +111,7 @@ export struct LiviState {
     api: int,
     // path of the page on screen, e.g. "/media" or "/plugin/home"
     page: string,
+    // "14:32", steady (LIVI's own clock blinks the colon)
     clock: string,
     date: LiviDate,
     dark: bool,
@@ -116,13 +123,4 @@ export struct LiviState {
     car: LiviCar,
     climate: LiviClimate,
     other: [LiviValue],
-}
-
-// Base for plugin components: `export component Home inherits LiviComponent { ... }`. LIVI embeds it into its
-// window; it inherits Window because the interpreter only builds exported windows.
-export component LiviComponent inherits Window {
-    in property <LiviState> livi;
-    callback action(string, string);
-    background: transparent;
-    @children
 }
