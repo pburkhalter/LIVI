@@ -46,16 +46,19 @@ thread_local! {
     static BASE_SCALE: Cell<Option<f32>> = const { Cell::new(None) };
     static ZOOM: Cell<f32> = const { Cell::new(1.0) };
     static INTRO: Cell<bool> = const { Cell::new(false) };
+    static STATE_READY: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Lets the start picture fade out once the core's state is there and the first page has had time to draw.
-fn settle_intro(ui: &AppWindow, ready: bool) {
-    if !ready || INTRO.replace(true) {
+/// Lets the start picture fade out once the core's state is there and the window has drawn its content: the first
+/// frames come late, on a slow board the renderer needs more than a second to set up.
+fn settle_intro(ui: &AppWindow) {
+    if INTRO.get() || !STATE_READY.get() || debug::frames() < 2 {
         return;
     }
+    INTRO.set(true);
     let weak = ui.as_weak();
-    debug::trace("state complete");
-    Timer::single_shot(Duration::from_millis(350), move || {
+    debug::trace("content drawn");
+    Timer::single_shot(Duration::from_millis(200), move || {
         if let Some(ui) = weak.upgrade() {
             debug::trace("intro fades");
             ui.set_intro_done(true);
@@ -375,8 +378,13 @@ fn follow_core(weak: Weak<AppWindow>) -> impl FnMut(Event, &Value) + Send + 'sta
             let Some(ui) = weak.upgrade() else { return };
             updates.into_iter().for_each(|u| apply(&ui, u));
             sync_plugin(&ui);
-            let ready = CLIENT.with_borrow(|c| c.as_ref().is_some_and(|c| c.state()["config"].is_object()));
-            settle_intro(&ui, ready);
+            if !STATE_READY.get()
+                && CLIENT.with_borrow(|c| c.as_ref().is_some_and(|c| c.state()["config"].is_object()))
+            {
+                debug::trace("state complete");
+                STATE_READY.set(true);
+                settle_intro(&ui);
+            }
         });
     }
 }
@@ -556,7 +564,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .for_each(|u| apply(&ui, u));
         sync_plugin(&ui);
-        settle_intro(&ui, true);
+        STATE_READY.set(true);
     }
 
     let clock_timer = Timer::default();
@@ -589,6 +597,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move |state, _| {
             if matches!(state, slint::RenderingState::AfterRendering) {
                 debug::frame_rendered();
+                if let Some(ui) = weak.upgrade() {
+                    settle_intro(&ui);
+                }
             }
             let (slint::RenderingState::RenderingSetup, Some(ui)) = (state, weak.upgrade()) else {
                 return;
