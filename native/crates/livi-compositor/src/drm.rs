@@ -19,6 +19,7 @@ use smithay::backend::renderer::element::memory::{
     MemoryRenderBuffer, MemoryRenderBufferRenderElement,
 };
 use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::{Event as SessionEvent, Session};
 use smithay::backend::udev::{self, UdevBackend, UdevEvent};
@@ -31,10 +32,11 @@ use smithay::reexports::drm::control::{Device as _, Mode, ModeTypeFlags, connect
 use smithay::reexports::input::Libinput;
 use smithay::reexports::rustix::fs::OFlags;
 use smithay::utils::{DeviceFd, Point, SERIAL_COUNTER, Scale, Size, Transform};
+use smithay::wayland::compositor::with_states;
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke};
 
 use crate::render::LiviElement;
-use crate::state::LiviState;
+use crate::state::{Kind, LiviState};
 
 mod libinput;
 mod modes;
@@ -740,20 +742,33 @@ pub fn pump(state: &mut LiviState) {
     }
 }
 
-/// Flicker-free start: no frame until a client surface has something to show, so the boot splash stays on the
-/// display instead of the backdrop colour (LIVI's UI needs a few seconds for its first frame). After SPLASH_WAIT the
-/// backdrop is shown in any case.
-fn keep_splash(state: &mut LiviState, parts: &crate::render::FrameParts) -> bool {
+/// Whether LIVI's UI window on this screen has a buffer to show
+fn ui_has_drawn(state: &LiviState, screen_idx: usize) -> bool {
+    state
+        .toplevels
+        .iter()
+        .filter(|t| t.kind == Kind::Ui && t.screen_idx == screen_idx)
+        .any(|t| {
+            with_states(t.toplevel.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<RendererSurfaceStateUserData>()
+                    .is_some_and(|d| d.lock().unwrap().buffer().is_some())
+            })
+        })
+}
+
+/// Flicker-free start: no frame until LIVI's UI has drawn, so the boot splash stays on the display instead of the
+/// backdrop colour (the UI needs a few seconds for its first frame; the video planes come earlier, with black
+/// buffers, and must not end the wait). After SPLASH_WAIT the backdrop is shown in any case.
+fn keep_splash(state: &mut LiviState, screen_idx: usize) -> bool {
+    let client = ui_has_drawn(state, screen_idx);
     let Some(drm) = state.drm.as_mut() else {
         return false;
     };
     let Some(until) = drm.splash_until else {
         return false;
     };
-    let client = parts
-        .elements
-        .iter()
-        .any(|e| matches!(e, LiviElement::Surface(_)));
     if client || Instant::now() >= until {
         drm.splash_until = None;
         if client {
@@ -788,7 +803,7 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
         return;
     }
     let mut parts = crate::render::frame_parts(state, screen_idx);
-    if keep_splash(state, &parts) {
+    if keep_splash(state, screen_idx) {
         return;
     }
     let screen_x = state.screens[screen_idx].x as f64;
