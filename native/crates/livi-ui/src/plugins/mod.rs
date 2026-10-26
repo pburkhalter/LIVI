@@ -96,6 +96,7 @@ pub fn tabs() -> Vec<TabData> {
         .map(|p| {
             p.pages
                 .iter()
+                .filter(|page| page.tab)
                 .map(|page| TabData {
                     page: Page::Plugin,
                     icon: page.icon.clone(),
