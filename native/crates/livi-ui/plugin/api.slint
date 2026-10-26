@@ -128,4 +128,12 @@ export global Livi {
     in property <LiviClimate> climate;
     in property <[LiviValue]> other;
     callback action(verb: string, argument: string);
+
+    // The value of a key in `other`, "" when there is none, e.g. Livi.value("doors")
+    public pure function value(key: string) -> string {
+        // reading `other` here makes a binding run again when it changes
+        return self.find(self.other, key);
+    }
+    // LIVI looks the key up for value()
+    pure callback find(values: [LiviValue], key: string) -> string;
 }
