@@ -1,0 +1,11 @@
+{
+  "api": 1,
+  "name": "Example",
+  "file": "example.slint",
+  "start": "hello",
+  "shell": { "bottom": "Bar" },
+  "pages": [
+    { "id": "hello", "title": "Hello", "component": "Hello" }
+  ],
+  "fullscreen": ["/camera"]
+}

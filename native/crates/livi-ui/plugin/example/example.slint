@@ -1,0 +1,61 @@
+// Example UI plugin for LIVI (docs/plugins.md): one page and a bar at the bottom. Copy the folder to
+// ~/.config/LIVI/ui-plugin (or point LIVI_UI_PLUGIN at it) and restart LIVI; check it with `LIVI --check-plugin <dir>`.
+
+import { LiviState } from "@livi/api.slint";
+
+// A page: inherits Window and declares the two members LIVI fills in and listens to
+export component Hello inherits Window {
+    in property <LiviState> livi;
+    callback action(string, string);
+    background: #101418;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 16px;
+        Text {
+            text: root.livi.clock;
+            color: #ffffff;
+            font-size: 64px;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.livi.car.has-speed ? Math.round(root.livi.car.speed-kph) + " km/h" : "no speed yet";
+            color: #9aa4ae;
+            font-size: 24px;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.livi.media.title != "" ? root.livi.media.artist + " – " + root.livi.media.title : "nothing playing";
+            color: #9aa4ae;
+            font-size: 24px;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// A bar: one button per page in the tab order, the shown one highlighted
+export component Bar inherits Window {
+    in property <LiviState> livi;
+    callback action(string, string);
+    background: #000000;
+    min-height: 72px;
+    max-height: 72px;
+
+    HorizontalLayout {
+        alignment: center;
+        spacing: 24px;
+        for page in root.livi.pages: Rectangle {
+            width: 120px;
+            border-radius: 8px;
+            background: page.active ? #2a3b4c : transparent;
+            Text {
+                text: page.title;
+                color: #ffffff;
+                font-size: 18px;
+            }
+            TouchArea {
+                clicked => { root.action("open", page.path); }
+            }
+        }
+    }
+}
