@@ -7,5 +7,6 @@
   "pages": [
     { "id": "hello", "title": "Hello", "component": "Hello" }
   ],
-  "fullscreen": ["/camera"]
+  "fullscreen": ["/camera"],
+  "hide": ["/telemetry"]
 }
