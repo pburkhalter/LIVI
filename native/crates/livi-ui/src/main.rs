@@ -3,6 +3,7 @@ mod clock;
 mod core_process;
 mod cursor_ui;
 mod dashboard_ui;
+mod debug;
 mod files_ui;
 mod follow;
 mod fullscreen;
@@ -53,8 +54,10 @@ fn settle_intro(ui: &AppWindow, ready: bool) {
         return;
     }
     let weak = ui.as_weak();
+    debug::trace("state complete");
     Timer::single_shot(Duration::from_millis(350), move || {
         if let Some(ui) = weak.upgrade() {
+            debug::trace("intro fades");
             ui.set_intro_done(true);
         }
     });
@@ -485,6 +488,7 @@ fn wire(ui: &AppWindow, client: &Client) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    debug::start();
     let args: Vec<String> = std::env::args().collect();
     if let [_, flag, dir] = args.as_slice()
         && flag == "--check-plugin"
@@ -508,7 +512,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     plugins::load();
+    debug::trace("plugin loaded");
     let ui = AppWindow::new()?;
+    debug::trace("window created");
     slint::set_xdg_app_id(
         std::env::var("LIVI_OUTPUT_APP_ID").unwrap_or_else(|_| "dev.f-io.livi".into()),
     )?;
@@ -526,6 +532,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         connect(started_by_core, &mut core, &quit_code, &planes)?
     };
+    debug::trace("core connected");
     let weak = ui.as_weak();
     let client = Client::start(stream, "LIVI", follow_core(weak.clone()))?;
     CLIENT.with_borrow_mut(|c| *c = Some(client.clone()));
@@ -580,9 +587,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.window().set_rendering_notifier({
         let weak = weak.clone();
         move |state, _| {
+            if matches!(state, slint::RenderingState::AfterRendering) {
+                debug::frame_rendered();
+            }
             let (slint::RenderingState::RenderingSetup, Some(ui)) = (state, weak.upgrade()) else {
                 return;
             };
+            debug::trace("rendering set up");
             if !attach_video(ui.window(), "main") {
                 eprintln!("[ui] the window has no native handle for the video");
             }
@@ -609,6 +620,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.window().set_size(slint::LogicalSize::new(w, h));
     }
     ui.show()?;
+    debug::trace("window shown");
     reported(&ui, &client, ui.get_page());
     if let Ok(page) = std::env::var("LIVI_UI_PAGE") {
         let page = match page.as_str() {
