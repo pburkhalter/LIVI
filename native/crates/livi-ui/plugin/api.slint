@@ -1,13 +1,17 @@
 // LIVI UI plugin API, version 1 (docs/plugins.md). Plugins import it as "@livi/api.slint".
 //
-// Every component LIVI shows from a plugin inherits Window (the interpreter builds only exported windows; LIVI embeds
-// it into its own) and declares these two members itself:
-//   in property <LiviState> livi;          the state, updated by LIVI
-//   callback action(string, string);      what the user wants, as action(verb, argument):
-//   action("open", path)        show a page: "/projection", "/projection/<app>" (e.g. maps, music, phone), "/media",
-//                               "/telemetry", "/camera", "/settings", "/plugin/<page id>"
-//   action("media", what)       "play-pause", "next" or "prev" for the phone's player
-//   action("page", "next")      the next page in the tab order ("prev": the previous one), e.g. after a swipe
+// LIVI's state is in the global `Livi`. Each of its properties changes on its own, so a binding only runs again when
+// what it reads has changed. The plugin's main file exports the global, so that LIVI can reach it:
+//   export { Livi } from "@livi/api.slint";
+//
+// What the user wants goes to LIVI as Livi.action(verb, argument):
+//   Livi.action("open", path)    show a page: "/projection", "/projection/<app>" (e.g. maps, music, phone), "/media",
+//                                "/telemetry", "/camera", "/settings", "/plugin/<page id>"
+//   Livi.action("media", what)   "play-pause", "next" or "prev" for the phone's player
+//   Livi.action("page", "next")  the next page in the tab order ("prev": the previous one), e.g. after a swipe
+//
+// Every component LIVI shows from a plugin inherits Window: the interpreter builds only exported windows, and LIVI
+// embeds them into its own.
 
 export struct LiviPage {
     // "/plugin/<id>" for pages of the plugin, otherwise the path of a page of LIVI
@@ -107,20 +111,21 @@ export struct LiviValue {
     value: string,
 }
 
-export struct LiviState {
-    api: int,
+export global Livi {
     // path of the page on screen, e.g. "/media" or "/plugin/home"
-    page: string,
+    in property <string> page;
     // "14:32", steady (LIVI's own clock blinks the colon)
-    clock: string,
-    date: LiviDate,
-    dark: bool,
+    in property <string> clock;
+    in property <LiviDate> date;
+    in property <bool> dark;
     // "none", "connected" or "streaming"
-    phone: string,
-    pages: [LiviPage],
-    media: LiviMedia,
-    nav: LiviNav,
-    car: LiviCar,
-    climate: LiviClimate,
-    other: [LiviValue],
+    in property <string> phone;
+    // LIVI's and the plugin's pages in tab order
+    in property <[LiviPage]> pages;
+    in property <LiviMedia> media;
+    in property <LiviNav> nav;
+    in property <LiviCar> car;
+    in property <LiviClimate> climate;
+    in property <[LiviValue]> other;
+    callback action(verb: string, argument: string);
 }

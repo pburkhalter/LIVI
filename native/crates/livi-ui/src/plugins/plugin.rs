@@ -94,6 +94,16 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
     if result.has_errors() {
         return Err("does not compile".into());
     }
+    // LIVI hands the state over through the global Livi; the interpreter only reaches a global the main file exports
+    if !result
+        .components()
+        .next()
+        .is_some_and(|c| c.globals().any(|g| g == super::GLOBAL))
+    {
+        return Err(format!(
+            "{file} does not export the global Livi; add: export {{ Livi }} from \"@livi/api.slint\";"
+        ));
+    }
     let component = |name: &str| {
         result
             .component(name)
@@ -194,11 +204,30 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.join("x.slint"),
-            "export component Other inherits Window { in property <int> n; }",
+            "export { Livi } from \"@livi/api.slint\";\nexport component Other inherits Window { in property <int> n; }",
         )
         .unwrap();
         let err = compile(&dir).err().expect("refused");
         assert!(err.contains("Missing"), "{err}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_plugin_must_export_the_global_with_the_state() {
+        let dir = std::env::temp_dir().join(format!("livi-plugin-global-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{ "api": 1, "file": "x.slint" }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("x.slint"),
+            "import { Livi } from \"@livi/api.slint\";\nexport component Page inherits Window { Text { text: Livi.clock; } }",
+        )
+        .unwrap();
+        let err = compile(&dir).err().expect("refused");
+        assert!(err.contains("export { Livi }"), "{err}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

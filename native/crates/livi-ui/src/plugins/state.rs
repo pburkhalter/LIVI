@@ -1,5 +1,5 @@
-//! The state a plugin component sees in `livi` (`LiviState` in plugin/api.slint), built from LIVI's window and the
-//! core's state. The telemetry parts are plain functions of the JSON, so they are tested here.
+//! The state a plugin sees in the global `Livi` (plugin/api.slint), built from LIVI's window and the core's state.
+//! The telemetry parts are plain functions of the JSON, so they are tested here.
 
 use std::rc::Rc;
 
@@ -7,7 +7,7 @@ use serde_json::Value as Json;
 use slint::{ComponentHandle as _, Image, Model, ModelRc, SharedString, VecModel};
 use slint_interpreter::{Struct, Value};
 
-use super::plugin::{API, Plugin};
+use super::plugin::Plugin;
 use crate::{AppWindow, Page, Theme};
 
 fn num(v: &Json) -> Option<f64> {
@@ -248,18 +248,24 @@ pub fn same(a: &Value, b: &Value) -> bool {
         }
         (Value::Struct(x), Value::Struct(y)) => {
             x.iter().count() == y.iter().count()
-                && x.iter().all(|(k, v)| y.get_field(k).is_some_and(|w| same(v, w)))
+                && x.iter()
+                    .all(|(k, v)| y.get_field(k).is_some_and(|w| same(v, w)))
         }
         _ => a == b,
     }
 }
 
-/// The whole `LiviState` for the page at `current`
-pub fn build(ui: &AppWindow, plugin: &Plugin, state: &Json, current: &str, phone: &str) -> Value {
+/// The properties of the global `Livi` for the page at `current`, by name
+pub fn build(
+    ui: &AppWindow,
+    plugin: &Plugin,
+    state: &Json,
+    current: &str,
+    phone: &str,
+) -> Vec<(&'static str, Value)> {
     let t = &state["telemetry"];
     let tm = local_time();
-    record(vec![
-        ("api", Value::Number(f64::from(API))),
+    vec![
         ("page", s(current)),
         ("clock", s(format!("{:02}:{:02}", tm.tm_hour, tm.tm_min))),
         ("date", date(&tm)),
@@ -274,7 +280,7 @@ pub fn build(ui: &AppWindow, plugin: &Plugin, state: &Json, current: &str, phone
         ("car", car(t)),
         ("climate", climate(&t["climate"])),
         ("other", other(t)),
-    ])
+    ]
 }
 
 #[cfg(test)]
@@ -340,7 +346,10 @@ mod tests {
         };
         assert!(same(&state(Image::default()), &state(Image::default())));
         let changed = record(vec![
-            ("media", record(vec![("artwork", Value::Image(Image::default()))])),
+            (
+                "media",
+                record(vec![("artwork", Value::Image(Image::default()))]),
+            ),
             ("other", other(&json!({ "doors": "open" }))),
         ]);
         assert!(!same(&state(Image::default()), &changed));
