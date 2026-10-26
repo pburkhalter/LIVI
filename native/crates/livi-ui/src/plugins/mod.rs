@@ -208,7 +208,7 @@ pub fn sync(ui: &AppWindow, core_state: &Json) {
     // unchanged state: no update, so nothing redraws (LIVI calls this every second for its clock); components created
     // later get the state in their factory
     let unchanged = STATE.with_borrow_mut(|st| {
-        let same = st.as_ref() == Some(&value);
+        let same = st.as_ref().is_some_and(|st| state::same(st, &value));
         *st = Some(value.clone());
         same
     });
