@@ -35,7 +35,8 @@ plugin has errors, LIVI logs them and starts without it.
   "pages": [
     { "id": "hello", "title": "Hello", "icon": "icons/hello.svg", "component": "Hello" }
   ],
-  "fullscreen": ["/camera"]
+  "fullscreen": ["/camera"],
+  "hide": ["/telemetry"]
 }
 ```
 
@@ -49,6 +50,7 @@ plugin has errors, LIVI logs them and starts without it.
 | `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). |
 | `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`. |
 | `fullscreen` | Paths of pages that show without the bars, e.g. `"/camera"`. |
+| `hide` | Paths of LIVI's pages the plugin replaces with its own, e.g. `"/media"`: their tabs go away, the paths still work. |
 
 While the phone's projection is streaming, LIVI hides the bars (as it hides its own navigation).
 

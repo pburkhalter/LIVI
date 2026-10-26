@@ -108,6 +108,11 @@ pub fn tabs() -> Vec<TabData> {
         .unwrap_or_default()
 }
 
+/// Whether the plugin replaces this page of LIVI's, so its tab goes away
+pub fn hides(page: Page) -> bool {
+    plugin().is_some_and(|p| p.hide.contains(&state::tab_path(page, "")))
+}
+
 pub fn phone_state(ui: &AppWindow) -> &'static str {
     match ui.get_phone() {
         PhoneState::None => "none",
