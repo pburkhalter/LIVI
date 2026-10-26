@@ -61,7 +61,14 @@ pub struct DrmState {
     active: bool,
     mouse_active: bool,
     cursor: MemoryRenderBuffer,
+    /// Until the UI has drawn its first frame (at most until this time), the displays keep what they show:
+    /// the boot splash that Plymouth leaves with "plymouth quit --retain-splash", instead of the backdrop colour.
+    splash_until: Option<Instant>,
+    splash_timer: bool,
 }
+
+/// Longest wait for the first frame of the UI before the backdrop is shown after all
+const SPLASH_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 struct Connector {
     handle: connector::Handle,
@@ -200,6 +207,8 @@ fn start(
         active: true,
         mouse_active: false,
         cursor: cursor_image(),
+        splash_until: Some(Instant::now() + SPLASH_WAIT),
+        splash_timer: false,
     })
 }
 
@@ -216,7 +225,9 @@ fn open_device(
                 continue;
             }
         };
-        let (device, notifier) = match DrmDevice::new(fd.clone(), true) {
+        // Keep what the displays show (the boot splash) instead of switching them off: the first frame then
+        // takes over with the same mode, without a modeset and without a black gap.
+        let (device, notifier) = match DrmDevice::new(fd.clone(), false) {
             Ok(opened) => opened,
             Err(e) => {
                 log::info!("{} drives no display: {e}", path.display());
@@ -729,6 +740,43 @@ pub fn pump(state: &mut LiviState) {
     }
 }
 
+/// Flicker-free start: no frame until a client surface has something to show, so the boot splash stays on the
+/// display instead of the backdrop colour (LIVI's UI needs a few seconds for its first frame). After SPLASH_WAIT the
+/// backdrop is shown in any case.
+fn keep_splash(state: &mut LiviState, parts: &crate::render::FrameParts) -> bool {
+    let Some(drm) = state.drm.as_mut() else {
+        return false;
+    };
+    let Some(until) = drm.splash_until else {
+        return false;
+    };
+    let client = parts
+        .elements
+        .iter()
+        .any(|e| matches!(e, LiviElement::Surface(_)));
+    if client || Instant::now() >= until {
+        drm.splash_until = None;
+        if client {
+            log::info!("first frame of the UI");
+        } else {
+            log::info!("first frame without the UI (splash wait over)");
+        }
+        return false;
+    }
+    if !drm.splash_timer {
+        drm.splash_timer = true;
+        let _ = drm.loop_handle.insert_source(
+            Timer::from_deadline(until),
+            |_, _, state: &mut LiviState| {
+                damage(state);
+                pump(state);
+                TimeoutAction::Drop
+            },
+        );
+    }
+    true
+}
+
 pub fn render(state: &mut LiviState, screen_idx: usize) {
     let ready = state.drm.as_ref().is_some_and(|d| {
         d.active
@@ -740,6 +788,9 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
         return;
     }
     let mut parts = crate::render::frame_parts(state, screen_idx);
+    if keep_splash(state, &parts) {
+        return;
+    }
     let screen_x = state.screens[screen_idx].x as f64;
     let (Some(drm), Some(renderer)) = (state.drm.as_mut(), state.renderer.as_mut()) else {
         return;
