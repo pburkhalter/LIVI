@@ -30,6 +30,7 @@ use std::time::Duration;
 use livi_core_client::{Client, Event, socket_path, wait_for_socket};
 use livi_core_proto::LIFELINE_ENV;
 use livi_core_proto::input::{Input, Phase, Point};
+use livi_core_proto::message::Action;
 use livi_core_proto::state::{Front, Screen};
 use serde_json::Value;
 use slint::platform::WindowEvent;
@@ -402,7 +403,15 @@ fn sync_plugin(ui: &AppWindow) {
 fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
     let Some(ui) = weak.upgrade() else { return };
     match (verb, argument) {
-        ("open", path) if path.trim_start_matches('/').starts_with("projection/") => open_app(path),
+        ("open", path)
+            if let Some(app) = path.trim_start_matches('/').strip_prefix("projection/") =>
+        {
+            CLIENT.with_borrow(|c| {
+                if let Some(c) = c {
+                    c.act(Action::OpenApp { app: app.into() });
+                }
+            })
+        }
         ("open", path) => open_path(&ui, path),
         ("media", "play-pause") => ui.invoke_play_pause(),
         ("media", "next") => ui.invoke_next(),
@@ -431,24 +440,6 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
         _ => println!("[ui] plugin action {verb} {argument} unknown"),
     }
     sync_plugin(&ui);
-}
-
-/// A CarPlay or Android Auto app (e.g. /projection/maps). Only the telemetry input opens those in LIVI's core,
-/// so the request goes there like from any other telemetry source.
-fn open_app(path: &str) {
-    use std::io::Write;
-    let body = serde_json::json!({ "path": path }).to_string();
-    let sent = std::net::TcpStream::connect(("127.0.0.1", 4000)).and_then(|mut s| {
-        write!(
-            s,
-            "POST /telemetry HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        )
-    });
-    if let Err(e) = sent {
-        println!("[ui] open {path}: {e}");
-    }
 }
 
 fn snapshot_later(weak: Weak<AppWindow>, path: String) {

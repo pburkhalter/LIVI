@@ -73,6 +73,11 @@ pub enum Action {
         id: String,
     },
     NextDevice,
+    /// Bring the phone's projection up with one of its apps, as the telemetry path `/projection/<app>` does
+    /// (CarPlay requestUI, e.g. `maps`, `mobilephone`)
+    OpenApp {
+        app: String,
+    },
     SelectClusterLayout {
         layout: String,
     },
