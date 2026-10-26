@@ -1,6 +1,9 @@
 use std::fmt::Write;
 
 fn main() {
+    // ComponentContainer and the component-factory type (UI plugins, src/plugins.rs) are experimental in Slint 1.18.
+    // SAFETY: the build script sets it before it starts any thread.
+    unsafe { std::env::set_var("SLINT_ENABLE_EXPERIMENTAL_FEATURES", "1") };
     slint_build::compile("ui/app.slint").unwrap();
 
     let dir = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("ui/icons");

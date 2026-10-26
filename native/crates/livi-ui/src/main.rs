@@ -13,6 +13,7 @@ mod log;
 mod media;
 mod media_ui;
 mod overlay_ui;
+mod plugins;
 mod secondary;
 mod settings_ui;
 mod touch_ui;
@@ -43,6 +44,20 @@ thread_local! {
     static CLIENT: RefCell<Option<Client>> = const { RefCell::new(None) };
     static BASE_SCALE: Cell<Option<f32>> = const { Cell::new(None) };
     static ZOOM: Cell<f32> = const { Cell::new(1.0) };
+    static INTRO: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Lets the start picture fade out once the core's state is there and the first page has had time to draw.
+fn settle_intro(ui: &AppWindow, ready: bool) {
+    if !ready || INTRO.replace(true) {
+        return;
+    }
+    let weak = ui.as_weak();
+    Timer::single_shot(Duration::from_millis(350), move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_intro_done(true);
+        }
+    });
 }
 
 const BANDS: usize = 24;
@@ -90,6 +105,7 @@ fn tab(t: Tab) -> TabData {
     TabData {
         page,
         icon: icons::icon(name).unwrap_or_default(),
+        plugin: Default::default(),
     }
 }
 
@@ -102,7 +118,8 @@ fn apply_look(ui: &AppWindow, look: Look) {
     ui.set_right_hand(look.right_hand);
     ui.set_stream_width(look.stream.0);
     ui.set_stream_height(look.stream.1);
-    let tabs: Vec<TabData> = look.tabs.iter().copied().map(tab).collect();
+    let mut tabs = plugins::tabs();
+    tabs.extend(look.tabs.iter().copied().map(tab));
     if !tabs.iter().any(|t| t.page == ui.get_page()) {
         choose(ui, Page::Media);
     }
@@ -141,7 +158,10 @@ fn apply(ui: &AppWindow, update: Update) {
         Update::Front(front) => match (front, ui.get_page()) {
             (Front::Projection, Page::Projection) => {}
             (Front::Projection, _) => choose(ui, Page::Projection),
-            (_, Page::Projection) => choose(ui, Page::Media),
+            (_, Page::Projection) => match plugins::start_path() {
+                Some(path) => open_path(ui, &path),
+                None => choose(ui, Page::Media),
+            },
             _ => {}
         },
         Update::Phone(phone) => {
@@ -192,6 +212,16 @@ fn open_path(ui: &AppWindow, path: &str) {
         Some("media") => Page::Media,
         Some("camera") => Page::Camera,
         Some("settings") => Page::Settings,
+        Some("plugin") => match parts.get(1) {
+            Some(id) if plugins::has_page(id) => {
+                ui.set_plugin_page_id((*id).into());
+                Page::Plugin
+            }
+            _ => {
+                println!("[ui] no plugin page {path}");
+                return;
+            }
+        },
         Some(other) => {
             println!("[ui] no page for {other}");
             return;
@@ -222,6 +252,7 @@ fn choose(ui: &AppWindow, page: Page) {
 }
 
 fn reported(ui: &AppWindow, client: &Client, page: Page) {
+    let plugin_path;
     let (front, path) = match page {
         Page::Projection => (Front::Projection, "/"),
         Page::Telemetry if dashboard_ui::map_shown(ui) => (Front::Cluster, "/telemetry"),
@@ -229,7 +260,12 @@ fn reported(ui: &AppWindow, client: &Client, page: Page) {
         Page::Media => (Front::Livi, media_ui::path(ui)),
         Page::Camera => (Front::Camera, "/camera"),
         Page::Settings => (Front::Livi, "/settings"),
+        Page::Plugin => {
+            plugin_path = plugins::page_path(ui);
+            (Front::Livi, plugin_path.as_str())
+        }
     };
+    plugins::show_page(ui);
     client.show(Screen::Main, front);
     client.path(path);
     client.spectrum(page == Page::Media && ui.get_show_spectrum());
@@ -335,7 +371,67 @@ fn follow_core(weak: Weak<AppWindow>) -> impl FnMut(Event, &Value) + Send + 'sta
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = weak.upgrade() else { return };
             updates.into_iter().for_each(|u| apply(&ui, u));
+            sync_plugin(&ui);
+            let ready = CLIENT.with_borrow(|c| c.as_ref().is_some_and(|c| c.state()["config"].is_object()));
+            settle_intro(&ui, ready);
         });
+    }
+}
+
+fn sync_plugin(ui: &AppWindow) {
+    CLIENT.with_borrow(|c| {
+        if let Some(c) = c {
+            plugins::sync(ui, &c.state());
+        }
+    });
+}
+
+/// What a plugin component asked for with its `action` callback (plugin/api.slint).
+fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
+    let Some(ui) = weak.upgrade() else { return };
+    match (verb, argument) {
+        ("open", path) if path.trim_start_matches('/').starts_with("projection/") => open_app(path),
+        ("open", path) => open_path(&ui, path),
+        ("media", "play-pause") => ui.invoke_play_pause(),
+        ("media", "next") => ui.invoke_next(),
+        ("media", "prev") => ui.invoke_prev(),
+        ("page", step @ ("next" | "prev")) => {
+            let tabs = ui.get_tabs();
+            let n = tabs.row_count();
+            let page = ui.get_page();
+            let id = ui.get_plugin_page_id();
+            let Some(i) = tabs
+                .iter()
+                .position(|t| t.page == page && (page != Page::Plugin || t.plugin == id))
+            else {
+                return;
+            };
+            let j = if step == "next" { (i + 1) % n } else { (i + n - 1) % n };
+            if let Some(t) = tabs.row_data(j) {
+                ui.set_plugin_page_id(t.plugin.clone());
+                choose(&ui, t.page);
+            }
+        }
+        _ => println!("[ui] plugin action {verb} {argument} unknown"),
+    }
+    sync_plugin(&ui);
+}
+
+/// A CarPlay or Android Auto app (e.g. /projection/maps). Only the telemetry input opens those in LIVI's core,
+/// so the request goes there like from any other telemetry source.
+fn open_app(path: &str) {
+    use std::io::Write;
+    let body = serde_json::json!({ "path": path }).to_string();
+    let sent = std::net::TcpStream::connect(("127.0.0.1", 4000)).and_then(|mut s| {
+        write!(
+            s,
+            "POST /telemetry HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    });
+    if let Err(e) = sent {
+        println!("[ui] open {path}: {e}");
     }
 }
 
@@ -389,6 +485,12 @@ fn wire(ui: &AppWindow, client: &Client) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if let [_, flag, dir] = args.as_slice()
+        && flag == "--check-plugin"
+    {
+        std::process::exit(if plugins::check(Path::new(dir)) { 0 } else { 1 });
+    }
     if let Some(b) = bundle::find() {
         b.use_bundled_gstreamer();
     }
@@ -405,6 +507,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         livi_video_view::serve(&runtime.join("compositor.ctrl"), &planes)?;
     }
 
+    plugins::load();
     let ui = AppWindow::new()?;
     slint::set_xdg_app_id(
         std::env::var("LIVI_OUTPUT_APP_ID").unwrap_or_else(|_| "dev.f-io.livi".into()),
@@ -434,6 +537,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settings_ui::wire(&ui, &client, &lang);
     keys_ui::wire(&ui, &client);
     wire(&ui, &client);
+    plugins::install(&ui, {
+        let weak = weak.clone();
+        move |verb, argument| plugin_action(&weak, verb, argument)
+    });
     if let Some(path) = &fixture {
         let state: Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
         *client.state() = state.clone();
@@ -441,6 +548,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .changed(None, &state)
             .into_iter()
             .for_each(|u| apply(&ui, u));
+        sync_plugin(&ui);
+        settle_intro(&ui, true);
     }
 
     let clock_timer = Timer::default();
@@ -451,6 +560,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.set_clock(clock::now_text().into());
                 ui.global::<DashState>().set_clock(clock::now_text().into());
                 secondary::tick_clock(&clock::now_text());
+                sync_plugin(&ui);
             }
         }
     });
@@ -505,6 +615,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "projection" => Page::Projection,
             "settings" => Page::Settings,
             "telemetry" => Page::Telemetry,
+            p if p.starts_with("plugin/") => {
+                ui.set_plugin_page_id(p.trim_start_matches("plugin/").into());
+                Page::Plugin
+            }
             _ => Page::Media,
         };
         choose(&ui, page);
