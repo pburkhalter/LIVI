@@ -34,6 +34,7 @@ struct PluginPage {
 
 struct Plugin {
     name: String,
+    compiled_ms: u128,
     start: Option<String>,
     splash: Option<Image>,
     // pages shown without the bars, e.g. "/camera"
@@ -186,6 +187,7 @@ fn compile(dir: &Path) -> Result<Plugin, String> {
         started.elapsed().as_millis()
     );
     Ok(Plugin {
+        compiled_ms: started.elapsed().as_millis(),
         name,
         start,
         splash,
@@ -312,7 +314,20 @@ pub fn page_path(ui: &AppWindow) -> String {
     format!("/plugin/{}", ui.get_plugin_page_id())
 }
 
-fn current_path(ui: &AppWindow) -> String {
+/// Name of the plugin and how long it took to compile, for the debug overlay
+pub fn summary() -> Option<String> {
+    plugin().map(|p| format!("{} {} ms", p.name, p.compiled_ms))
+}
+
+pub fn phone_state(ui: &AppWindow) -> &'static str {
+    match ui.get_phone() {
+        PhoneState::None => "none",
+        PhoneState::Connected => "connected",
+        PhoneState::Streaming => "streaming",
+    }
+}
+
+pub fn current_path(ui: &AppWindow) -> String {
     match ui.get_page() {
         Page::Plugin => page_path(ui),
         Page::Projection => "/projection".into(),
@@ -558,11 +573,7 @@ pub fn sync(ui: &AppWindow, state: &Json) {
         return;
     }
     let current = current_path(ui);
-    let phone = match ui.get_phone() {
-        PhoneState::None => "none",
-        PhoneState::Connected => "connected",
-        PhoneState::Streaming => "streaming",
-    };
+    let phone = phone_state(ui);
     let t = &state["telemetry"];
     let tm = local_time();
     let value = record(vec![

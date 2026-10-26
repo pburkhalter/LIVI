@@ -33,6 +33,11 @@ pub fn schema() -> Node {
                 vec![
                     Node::checkbox(Label::new("settings.debugLogging", "Debug"), "debugLogging")
                         .icon("debugLogging"),
+                    Node::checkbox(
+                        Label::new("settings.debugOverlay", "Debug overlay"),
+                        "debugOverlay",
+                    )
+                    .icon("debugOverlay"),
                 ],
             )
             .icon("logs"),

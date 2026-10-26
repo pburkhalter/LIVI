@@ -10,6 +10,8 @@ pub const WIFI_PASSWORD_MAX: usize = 63;
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub debug_logging: bool,
+    /// frame rate, load and memory in a corner of the main screen
+    pub debug_overlay: bool,
 
     pub wireless_aa_enabled: bool,
     pub wireless_cp_enabled: bool,
@@ -400,6 +402,7 @@ pub fn defaults() -> Config {
     let empty = || Some(String::new());
     Config {
         debug_logging: false,
+        debug_overlay: false,
         wireless_aa_enabled: false,
         wireless_cp_enabled: false,
         wifi_password: "12345678".into(),

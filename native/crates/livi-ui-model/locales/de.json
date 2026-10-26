@@ -221,6 +221,7 @@
     "softwareUpdate": "Software-Update",
     "logs": "Logs",
     "debugLogging": "Debug",
+    "debugOverlay": "Debug-Overlay",
     "restartSystem": "Neustart",
     "powerOff": "Ausschalten",
     "name": "Name",
