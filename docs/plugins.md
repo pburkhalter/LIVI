@@ -105,6 +105,8 @@ LIVI updates the state only when something changed, so a plugin does not cause r
   recorded state. The files in `native/crates/livi-ui/fixtures/` are examples. Add `LIVI_UI_SIZE=2400x900` for the
   size of your screen and `LIVI_UI_PAGE=plugin/<id>` to open a page.
 - `LIVI_UI_TRACE=1` prints how long the steps of the start take, up to the first frames.
+- The setting *System → Logs → Debug overlay* (or `LIVI_DEBUG_OVERLAY=1`) shows the frame rate, load and memory in a
+  corner.
 
 ## Example
 
