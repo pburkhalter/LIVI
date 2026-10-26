@@ -48,6 +48,7 @@ thread_local! {
     static STATE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static ACTION: RefCell<Option<ActionHandler>> = const { RefCell::new(None) };
     static SHOWN: Cell<bool> = const { Cell::new(false) };
+    static WARNED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Folder of the plugin: `LIVI_UI_PLUGIN`, otherwise `ui-plugin` in LIVI's user data folder if it holds a plugin.json.
@@ -327,10 +328,14 @@ fn model(items: Vec<Value>) -> Value {
     Value::Model(ModelRc::from(Rc::new(VecModel::from(items))))
 }
 
-fn date() -> Value {
+fn local_time() -> libc::tm {
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&now, &mut tm) };
+    tm
+}
+
+fn date(tm: &libc::tm) -> Value {
     record(vec![
         ("year", Value::Number(f64::from(tm.tm_year + 1900))),
         ("month", Value::Number(f64::from(tm.tm_mon + 1))),
@@ -370,11 +375,13 @@ fn pages(ui: &AppWindow, current: &str) -> Value {
 }
 
 fn media(ui: &AppWindow) -> Value {
+    // LIVI's media page shows a dash for a missing text; plugins get an empty one
+    let text = |t: SharedString| s(if t.chars().all(|c| matches!(c, '-' | '—' | '–')) { "" } else { t.as_str() });
     record(vec![
-        ("title", s(ui.get_track_title())),
-        ("artist", s(ui.get_artist())),
-        ("album", s(ui.get_album())),
-        ("app", s(ui.get_app())),
+        ("title", text(ui.get_track_title())),
+        ("artist", text(ui.get_artist())),
+        ("album", text(ui.get_album())),
+        ("app", text(ui.get_app())),
         ("artwork", Value::Image(ui.get_artwork())),
         ("has-artwork", Value::Bool(ui.get_has_artwork())),
         ("playing", Value::Bool(ui.get_playing())),
@@ -467,8 +474,10 @@ fn climate(c: &Json) -> Value {
     let b = |key: &str| Value::Bool(c[key].as_bool().unwrap_or(false));
     let n = |key: &str| Value::Number(num(&c[key]).unwrap_or(0.0));
     let has = |key: &str| Value::Bool(num(&c[key]).is_some());
+    let source = c["source"].as_str().unwrap_or_default();
     record(vec![
-        ("known", Value::Bool(c.as_object().is_some_and(|o| !o.is_empty()))),
+        ("known", Value::Bool(source == "external")),
+        ("source", s(source)),
         ("on", b("on")),
         ("auto", b("auto")),
         ("ac", b("ac")),
@@ -517,11 +526,12 @@ pub fn sync(ui: &AppWindow, state: &Json) {
         PhoneState::Streaming => "streaming",
     };
     let t = &state["telemetry"];
+    let tm = local_time();
     let value = record(vec![
         ("api", Value::Number(f64::from(API))),
         ("page", s(&current)),
-        ("clock", s(ui.get_clock())),
-        ("date", date()),
+        ("clock", s(format!("{:02}:{:02}", tm.tm_hour, tm.tm_min))),
+        ("date", date(&tm)),
         ("dark", Value::Bool(ui.global::<Theme>().get_dark())),
         ("phone", s(phone)),
         ("pages", pages(ui, &current)),
@@ -531,12 +541,23 @@ pub fn sync(ui: &AppWindow, state: &Json) {
         ("climate", climate(&t["climate"])),
         ("other", other(t)),
     ]);
-    STATE.with_borrow_mut(|st| *st = Some(value.clone()));
+    // unchanged state: no update, so nothing redraws (LIVI calls this every second for its clock); components created
+    // later get the state in their factory
+    let unchanged = STATE.with_borrow_mut(|st| {
+        let same = st.as_ref() == Some(&value);
+        *st = Some(value.clone());
+        same
+    });
+    if unchanged {
+        return;
+    }
     LIVE.with_borrow_mut(|live| {
         live.retain(|w| match w.upgrade() {
             Some(instance) => {
-                if let Err(e) = instance.set_property("livi", value.clone()) {
-                    eprintln!("[ui] plugin state: {e}");
+                if let Err(e) = instance.set_property("livi", value.clone())
+                    && !WARNED.replace(true)
+                {
+                    eprintln!("[ui] plugin component without `in property <LiviState> livi`: {e}");
                 }
                 true
             }
