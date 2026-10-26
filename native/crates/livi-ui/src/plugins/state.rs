@@ -236,6 +236,19 @@ fn other(t: &Json) -> Value {
     model(out)
 }
 
+/// The value of `key` among the `other` values (LiviValue rows), "" when there is none: `Livi.value(key)`
+pub fn find(values: &ModelRc<Value>, key: &str) -> Value {
+    let field = |row: &Value, name: &str| match row {
+        Value::Struct(s) => s.get_field(name).cloned(),
+        _ => None,
+    };
+    values
+        .iter()
+        .find(|row| field(row, "key") == Some(s(key)))
+        .and_then(|row| field(&row, "value"))
+        .unwrap_or_else(|| s(""))
+}
+
 /// Whether two state values are equal. Models compare by their rows: `ModelRc` compares by pointer, and the state gets
 /// new models each time it is built. Two empty images count as equal: Slint's `Image` has no case for them in its
 /// `PartialEq`, so a missing cover alone would make every state new.
@@ -353,6 +366,16 @@ mod tests {
             ("other", other(&json!({ "doors": "open" }))),
         ]);
         assert!(!same(&state(Image::default()), &changed));
+    }
+
+    #[test]
+    fn a_value_is_found_by_its_key() {
+        let Value::Model(values) = other(&json!({ "doors": "closed", "updates": 3 })) else {
+            panic!("not a model")
+        };
+        assert_eq!(find(&values, "updates"), s("3"));
+        assert_eq!(find(&values, "doors"), s("closed"));
+        assert_eq!(find(&values, "trunk"), s(""));
     }
 
     #[test]

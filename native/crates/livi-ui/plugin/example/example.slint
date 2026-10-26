@@ -26,6 +26,13 @@ export component Hello inherits Window {
             horizontal-alignment: center;
         }
         Text {
+            // a value LIVI has no field for, e.g. from a CAN reader that posts {"doors": "closed"}
+            text: Livi.value("doors") != "" ? "doors " + Livi.value("doors") : "doors unknown";
+            color: #9aa4ae;
+            font-size: 24px;
+            horizontal-alignment: center;
+        }
+        Text {
             text: Livi.media.title != "" ? Livi.media.artist + " – " + Livi.media.title : "nothing playing";
             color: #9aa4ae;
             font-size: 24px;
