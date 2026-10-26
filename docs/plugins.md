@@ -87,7 +87,7 @@ global `Livi` with these properties:
 - `climate`: as the car reports it. `known` is only true for values from outside (a telemetry source). LIVI's
   defaults and the values saved from the last run do not count;
 - `other`: telemetry keys LIVI has no field for, as text. A CAN reader can send e.g. `doors` to the telemetry input
-  and a plugin shows it.
+  and a plugin shows it; `Livi.value("doors")` gives one of them by its key (`""` when there is none).
 
 LIVI sets each property only when it changed. A binding runs again only when a property it reads changed: one that
 shows the speed does not run when the song changes. So a plugin causes no work while nothing it shows changes.

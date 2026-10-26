@@ -153,6 +153,12 @@ fn factory(component: ComponentDefinition) -> ComponentFactory {
             });
             Value::Void
         });
+        let _ = instance.set_global_callback(GLOBAL, "find", |args| {
+            match (args.first(), args.get(1)) {
+                (Some(Value::Model(values)), Some(Value::String(key))) => state::find(values, key),
+                _ => Value::String(Default::default()),
+            }
+        });
         LIVE.with_borrow_mut(|live| live.push(instance.as_weak()));
         crate::debug::trace(&format!("plugin component {} created", component.name()));
         Some(instance)
