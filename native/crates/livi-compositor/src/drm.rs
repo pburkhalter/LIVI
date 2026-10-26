@@ -895,6 +895,15 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
     {
         Ok(frame) if frame.is_empty => false,
         Ok(frame) => {
+            // Without a fence the display takes for the GPU's work (no syncobj support in the display driver, or no
+            // fence fd from EGL), the flip must wait until the GPU has drawn the frame; otherwise the display may show
+            // the buffer half drawn, with parts of what it held frames ago. Only implicit sync in the kernel would
+            // cover it, and not every GPU driver puts fences on its buffers (PowerVR's DDK does not).
+            if frame.needs_sync()
+                && let PrimaryPlaneElement::Swapchain(element) = &frame.primary_element
+            {
+                let _ = element.sync.wait();
+            }
             let direct = frame.overlay_elements.len()
                 + usize::from(matches!(
                     frame.primary_element,
