@@ -1,0 +1,128 @@
+// LIVI UI plugin API, version 1 (docs/plugins.md). Plugins import it as "@livi/api.slint".
+//
+// Every component LIVI shows from a plugin receives the state in `livi` and reports what the user wants through
+// `action(verb, argument)`:
+//   action("open", path)        show a page: "/projection", "/projection/<app>" (e.g. maps, music, phone), "/media",
+//                               "/telemetry", "/camera", "/settings", "/plugin/<page id>"
+//   action("media", what)       "play-pause", "next" or "prev" for the phone's player
+//   action("page", "next")      the next page in the tab order ("prev": the previous one), e.g. after a swipe
+
+export struct LiviPage {
+    // "/plugin/<id>" for pages of the plugin, otherwise the path of a page of LIVI
+    path: string,
+    title: string,
+    icon: image,
+    active: bool,
+}
+
+export struct LiviDate {
+    year: int,
+    // 1 to 12
+    month: int,
+    day: int,
+    // 0 Sunday to 6 Saturday
+    weekday: int,
+}
+
+export struct LiviMedia {
+    title: string,
+    artist: string,
+    album: string,
+    app: string,
+    artwork: image,
+    has-artwork: bool,
+    playing: bool,
+    // 0 to 1
+    progress: float,
+    elapsed-ms: float,
+    total-ms: float,
+}
+
+export struct LiviNav {
+    active: bool,
+    icon: image,
+    maneuver: string,
+    distance: string,
+    road: string,
+    time-left: string,
+    destination: string,
+    destination-distance: string,
+    app: string,
+}
+
+// Vehicle telemetry; `has-*` tells whether a value has arrived at all.
+export struct LiviCar {
+    known: bool,
+    speed-kph: float,
+    has-speed: bool,
+    rpm: float,
+    has-rpm: bool,
+    gear: string,
+    ambient-c: float,
+    has-ambient: bool,
+    fuel-pct: float,
+    has-fuel: bool,
+    range-km: float,
+    has-range: bool,
+    odometer-km: float,
+    trip-km: float,
+    reverse: bool,
+    lights: bool,
+    high-beam: bool,
+    hazards: bool,
+    parking-brake: bool,
+    night: bool,
+}
+
+export struct LiviClimate {
+    known: bool,
+    on: bool,
+    auto: bool,
+    ac: bool,
+    max-ac: bool,
+    max-defrost: bool,
+    recirculation: bool,
+    synced: bool,
+    driver-c: float,
+    has-driver: bool,
+    passenger-c: float,
+    has-passenger: bool,
+    fan-level: int,
+    fan-auto: bool,
+    front-window-heating: int,
+    rear-window-heating: int,
+    driver-seat-heating: int,
+    passenger-seat-heating: int,
+}
+
+// A telemetry value LIVI has no field for (for example doors from a CAN reader), as text.
+export struct LiviValue {
+    key: string,
+    value: string,
+}
+
+export struct LiviState {
+    api: int,
+    // path of the page on screen, e.g. "/media" or "/plugin/home"
+    page: string,
+    clock: string,
+    date: LiviDate,
+    dark: bool,
+    // "none", "connected" or "streaming"
+    phone: string,
+    pages: [LiviPage],
+    media: LiviMedia,
+    nav: LiviNav,
+    car: LiviCar,
+    climate: LiviClimate,
+    other: [LiviValue],
+}
+
+// Base for plugin components: `export component Home inherits LiviComponent { ... }`. LIVI embeds it into its
+// window; it inherits Window because the interpreter only builds exported windows.
+export component LiviComponent inherits Window {
+    in property <LiviState> livi;
+    callback action(string, string);
+    background: transparent;
+    @children
+}

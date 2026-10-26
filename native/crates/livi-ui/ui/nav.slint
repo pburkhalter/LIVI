@@ -1,13 +1,15 @@
 import { Theme, Ui } from "theme.slint";
 import { Focus } from "focus.slint";
 
-export enum Page { projection, telemetry, media, camera, settings }
+export enum Page { projection, telemetry, media, camera, settings, plugin }
 
 export enum PhoneState { none, connected, streaming }
 
 export struct TabData {
     page: Page,
     icon: image,
+    // id of the plugin page for Page.plugin (docs/plugins.md)
+    plugin: string,
 }
 
 component Tab inherits Rectangle {
@@ -44,11 +46,12 @@ component Tab inherits Rectangle {
 export component Nav inherits Rectangle {
     in property <[TabData]> tabs;
     in property <Page> active;
+    in property <string> active-plugin;
     in property <PhoneState> phone;
     in property <string> clock;
     in property <bool> right-hand;
     in property <bool> asleep;
-    callback select(Page);
+    callback select(Page, string);
 
     width: Ui.xs-icons ? Ui.nav-width : max(Ui.icon-size, Ui.show-clock ? clock-text.preferred-width : 0) + 2 * Ui.nav-pad + 1px;
     background: Theme.background;
@@ -71,10 +74,10 @@ export component Nav inherits Rectangle {
             page: tab.page;
             icon: tab.icon;
             focused: Focus.nav(i);
-            active: tab.page == root.active;
+            active: tab.page == root.active && (tab.page != Page.plugin || tab.plugin == root.active-plugin);
             phone: root.phone;
             enabled: !root.asleep;
-            clicked => { root.select(tab.page); }
+            clicked => { root.select(tab.page, tab.plugin); }
         }
         if root.tabs.length == 0: Rectangle { vertical-stretch: 1; }
     }

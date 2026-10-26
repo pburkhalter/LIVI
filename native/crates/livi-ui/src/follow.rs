@@ -156,8 +156,9 @@ impl Follow {
             && !std::mem::replace(&mut self.started, true)
             && std::env::var_os("LIVI_UI_PAGE").is_none()
         {
-            let start = state["system"]["startPage"].as_str().unwrap_or("/");
-            out.push(Update::Open(start.to_string()));
+            let start = crate::plugins::start_path()
+                .unwrap_or_else(|| state["system"]["startPage"].as_str().unwrap_or("/").into());
+            out.push(Update::Open(start));
         }
         out
     }

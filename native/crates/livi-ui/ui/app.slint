@@ -41,6 +41,27 @@ export component AppWindow inherits Window {
     in-out property <bool> show-spectrum;
     in property <[float]> bands;
 
+    // UI plugin (docs/plugins.md): the page shown for Page.plugin and the bars that may replace the navigation
+    in-out property <string> plugin-page-id;
+    in property <component-factory> plugin-page;
+    in property <component-factory> plugin-start;
+    in property <component-factory> plugin-end;
+    in property <component-factory> plugin-top;
+    in property <component-factory> plugin-bottom;
+    in property <component-factory> plugin-background;
+    in property <bool> has-plugin-background;
+    // the plugin wants the page on screen without its bars (e.g. a camera picture)
+    in property <bool> plugin-bars-hidden;
+    in property <bool> has-plugin-start;
+    in property <bool> has-plugin-end;
+    in property <bool> has-plugin-top;
+    in property <bool> has-plugin-bottom;
+
+    // Start: the plugin's start picture (or black) covers the window until the UI has its content, then fades out,
+    // so the boot splash goes over into LIVI without a hard cut
+    in property <image> intro-image;
+    in property <bool> intro-done;
+
     callback page-chosen(Page);
     callback touch(TouchPhase, float, float);
     callback play-pause();
@@ -51,6 +72,9 @@ export component AppWindow inherits Window {
 
     property <bool> nav-hidden: root.page == Page.projection && root.phone == PhoneState.streaming;
     property <bool> nav-asleep;
+    // a plugin bar at the side takes the place of LIVI's navigation
+    property <bool> own-nav: !root.has-plugin-start && !root.has-plugin-end;
+    property <bool> bars-shown: !root.nav-hidden && !root.plugin-bars-hidden;
 
     public function wake-nav() {
         root.nav-asleep = false;
@@ -92,26 +116,47 @@ export component AppWindow inherits Window {
         root.wake-nav();
     }
 
+    if root.has-plugin-background: ComponentContainer {
+        width: root.width;
+        height: root.height;
+        component-factory: root.plugin-background;
+    }
+
     if root.page == Page.telemetry: Dashboard {
         width: root.width;
         height: root.height;
     }
 
-    HorizontalLayout {
-        if !root.right-hand && !root.nav-hidden: Nav {
+    VerticalLayout {
+      if root.has-plugin-top && root.bars-shown: ComponentContainer {
+        component-factory: root.plugin-top;
+      }
+      HorizontalLayout {
+        vertical-stretch: 1;
+        if !root.right-hand && !root.nav-hidden && root.own-nav: Nav {
             tabs: root.tabs;
             active: root.page;
+            active-plugin: root.plugin-page-id;
             phone: root.phone;
             clock: root.clock;
             right-hand: false;
             asleep: root.nav-asleep;
-            select(p) => {
+            select(p, id) => {
+                root.plugin-page-id = id;
                 root.page = p;
                 root.page-chosen(p);
             }
         }
+        if root.has-plugin-start && root.bars-shown: ComponentContainer {
+            component-factory: root.plugin-start;
+        }
         Rectangle {
             horizontal-stretch: 1;
+            if root.page == Page.plugin: ComponentContainer {
+                width: parent.width;
+                height: parent.height;
+                component-factory: root.plugin-page;
+            }
             if root.page == Page.projection: ProjectionPage {
                 width: parent.width;
                 height: parent.height;
@@ -164,18 +209,27 @@ export component AppWindow inherits Window {
                 font-size: 14px;
             }
         }
-        if root.right-hand && !root.nav-hidden: Nav {
+        if root.has-plugin-end && root.bars-shown: ComponentContainer {
+            component-factory: root.plugin-end;
+        }
+        if root.right-hand && !root.nav-hidden && root.own-nav: Nav {
             tabs: root.tabs;
             active: root.page;
+            active-plugin: root.plugin-page-id;
             phone: root.phone;
             clock: root.clock;
             right-hand: true;
             asleep: root.nav-asleep;
-            select(p) => {
+            select(p, id) => {
+                root.plugin-page-id = id;
                 root.page = p;
                 root.page-chosen(p);
             }
         }
+      }
+      if root.has-plugin-bottom && root.bars-shown: ComponentContainer {
+        component-factory: root.plugin-bottom;
+      }
     }
 
     LevelOverlay {
@@ -187,6 +241,19 @@ export component AppWindow inherits Window {
         window-width: root.width;
         x: root.width - self.width - 16px;
         y: 16px;
+    }
+
+    Rectangle {
+        background: #000000;
+        opacity: root.intro-done ? 0 : 1;
+        visible: self.opacity > 0;
+        animate opacity { duration: 600ms; easing: ease-in-out; }
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.intro-image;
+            image-fit: contain;
+        }
     }
 }
 

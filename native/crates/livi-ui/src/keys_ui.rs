@@ -331,6 +331,7 @@ fn open_tab(ui: &AppWindow, enter: bool) {
     let Some(tab) = ui.get_tabs().row_data(f.get_nav_index().max(0) as usize) else {
         return;
     };
+    ui.set_plugin_page_id(tab.plugin.clone());
     ui.set_page(tab.page);
     ui.invoke_page_chosen(tab.page);
     TRAIL.with_borrow_mut(Vec::clear);

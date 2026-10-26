@@ -31,6 +31,16 @@ slint = { version = "1.18.1", default-features = false, features = [
     "unstable-winit-030",
 ] }
 
+# UI plugins (src/plugins.rs): "internal" for create_embedded, so the version is pinned to the one of slint
+slint-interpreter = { version = "=1.18.1", default-features = false, features = [
+    "compat-1-2",
+    "internal",
+    "backend-winit",
+    "backend-winit-wayland",
+    "renderer-femtovg",
+    "renderer-software",
+] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 livi-video-view.workspace = true
 
