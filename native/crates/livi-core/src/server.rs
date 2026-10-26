@@ -157,6 +157,11 @@ impl Core {
                 self.media(control);
                 Ok(())
             }
+            Action::OpenApp { app } => {
+                let _ = self.open_page.send(format!("/projection/{app}"));
+                self.open_app(app);
+                Ok(())
+            }
             Action::ImportMfi { file, path } => {
                 match crate::mfi::import(&self.mfi_dir, file, std::path::Path::new(&path)) {
                     Ok(()) => self.refresh_mfi().await,
