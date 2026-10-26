@@ -24,6 +24,8 @@ pub struct PluginPage {
     pub title: String,
     pub icon: Image,
     pub component: ComponentDefinition,
+    /// among the tabs (and so in the order for swiping); a page only opened from the plugin's own buttons is not
+    pub tab: bool,
 }
 
 pub struct Plugin {
@@ -126,6 +128,7 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
             .unwrap_or_default();
         pages.push(PluginPage {
             title: text(p, "title").unwrap_or_else(|| id.clone()),
+            tab: p["tab"].as_bool().unwrap_or(true),
             id,
             icon,
             component,
@@ -209,6 +212,27 @@ mod tests {
         .unwrap();
         let err = compile(&dir).err().expect("refused");
         assert!(err.contains("Missing"), "{err}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_page_can_stay_out_of_the_tabs() {
+        let dir = std::env::temp_dir().join(format!("livi-plugin-tab-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{ "api": 1, "file": "x.slint", "pages": [
+                { "id": "a", "component": "Page" }, { "id": "b", "component": "Page", "tab": false } ] }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("x.slint"),
+            "export { Livi } from \"@livi/api.slint\";\nexport component Page inherits Window { }",
+        )
+        .unwrap();
+        let p = compile(&dir).expect("compiles");
+        assert!(p.page("a").is_some_and(|a| a.tab));
+        assert!(p.page("b").is_some_and(|b| !b.tab));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

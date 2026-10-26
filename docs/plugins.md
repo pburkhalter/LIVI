@@ -48,7 +48,7 @@ plugin has errors, LIVI logs them and starts without it.
 | `start` | Page shown at start (an `id` from `pages`), instead of LIVI's start page. |
 | `splash` | Picture shown full window at start, until the UI has drawn; then it fades out. |
 | `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). |
-| `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`. |
+| `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`; `"tab": false` keeps a page out of the tabs and the order for swiping (e.g. one the plugin opens from its own button). |
 | `fullscreen` | Paths of pages that show without the bars, e.g. `"/camera"`. |
 | `hide` | Paths of LIVI's pages the plugin replaces with its own, e.g. `"/media"`: their tabs go away, the paths still work. |
 
