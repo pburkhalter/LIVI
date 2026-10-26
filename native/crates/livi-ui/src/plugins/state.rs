@@ -236,6 +236,24 @@ fn other(t: &Json) -> Value {
     model(out)
 }
 
+/// Whether two state values are equal. Models compare by their rows: `ModelRc` compares by pointer, and the state gets
+/// new models each time it is built. Two empty images count as equal: Slint's `Image` has no case for them in its
+/// `PartialEq`, so a missing cover alone would make every state new.
+pub fn same(a: &Value, b: &Value) -> bool {
+    let empty = |i: &Image| i.size().width == 0 || i.size().height == 0;
+    match (a, b) {
+        (Value::Image(x), Value::Image(y)) => x == y || (empty(x) && empty(y)),
+        (Value::Model(x), Value::Model(y)) => {
+            x.row_count() == y.row_count() && x.iter().zip(y.iter()).all(|(p, q)| same(&p, &q))
+        }
+        (Value::Struct(x), Value::Struct(y)) => {
+            x.iter().count() == y.iter().count()
+                && x.iter().all(|(k, v)| y.get_field(k).is_some_and(|w| same(v, w)))
+        }
+        _ => a == b,
+    }
+}
+
 /// The whole `LiviState` for the page at `current`
 pub fn build(ui: &AppWindow, plugin: &Plugin, state: &Json, current: &str, phone: &str) -> Value {
     let t = &state["telemetry"];
@@ -310,6 +328,22 @@ mod tests {
         assert!(keys.contains(&"oilC".to_string()));
         assert!(!keys.contains(&"speedKph".to_string()));
         assert!(!keys.contains(&"none".to_string()));
+    }
+
+    #[test]
+    fn a_state_built_again_from_the_same_data_is_the_same() {
+        let state = |cover: Image| {
+            record(vec![
+                ("media", record(vec![("artwork", Value::Image(cover))])),
+                ("other", other(&json!({ "doors": "closed" }))),
+            ])
+        };
+        assert!(same(&state(Image::default()), &state(Image::default())));
+        let changed = record(vec![
+            ("media", record(vec![("artwork", Value::Image(Image::default()))])),
+            ("other", other(&json!({ "doors": "open" }))),
+        ]);
+        assert!(!same(&state(Image::default()), &changed));
     }
 
     #[test]
