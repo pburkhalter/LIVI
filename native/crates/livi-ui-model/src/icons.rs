@@ -109,6 +109,7 @@ const SETTINGS: &[(&str, &str)] = &[
     ("softwareUpdate", "SystemUpdateAltOutlined"),
     ("logs", "ArticleOutlined"),
     ("debugLogging", "BugReportOutlined"),
+    ("debugOverlay", "SpeedOutlined"),
     ("restart", "RestartAltOutlined"),
     ("poweroff", "PowerSettingsNewOutlined"),
 ];

@@ -221,6 +221,7 @@
     "softwareUpdate": "Mise à Jour Logiciel",
     "logs": "Journaux",
     "debugLogging": "Débogage",
+    "debugOverlay": "Superposition de débogage",
     "restartSystem": "Redémarrage",
     "powerOff": "Arrêt",
     "name": "Nom",

@@ -361,6 +361,7 @@ fn follow_core(weak: Weak<AppWindow>) -> impl FnMut(Event, &Value) + Send + 'sta
         let updates = match ev {
             Event::Welcome { version } => {
                 println!("[ui] core {version}");
+                debug::set_core_version(&version);
                 let mut u = follow.changed(None, state);
                 u.push(Update::Status(String::new()));
                 u
@@ -387,6 +388,23 @@ fn follow_core(weak: Weak<AppWindow>) -> impl FnMut(Event, &Value) + Send + 'sta
                 settle_intro(&ui);
             }
         });
+    }
+}
+
+/// The debug overlay, when the setting is on (debug.rs)
+fn refresh_overlay(ui: &AppWindow) {
+    let wanted = CLIENT.with_borrow(|c| {
+        c.as_ref()
+            .is_some_and(|c| debug::overlay_wanted(&c.state()["config"]))
+    });
+    ui.set_debug_shown(wanted);
+    if wanted {
+        let text = debug::overlay_text(
+            &plugins::current_path(ui),
+            plugins::phone_state(ui),
+            plugins::summary(),
+        );
+        ui.set_debug_text(text.into());
     }
 }
 
@@ -581,6 +599,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.global::<DashState>().set_clock(clock::now_text().into());
                 secondary::tick_clock(&clock::now_text());
                 sync_plugin(&ui);
+                refresh_overlay(&ui);
             }
         }
     });
