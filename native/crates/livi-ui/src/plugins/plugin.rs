@@ -33,6 +33,8 @@ pub struct Plugin {
     pub splash: Option<Image>,
     /// pages shown without the bars, e.g. "/camera"
     pub fullscreen: Vec<String>,
+    /// LIVI's pages the plugin replaces: not among the tabs, still reachable by path, e.g. "/media"
+    pub hide: Vec<String>,
     pub shell: HashMap<&'static str, ComponentDefinition>,
     pub pages: Vec<PluginPage>,
 }
@@ -121,12 +123,15 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
     }
     let start = text(&manifest, "start").filter(|s| pages.iter().any(|p| p.id == *s));
     let splash = text(&manifest, "splash").and_then(|f| Image::load_from_path(&dir.join(f)).ok());
-    let fullscreen = manifest["fullscreen"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|p| p.as_str().map(str::to_string))
-        .collect();
+    let paths = |key: &str| -> Vec<String> {
+        manifest[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.as_str().map(str::to_string))
+            .collect()
+    };
+    let (fullscreen, hide) = (paths("fullscreen"), paths("hide"));
     let compiled_ms = started.elapsed().as_millis();
     println!(
         "[ui] plugin {name}: {} pages, bars {:?}, compiled in {compiled_ms} ms",
@@ -139,6 +144,7 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
         start,
         splash,
         fullscreen,
+        hide,
         shell,
         pages,
     })
@@ -160,6 +166,7 @@ mod tests {
         assert!(p.page("hello").is_some());
         assert!(p.shell.contains_key("bottom"));
         assert_eq!(p.fullscreen, vec!["/camera".to_string()]);
+        assert_eq!(p.hide, vec!["/telemetry".to_string()]);
     }
 
     #[test]

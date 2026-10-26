@@ -126,7 +126,13 @@ fn apply_look(ui: &AppWindow, look: Look) {
     ui.set_stream_width(look.stream.0);
     ui.set_stream_height(look.stream.1);
     let mut tabs = plugins::tabs();
-    tabs.extend(look.tabs.iter().copied().map(tab));
+    tabs.extend(
+        look.tabs
+            .iter()
+            .copied()
+            .map(tab)
+            .filter(|t| !plugins::hides(t.page)),
+    );
     if !tabs.iter().any(|t| t.page == ui.get_page()) {
         choose(ui, Page::Media);
     }
