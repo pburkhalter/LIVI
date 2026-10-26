@@ -774,6 +774,22 @@ fn attached_buffers(state: &LiviState, screen_idx: usize) -> Vec<Buffer> {
     buffers
 }
 
+/// Marker file next to the control socket: the display shows LIVI's own frames from now on. A boot splash that keeps
+/// its picture until then (Plymouth: "quit --retain-splash" removes its framebuffer, the screen would go black) can
+/// end once it appears.
+pub fn first_frame_marker(state: &LiviState) -> Option<std::path::PathBuf> {
+    let ctrl = std::path::Path::new(state.ctrl_path.as_ref()?);
+    Some(ctrl.with_file_name("compositor.first-frame"))
+}
+
+fn mark_first_frame(state: &LiviState) {
+    if let Some(path) = first_frame_marker(state)
+        && let Err(e) = std::fs::write(&path, b"")
+    {
+        log::warn!("{}: {e}", path.display());
+    }
+}
+
 /// Whether LIVI's UI window on this screen has a buffer to show
 fn ui_has_drawn(state: &LiviState, screen_idx: usize) -> bool {
     state
@@ -808,6 +824,7 @@ fn keep_splash(state: &mut LiviState, screen_idx: usize) -> bool {
         } else {
             log::info!("first frame without the UI (splash wait over)");
         }
+        mark_first_frame(state);
         return false;
     }
     if !drm.splash_timer {

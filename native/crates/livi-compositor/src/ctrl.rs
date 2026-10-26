@@ -36,6 +36,10 @@ pub fn init(state: &mut LiviState, handle: &LoopHandle<'static, LiviState>) {
     let Some(path) = state.ctrl_path.clone() else {
         return;
     };
+    // a marker of an earlier run would end the boot splash too early
+    if let Some(marker) = crate::drm::first_frame_marker(state) {
+        let _ = std::fs::remove_file(marker);
+    }
     let _ = std::fs::remove_file(&path);
     let listener = match UnixListener::bind(&path) {
         Ok(l) => l,
