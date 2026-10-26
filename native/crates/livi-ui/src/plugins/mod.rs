@@ -1,12 +1,12 @@
 //! UI plugins (docs/plugins.md): a folder with `plugin.json` and `.slint` files that adds pages, may replace the
 //! navigation with its own bars and brings a start picture. The Slint interpreter compiles it at start (plugin.rs);
-//! ComponentContainers in the window embed its components. Each of them gets the state in `livi` (state.rs,
-//! plugin/api.slint) and reports the user's wishes through its `action` callback.
+//! ComponentContainers in the window embed its components. They read the state from the global `Livi` (state.rs,
+//! plugin/api.slint) and report the user's wishes through its callback `action`.
 
 mod plugin;
 mod state;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -19,13 +19,16 @@ use plugin::Plugin;
 
 type ActionHandler = Rc<dyn Fn(&str, &str)>;
 
+/// The global in plugin/api.slint that holds the state and the callback `action`
+const GLOBAL: &str = "Livi";
+
 thread_local! {
     static PLUGIN: RefCell<Option<Rc<Plugin>>> = const { RefCell::new(None) };
     // components on screen, to update their state
     static LIVE: RefCell<Vec<slint::Weak<ComponentInstance>>> = const { RefCell::new(Vec::new()) };
-    static STATE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    // the properties of the global Livi as last handed out
+    static STATE: RefCell<Vec<(&'static str, Value)>> = const { RefCell::new(Vec::new()) };
     static ACTION: RefCell<Option<ActionHandler>> = const { RefCell::new(None) };
-    static WARNED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Folder of the plugin: `LIVI_UI_PLUGIN`, otherwise `ui-plugin` in LIVI's user data folder if it holds a plugin.json.
@@ -130,10 +133,12 @@ fn factory(component: ComponentDefinition) -> ComponentFactory {
             .create_embedded(ctx)
             .map_err(|e| eprintln!("[ui] plugin component {}: {e}", component.name()))
             .ok()?;
-        if let Some(state) = STATE.with_borrow(Clone::clone) {
-            let _ = instance.set_property("livi", state);
-        }
-        let _ = instance.set_callback("action", |args| {
+        STATE.with_borrow(|state| {
+            for (name, value) in state {
+                let _ = instance.set_global_property(GLOBAL, name, value.clone());
+            }
+        });
+        let _ = instance.set_global_callback(GLOBAL, "action", |args| {
             let arg = |i: usize| match args.get(i) {
                 Some(Value::String(s)) => s.to_string(),
                 _ => String::new(),
@@ -201,27 +206,29 @@ pub fn show_page(ui: &AppWindow) {
     }
 }
 
-/// Builds the state for the plugin and hands it to all its components on screen.
+/// Builds the state for the plugin and hands what changed to all its components on screen.
 pub fn sync(ui: &AppWindow, core_state: &Json) {
     let Some(p) = plugin() else { return };
-    let value = state::build(ui, &p, core_state, &current_path(ui), phone_state(ui));
-    // unchanged state: no update, so nothing redraws (LIVI calls this every second for its clock); components created
-    // later get the state in their factory
-    let unchanged = STATE.with_borrow_mut(|st| {
-        let same = st.as_ref().is_some_and(|st| state::same(st, &value));
-        *st = Some(value.clone());
-        same
+    let fields = state::build(ui, &p, core_state, &current_path(ui), phone_state(ui));
+    // Only what changed: every binding that reads a property runs again when it is set, and LIVI calls this every
+    // second for its clock. Components created later get all of it in their factory.
+    let changed: Vec<(&'static str, Value)> = STATE.with_borrow_mut(|last| {
+        let changed = fields
+            .iter()
+            .filter(|(name, value)| !last.iter().any(|(n, v)| n == name && state::same(v, value)))
+            .cloned()
+            .collect();
+        *last = fields;
+        changed
     });
-    if unchanged {
+    if changed.is_empty() {
         return;
     }
     LIVE.with_borrow_mut(|live| {
         live.retain(|w| match w.upgrade() {
             Some(instance) => {
-                if let Err(e) = instance.set_property("livi", value.clone())
-                    && !WARNED.replace(true)
-                {
-                    eprintln!("[ui] plugin component without `in property <LiviState> livi`: {e}");
+                for (name, value) in &changed {
+                    let _ = instance.set_global_property(GLOBAL, name, value.clone());
                 }
                 true
             }

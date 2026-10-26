@@ -56,49 +56,51 @@ While the phone's projection is streaming, LIVI hides the bars (as it hides its 
 
 ## Components
 
-Every component LIVI shows inherits `Window` (the interpreter only builds exported windows; LIVI embeds them) and
-declares two members:
+Every component LIVI shows inherits `Window` (the interpreter only builds exported windows; LIVI embeds them). They
+read LIVI's state from the global `Livi` and tell LIVI what the user wants with `Livi.action(verb, argument)`. The main
+file exports the global, so that LIVI can reach it (LIVI refuses a plugin that does not):
 
 ```slint
-import { LiviState } from "@livi/api.slint";
+import { Livi } from "@livi/api.slint";
+export { Livi }
 
 export component Hello inherits Window {
-    in property <LiviState> livi;        // updated by LIVI
-    callback action(string, string);     // what the user wants
     background: #101418;
-    Text { text: root.livi.clock; color: white; }
+    Text { text: Livi.clock; color: white; }
+    TouchArea { clicked => { Livi.action("open", "/media"); } }
 }
 ```
 
 ### State
 
-`@livi/api.slint` ([native/crates/livi-ui/plugin/api.slint](../native/crates/livi-ui/plugin/api.slint)) defines
-`LiviState`:
+`@livi/api.slint` ([native/crates/livi-ui/plugin/api.slint](../native/crates/livi-ui/plugin/api.slint)) defines the
+global `Livi` with these properties:
 
-- the page on screen (`page`, a path);
-- the clock and date;
-- dark mode and the phone (`none`, `connected`, `streaming`);
-- the pages in tab order, with title, icon and whether each one is active;
-- **media**: title, artist, album, artwork, playing, progress;
-- **nav**: turn-by-turn from the phone (maneuver, its icon, distance, road, time left, destination);
-- **car**: speed, rpm, gear, outside temperature, fuel, range, odometer, lights and so on. Each value comes with a
+- `page`: the page on screen, a path;
+- `clock` and `date`;
+- `dark` (dark mode) and `phone` (`none`, `connected`, `streaming`);
+- `pages`: the pages in tab order, with title, icon and whether each one is active;
+- `media`: title, artist, album, artwork, playing, progress;
+- `nav`: turn-by-turn from the phone (maneuver, its icon, distance, road, time left, destination);
+- `car`: speed, rpm, gear, outside temperature, fuel, range, odometer, lights and so on. Each value comes with a
   `has-*` flag that says whether it arrived;
-- **climate**: as the car reports it. `known` is only true for values from outside (a telemetry source). LIVI's
+- `climate`: as the car reports it. `known` is only true for values from outside (a telemetry source). LIVI's
   defaults and the values saved from the last run do not count;
-- **other**: telemetry keys LIVI has no field for, as text. A CAN reader can send e.g. `doors` to the telemetry input
+- `other`: telemetry keys LIVI has no field for, as text. A CAN reader can send e.g. `doors` to the telemetry input
   and a plugin shows it.
 
-LIVI updates the state only when something changed, so a plugin does not cause redraws on its own.
+LIVI sets each property only when it changed. A binding runs again only when a property it reads changed: one that
+shows the speed does not run when the song changes. So a plugin causes no work while nothing it shows changes.
 
 ### Actions
 
 | Call | Effect |
 |---|---|
-| `action("open", "/plugin/<id>")` | Shows a page of the plugin. |
-| `action("open", "/media")` and the like | Shows one of LIVI's pages: `/projection`, `/media`, `/telemetry`, `/camera`, `/settings`. |
-| `action("open", "/projection/<app>")` | Brings the projection up with one of the phone's apps, e.g. `maps`, `music`, `mobilephone` (CarPlay). |
-| `action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
-| `action("page", "next")` | The next page in tab order (`prev`: the previous one), e.g. after a swipe. |
+| `Livi.action("open", "/plugin/<id>")` | Shows a page of the plugin. |
+| `Livi.action("open", "/media")` and the like | Shows one of LIVI's pages: `/projection`, `/media`, `/telemetry`, `/camera`, `/settings`. |
+| `Livi.action("open", "/projection/<app>")` | Brings the projection up with one of the phone's apps, e.g. `maps`, `music`, `mobilephone` (CarPlay). |
+| `Livi.action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
+| `Livi.action("page", "next")` | The next page in tab order (`prev`: the previous one), e.g. after a swipe. |
 
 ## Tools
 
