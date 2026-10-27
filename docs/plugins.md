@@ -48,6 +48,7 @@ plugin has errors, LIVI logs them and starts without it.
 | `start` | Page shown at start (an `id` from `pages`), instead of LIVI's start page. |
 | `splash` | Picture shown full window at start, until the UI has drawn; then it fades out. |
 | `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). `overlay` covers the whole window above everything, also on full screen pages and over the projection, e.g. for warnings; touches go through it except where it has a `TouchArea`. |
+| `empty` | Components for LIVI's pages while they have nothing to show: `projection` (no phone streaming), `camera` (no camera found). |
 | `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`; `"tab": false` keeps a page out of the tabs and the order for swiping (e.g. one the plugin opens from its own button); `"settings"` makes it the page for LIVI's settings (see Settings). |
 | `fullscreen` | Paths of pages that show without the bars, e.g. `"/camera"`. |
 | `hide` | Paths of LIVI's pages the plugin replaces with its own, e.g. `"/media"`: their tabs go away, the paths still work. |
@@ -113,15 +114,19 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
 
 A page with `"settings": ["list", "select", ...]` in the manifest shows LIVI's settings in the plugin's design. The
 list names the kinds of screens the page draws: `list`, `select`, `number`, `text`, `color`, `slider`,
-`calibration`, `pending`. LIVI keeps the logic, saving and translations; the page gets the screen on top of LIVI's
+`calibration`, `pending`, and `dialog` and `capture` for a dialog over a screen and the wait for a key. LIVI keeps the logic, saving and translations; the page gets the screen on top of LIVI's
 settings stack and sends the user's wishes back:
 
 - `settings`: kind, title, whether there is a way back or an apply button, and the values of a number or slider screen;
 - `setting-rows`: the rows of a list (kind, label, icon, value, switch, level, enabled, node);
 - `setting-picks`: the choices of a select screen;
+- `setting-knobs`: the sliders of a calibration screen;
+- `setting-dialog-rows`: the rows of a dialog;
 - `Livi.action("settings", ...)`: `open:<node>`, `toggle:<row>`, `press:<row>`, `capture:<row>`,
   `slide:<node>:<level>`, `slide-done:<node>:<level>`, `pick:<index>`, `number:<value>`, `level:<level>`,
-  `level-done:<level>`, `back`, `apply`.
+  `level-done:<level>`, `text:<text>`, `hex:<rrggbb>`, `color-slide:<i>:<level>`, `color-slide-done:<i>:<level>`,
+  `color-reset`, `knob:<i>:<level>`, `knob-done:<i>:<level>`, `knob-reset:<i>`, `dialog-press:<row>`,
+  `capture-cancel`, `back`, `apply` (`plugin/api.slint` describes each field).
 
 A screen of another kind, a dialog and the wait for a key LIVI shows on its own settings page; once the screen is one
 the page draws again, LIVI shows the plugin's page. `/settings` (e.g. from `Livi.action("open", "/settings")`) opens
