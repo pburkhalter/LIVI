@@ -204,6 +204,46 @@ fn car(t: &Json) -> Value {
     ])
 }
 
+/// The notices other programs sent (org.freedesktop.Notifications, served by the core), newest first, with the
+/// local time they came
+fn notices(state: &Json, now: &libc::tm) -> Value {
+    let out = state["notices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .rev()
+        .map(|n| {
+            let text = |key: &str| s(n[key].as_str().unwrap_or_default());
+            let tm =
+                crate::clock::local_at((n["time"].as_u64().unwrap_or(0) / 1000) as libc::time_t);
+            let urgency = match n["urgency"].as_u64() {
+                Some(0) => "low",
+                Some(2) => "critical",
+                _ => "normal",
+            };
+            record(vec![
+                ("id", Value::Number(n["id"].as_f64().unwrap_or(0.0))),
+                ("app", text("app")),
+                ("summary", text("summary")),
+                ("body", text("body")),
+                ("urgency", s(urgency)),
+                (
+                    "today",
+                    Value::Bool(
+                        (tm.tm_year, tm.tm_mon, tm.tm_mday)
+                            == (now.tm_year, now.tm_mon, now.tm_mday),
+                    ),
+                ),
+                ("hour", Value::Number(f64::from(tm.tm_hour))),
+                ("minute", Value::Number(f64::from(tm.tm_min))),
+                ("day", Value::Number(f64::from(tm.tm_mday))),
+                ("month", Value::Number(f64::from(tm.tm_mon + 1))),
+            ])
+        })
+        .collect();
+    model(out)
+}
+
 /// Climate as the car reports it. LIVI also keeps defaults and the values of the last run (source "default" or
 /// "saved") for CarPlay's climate view; only values from outside (a telemetry source, source "external") are known.
 fn climate(c: &Json) -> Value {
@@ -328,6 +368,7 @@ pub fn build(
         ("climate", climate(&t["climate"])),
         ("other", other(t)),
         ("can", can(t)),
+        ("notices", notices(state, &tm)),
     ];
     fields.extend(super::settings::fields(ui, settings_shown));
     fields
@@ -443,6 +484,23 @@ mod tests {
         assert_eq!(find(&values, "updates"), s("3"));
         assert_eq!(find(&values, "doors"), s("closed"));
         assert_eq!(find(&values, "trunk"), s(""));
+    }
+
+    #[test]
+    fn notices_come_newest_first_with_their_urgency() {
+        let now = crate::clock::local_now();
+        let state = json!({ "notices": [
+            { "id": 7, "app": "t100-updates", "summary": "3 updates", "body": "", "urgency": 2, "time": 0 },
+            { "id": 9, "app": "radio", "summary": "on air", "body": "x", "urgency": 0, "time": 0 },
+        ] });
+        let Value::Model(rows) = notices(&state, &now) else {
+            panic!("not a model")
+        };
+        let first = rows.row_data(0).unwrap();
+        assert_eq!(field(&first, "id"), Value::Number(9.0));
+        assert_eq!(field(&first, "urgency"), s("low"));
+        assert_eq!(field(&rows.row_data(1).unwrap(), "urgency"), s("critical"));
+        assert!(same(&notices(&json!({}), &now), &model(Vec::new())));
     }
 
     #[test]

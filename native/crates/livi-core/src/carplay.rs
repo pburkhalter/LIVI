@@ -840,6 +840,7 @@ mod tests {
             dab: Default::default(),
             cameras: Vec::new(),
             mfi: Default::default(),
+            notices: Vec::new(),
             config,
         };
         let (_state_tx, state_rx) = watch::channel(state);

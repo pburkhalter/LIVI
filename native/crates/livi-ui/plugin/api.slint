@@ -11,6 +11,7 @@
 //   Livi.action("media", what)   "play-pause", "next" or "prev" for the phone's player
 //   Livi.action("page", "next")  the plugin's next page in the tab order ("prev": the previous one), e.g. after a
 //                                swipe; nothing at the first or last one
+//   Livi.action("notice", "dismiss:<id>")  close a notice (LiviNotice)
 //   Livi.action("settings", w)   on the plugin's settings page (LiviSettings below): "open:<node>", "toggle:<row>",
 //                                "press:<row>", "capture:<row>", "slide:<node>:<level>", "slide-done:<node>:<level>",
 //                                "pick:<index>", "number:<value>", "level:<level>", "level-done:<level>",
@@ -214,6 +215,21 @@ export struct LiviPick {
     selected: bool,
 }
 
+// A notification another program sent (org.freedesktop.Notifications, e.g. notify-send), newest first in `notices`.
+// `urgency`: "low", "normal" or "critical". The local time it came: `today`, `hour`, `minute`, `day`, `month`.
+export struct LiviNotice {
+    id: int,
+    app: string,
+    summary: string,
+    body: string,
+    urgency: string,
+    today: bool,
+    hour: int,
+    minute: int,
+    day: int,
+    month: int,
+}
+
 // A telemetry value LIVI has no field for (for example doors from a CAN reader), as text.
 export struct LiviValue {
     key: string,
@@ -241,6 +257,7 @@ export global Livi {
     // what a CAN reader keeps under the telemetry key `can`: raw values that may change many times a second, apart
     // from `other`
     in property <[LiviValue]> can;
+    in property <[LiviNotice]> notices;
     in property <LiviSettings> settings;
     in property <[LiviSettingRow]> setting-rows;
     in property <[LiviPick]> setting-picks;

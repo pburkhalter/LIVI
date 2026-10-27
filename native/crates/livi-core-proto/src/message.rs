@@ -52,6 +52,10 @@ pub enum Action {
     SetConfig {
         patch: Value,
     },
+    /// The user closed a notification (notices in the state)
+    DismissNotice {
+        id: u32,
+    },
     Show {
         screen: Screen,
         front: Front,
