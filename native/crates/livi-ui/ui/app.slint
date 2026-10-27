@@ -57,6 +57,8 @@ export component AppWindow inherits Window {
     in property <component-factory> plugin-bottom;
     in property <component-factory> plugin-background;
     in property <bool> has-plugin-background;
+    in property <component-factory> plugin-overlay;
+    in property <bool> has-plugin-overlay;
     // the plugin wants the page on screen without its bars (e.g. a camera picture)
     in property <bool> plugin-bars-hidden;
     in property <bool> has-plugin-start;
@@ -238,6 +240,14 @@ export component AppWindow inherits Window {
       if root.has-plugin-bottom && root.bars-shown: ComponentContainer {
         component-factory: root.plugin-bottom;
       }
+    }
+
+    // above the pages and bars, also on full screen pages and over the projection; touches go through it except
+    // where the plugin has a TouchArea
+    if root.has-plugin-overlay: ComponentContainer {
+        width: root.width;
+        height: root.height;
+        component-factory: root.plugin-overlay;
     }
 
     LevelOverlay {

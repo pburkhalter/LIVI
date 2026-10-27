@@ -192,10 +192,15 @@ pub fn install(ui: &AppWindow, on_action: impl Fn(&str, &str) + 'static) {
                 ui.set_plugin_top(f);
                 ui.set_has_plugin_top(true);
             }
-            _ => {
+            "bottom" => {
                 ui.set_plugin_bottom(f);
                 ui.set_has_plugin_bottom(true);
             }
+            "overlay" => {
+                ui.set_plugin_overlay(f);
+                ui.set_has_plugin_overlay(true);
+            }
+            _ => {}
         }
     }
     let views: Vec<PluginView> = p

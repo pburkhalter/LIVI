@@ -47,7 +47,7 @@ plugin has errors, LIVI logs them and starts without it.
 | `file` | Main `.slint` file; it exports every component the manifest names. It may import other files of the folder. |
 | `start` | Page shown at start (an `id` from `pages`), instead of LIVI's start page. |
 | `splash` | Picture shown full window at start, until the UI has drawn; then it fades out. |
-| `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). |
+| `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). `overlay` covers the whole window above everything, also on full screen pages and over the projection, e.g. for warnings; touches go through it except where it has a `TouchArea`. |
 | `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`; `"tab": false` keeps a page out of the tabs and the order for swiping (e.g. one the plugin opens from its own button). |
 | `fullscreen` | Paths of pages that show without the bars, e.g. `"/camera"`. |
 | `hide` | Paths of LIVI's pages the plugin replaces with its own, e.g. `"/media"`: their tabs go away, the paths still work. |
@@ -84,13 +84,14 @@ global `Livi` with these properties:
 - `playback`: where the song is (progress, elapsed time);
 - `nav`: turn-by-turn from the phone (maneuver, its icon, distance, road, time left, destination);
 - `drive`: speed, rpm and gear;
-- `car`: outside temperature, fuel, range, odometer, lights and so on. Each value of `drive` and `car` comes with a
-  `has-*` flag that says whether it arrived;
+- `car`: whether the car moves, outside temperature, fuel, range, odometer, lights and so on. Each value of `drive`
+  and `car` comes with a `has-*` flag that says whether it arrived;
 - `climate`: as the car reports it. `known` is only true for values from outside (a telemetry source). LIVI's
   defaults and the values saved from the last run do not count;
 - `other`: telemetry keys LIVI has no field for, as text. A CAN reader can send e.g. `doors` to the telemetry input
-  and a plugin shows it; `Livi.value("doors")` gives one of them by its key (`""` when there is none). The entries of
-  the telemetry key `can` come as `can.<key>`.
+  and a plugin shows it; `Livi.value("doors")` gives one of them by its key (`""` when there is none);
+- `can`: the raw values a CAN reader keeps under the telemetry key `can`, as text, apart from `other` because they may
+  change many times a second.
 
 LIVI sets each property only when it changed. A binding runs again only when a property it reads changed: one that
 shows the speed does not run when the song changes. A struct changes as a whole, though: a binding that reads one

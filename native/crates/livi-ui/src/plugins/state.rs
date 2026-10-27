@@ -183,6 +183,10 @@ fn car(t: &Json) -> Value {
             "known",
             Value::Bool(t.as_object().is_some_and(|o| !o.is_empty())),
         ),
+        (
+            "moving",
+            Value::Bool(num(&t["speedKph"]).is_some_and(|v| v > 0.0)),
+        ),
         ("ambient-c", value("ambientC")),
         ("has-ambient", has("ambientC")),
         ("fuel-pct", value("fuelPct")),
@@ -230,18 +234,9 @@ fn climate(c: &Json) -> Value {
     ])
 }
 
-/// Telemetry keys LIVI has no field for (e.g. doors from a CAN reader), as text. The entries of `can`, which LIVI
-/// keeps key by key for a CAN reader, come as "can.<key>".
-fn other(t: &Json) -> Value {
-    fn entries(v: &Json) -> impl Iterator<Item = (&String, &Json)> {
-        v.as_object().into_iter().flatten()
-    }
-    let top = entries(t)
-        .filter(|(key, _)| !KNOWN.contains(&key.as_str()))
-        .map(|(key, value)| (key.clone(), value));
-    let can = entries(&t["can"]).map(|(key, value)| (format!("can.{key}"), value));
-    let out = top
-        .chain(can)
+/// Rows of key and value as text, for `other` and `can`
+fn values<'a>(entries: impl Iterator<Item = (&'a String, &'a Json)>) -> Value {
+    let out = entries
         .filter_map(|(key, value)| {
             let text = match value {
                 Json::String(v) => v.clone(),
@@ -252,6 +247,21 @@ fn other(t: &Json) -> Value {
         })
         .collect();
     model(out)
+}
+
+/// Telemetry keys LIVI has no field for (e.g. doors from a CAN reader), as text
+fn other(t: &Json) -> Value {
+    values(
+        t.as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| !KNOWN.contains(&key.as_str())),
+    )
+}
+
+/// What a CAN reader keeps under the telemetry key `can`: raw values that may change many times a second
+fn can(t: &Json) -> Value {
+    values(t["can"].as_object().into_iter().flatten())
 }
 
 /// The value of `key` among the `other` values (LiviValue rows), "" when there is none: `Livi.value(key)`
@@ -313,6 +323,7 @@ pub fn build(
         ("car", car(t)),
         ("climate", climate(&t["climate"])),
         ("other", other(t)),
+        ("can", can(t)),
     ]
 }
 
@@ -380,14 +391,23 @@ mod tests {
     }
 
     #[test]
-    fn raw_can_values_come_by_their_key() {
-        let Value::Model(values) = other(&json!({ "can": { "doors": 4, "boxVersion": "RZ 1.2" } }))
-        else {
+    fn raw_can_values_are_apart_from_the_others() {
+        let t = json!({ "can": { "doors": 4, "boxVersion": "RZ 1.2" }, "trunkOpen": true });
+        let (Value::Model(raw), Value::Model(others)) = (can(&t), other(&t)) else {
             panic!("not a model")
         };
-        assert_eq!(find(&values, "can.doors"), s("4"));
-        assert_eq!(find(&values, "can.boxVersion"), s("RZ 1.2"));
-        assert_eq!(find(&values, "can"), s(""));
+        assert_eq!(find(&raw, "doors"), s("4"));
+        assert_eq!(find(&raw, "boxVersion"), s("RZ 1.2"));
+        assert_eq!(find(&others, "trunkOpen"), s("true"));
+        assert_eq!(find(&others, "can"), s(""));
+    }
+
+    #[test]
+    fn the_car_moves_with_any_speed() {
+        for (speed, moving) in [(json!(0), false), (json!(1), true), (json!(null), false)] {
+            let c = car(&json!({ "speedKph": speed }));
+            assert_eq!(field(&c, "moving"), Value::Bool(moving), "{speed}");
+        }
     }
 
     #[test]

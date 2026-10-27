@@ -75,6 +75,8 @@ export struct LiviDrive {
 // The other vehicle telemetry; `known`: any telemetry has arrived.
 export struct LiviCar {
     known: bool,
+    // the speed is above 0
+    moving: bool,
     ambient-c: float,
     has-ambient: bool,
     fuel-pct: float,
@@ -115,8 +117,7 @@ export struct LiviClimate {
     passenger-seat-heating: int,
 }
 
-// A telemetry value LIVI has no field for (for example doors from a CAN reader), as text; the entries of the telemetry
-// key `can` come as "can.<key>".
+// A telemetry value LIVI has no field for (for example doors from a CAN reader), as text.
 export struct LiviValue {
     key: string,
     value: string,
@@ -140,6 +141,9 @@ export global Livi {
     in property <LiviCar> car;
     in property <LiviClimate> climate;
     in property <[LiviValue]> other;
+    // what a CAN reader keeps under the telemetry key `can`: raw values that may change many times a second, apart
+    // from `other`
+    in property <[LiviValue]> can;
     callback action(verb: string, argument: string);
 
     // The value of a key in `other`, "" when there is none, e.g. Livi.value("doors")
