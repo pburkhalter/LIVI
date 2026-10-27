@@ -40,6 +40,7 @@ mod log_file;
 mod mfi;
 mod nav_text;
 mod nmea;
+mod notices;
 mod paths;
 mod power;
 mod privileged;
@@ -191,6 +192,7 @@ async fn run() -> Result<Exit, String> {
         dab: Default::default(),
         cameras: Vec::new(),
         mfi: Default::default(),
+        notices: Vec::new(),
         config,
     });
     let (asks_tx, asks, dongle_asks, update_asks) = projection::ui_channels(wants);
@@ -215,6 +217,7 @@ async fn run() -> Result<Exit, String> {
     tokio::spawn(car_bridge::run(core.clone(), inside.clone()));
     tokio::spawn(system_volume::follow(core.clone()));
     tokio::spawn(update::run(core.clone(), update_asks));
+    tokio::spawn(notices::serve(core.clone()));
     state_files::start(&core, core.activity(), &user_data);
     let res = Resources::from_env();
     tokio::spawn(audio_devices::follow(

@@ -22,6 +22,25 @@ pub struct State {
     pub cluster: Cluster,
     pub dab: Dab,
     pub config: Config,
+    /// Notifications other programs sent to LIVI (org.freedesktop.Notifications on the session bus), oldest first
+    #[serde(default)]
+    pub notices: Vec<Notice>,
+}
+
+/// A notification after the freedesktop.org Desktop Notifications specification
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Notice {
+    pub id: u32,
+    pub app: String,
+    pub summary: String,
+    pub body: String,
+    /// The urgency hint: 0 low, 1 normal, 2 critical
+    pub urgency: u8,
+    /// The category hint, e.g. "device.added"; a notice of the same program and category replaces the older one
+    pub category: String,
+    /// Unix milliseconds of the last Notify
+    pub time: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
