@@ -67,6 +67,8 @@ pub struct DrmState {
     /// the boot splash that Plymouth leaves with "plymouth quit --retain-splash", instead of the backdrop colour.
     splash_until: Option<Instant>,
     splash_timer: bool,
+    // the wait is over: the next vblank brings LIVI's first frame onto a display, then the marker is written
+    marker_due: bool,
 }
 
 /// Longest wait for the first frame of the UI before the backdrop is shown after all
@@ -211,6 +213,7 @@ fn start(
         cursor: cursor_image(),
         splash_until: Some(Instant::now() + SPLASH_WAIT),
         splash_timer: false,
+        marker_due: false,
     })
 }
 
@@ -713,8 +716,11 @@ fn vblank(state: &mut LiviState, crtc: crtc::Handle) {
         log::error!("frame not submitted: {e}");
     }
     output.frame_pending = false;
-    if output.needs_redraw {
-        let idx = output.screen_idx;
+    let redraw = output.needs_redraw.then_some(output.screen_idx);
+    if std::mem::take(&mut drm.marker_due) {
+        mark_first_frame(state);
+    }
+    if let Some(idx) = redraw {
         render(state, idx);
     }
 }
@@ -792,7 +798,7 @@ fn keep_splash(state: &mut LiviState, screen_idx: usize) -> bool {
         } else {
             log::info!("first frame without the UI (splash wait over)");
         }
-        mark_first_frame(state);
+        drm.marker_due = true;
         return false;
     }
     if !drm.splash_timer {
@@ -819,10 +825,10 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
     if !ready || state.renderer.is_none() {
         return;
     }
-    let mut parts = crate::render::frame_parts(state, screen_idx);
     if keep_splash(state, screen_idx) {
         return;
     }
+    let mut parts = crate::render::frame_parts(state, screen_idx);
     let screen_x = state.screens[screen_idx].x as f64;
     let (Some(drm), Some(renderer)) = (state.drm.as_mut(), state.renderer.as_mut()) else {
         return;
