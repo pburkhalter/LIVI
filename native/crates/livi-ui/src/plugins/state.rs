@@ -244,6 +244,17 @@ fn notices(state: &Json, now: &libc::tm) -> Value {
     model(out)
 }
 
+/// How many notices are critical (a binding cannot count in a list)
+fn critical(state: &Json) -> Value {
+    let n = state["notices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|n| n["urgency"].as_u64() == Some(2))
+        .count();
+    Value::Number(n as f64)
+}
+
 /// Climate as the car reports it. LIVI also keeps defaults and the values of the last run (source "default" or
 /// "saved") for CarPlay's climate view; only values from outside (a telemetry source, source "external") are known.
 fn climate(c: &Json) -> Value {
@@ -369,6 +380,7 @@ pub fn build(
         ("other", other(t)),
         ("can", can(t)),
         ("notices", notices(state, &tm)),
+        ("notices-critical", critical(state)),
     ];
     fields.extend(super::settings::fields(ui, settings_shown));
     fields
@@ -501,6 +513,7 @@ mod tests {
         assert_eq!(field(&first, "urgency"), s("low"));
         assert_eq!(field(&rows.row_data(1).unwrap(), "urgency"), s("critical"));
         assert!(same(&notices(&json!({}), &now), &model(Vec::new())));
+        assert_eq!(critical(&state), Value::Number(1.0));
     }
 
     #[test]
