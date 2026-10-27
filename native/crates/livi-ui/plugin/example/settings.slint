@@ -1,0 +1,58 @@
+// The example's settings page: LIVI's settings lists, drawn by the plugin (docs/plugins.md, "Settings"). Other
+// screens (choices, numbers, colours ...) LIVI shows on its own page, because the manifest names only "list".
+
+import { Livi } from "@livi/api.slint";
+
+export component Settings inherits Window {
+    background: #101418;
+    VerticalLayout {
+        padding: 24px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 16px;
+            if Livi.settings.can-back: Rectangle {
+                width: 96px;
+                height: 48px;
+                background: back.pressed ? #2a3440 : #1c242c;
+                Text { text: "Back"; color: #ffffff; }
+                back := TouchArea { clicked => { Livi.action("settings", "back"); } }
+            }
+            Text {
+                text: Livi.settings.title;
+                color: #ffffff;
+                font-size: 28px;
+                vertical-alignment: center;
+            }
+        }
+        for row[i] in Livi.setting-rows: Rectangle {
+            height: 56px;
+            background: touch.pressed ? #1c242c : transparent;
+            HorizontalLayout {
+                Text {
+                    text: row.label;
+                    color: row.enabled ? #ffffff : #808890;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: row.kind == "toggle" ? (row.checked ? "on" : "off") : row.value;
+                    color: #c0c8d0;
+                    vertical-alignment: center;
+                }
+            }
+            touch := TouchArea {
+                enabled: row.enabled;
+                clicked => {
+                    if row.kind == "toggle" {
+                        Livi.action("settings", "toggle:" + i);
+                    } else if row.kind == "button" || row.kind == "pick" || row.kind == "device" {
+                        Livi.action("settings", "press:" + i);
+                    } else if row.kind == "route" || row.kind == "value" || row.kind == "custom" {
+                        Livi.action("settings", "open:" + row.node);
+                    }
+                }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}

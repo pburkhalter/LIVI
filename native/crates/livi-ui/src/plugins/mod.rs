@@ -4,6 +4,7 @@
 //! plugin/api.slint) and report the user's wishes through its callback `action`.
 
 mod plugin;
+mod settings;
 mod state;
 
 use std::cell::RefCell;
@@ -115,6 +116,35 @@ pub fn tabs() -> Vec<TabData> {
 /// Whether the plugin replaces this page of LIVI's, so its tab goes away
 pub fn hides(page: Page) -> bool {
     plugin().is_some_and(|p| p.hide.contains(&state::tab_path(page, "")))
+}
+
+/// Id of the plugin's page that shows LIVI's settings ("settings" in the manifest), if it has one
+pub fn settings_page() -> Option<String> {
+    plugin()?
+        .pages
+        .iter()
+        .find(|p| !p.settings.is_empty())
+        .map(|p| p.id.clone())
+}
+
+/// Whether the plugin's settings page is on screen
+pub fn settings_shown(ui: &AppWindow) -> bool {
+    ui.get_page() == Page::Plugin
+        && settings_page().is_some_and(|id| ui.get_plugin_page_id() == id.as_str())
+}
+
+/// Whether the plugin's settings page draws the screen LIVI's settings are on
+pub fn settings_drawable(ui: &AppWindow) -> bool {
+    let Some(p) = plugin() else { return false };
+    p.pages
+        .iter()
+        .find(|p| !p.settings.is_empty())
+        .is_some_and(|page| settings::drawable(ui, &page.settings))
+}
+
+/// A wish of the plugin for LIVI's settings, `Livi.action("settings", ...)`; false if it is not one
+pub fn settings_act(ui: &AppWindow, argument: &str) -> bool {
+    settings::act(ui, argument)
 }
 
 pub fn phone_state(ui: &AppWindow) -> &'static str {
