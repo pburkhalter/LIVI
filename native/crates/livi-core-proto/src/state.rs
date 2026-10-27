@@ -41,6 +41,9 @@ pub struct Notice {
     pub category: String,
     /// Unix milliseconds of the last Notify
     pub time: u64,
+    /// Grows with every Notify that adds a notice or changes what it says (the list is in this order), so that a UI
+    /// tells what is new; a Notify that repeats a notice keeps it
+    pub serial: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

@@ -93,7 +93,8 @@ global `Livi` with these properties:
   and a plugin shows it; `Livi.value("doors")` gives one of them by its key (`""` when there is none);
 - `notices`: notifications other programs sent, newest first. LIVI serves `org.freedesktop.Notifications` on the
   session bus, so any program notifies with the usual tools, e.g. `notify-send -u critical "Title" "Text"`. Each has
-  program, summary, body, urgency (`low`, `normal`, `critical`) and the local time it came;
+  program, summary, body, urgency (`low`, `normal`, `critical`) and the local time it came, and a `serial` that grows
+  with every notice that comes or says something new (for banners: what is new since the page last looked);
   `Livi.action("notice", "dismiss:<id>")` closes one;
 - `can`: the raw values a CAN reader keeps under the telemetry key `can`, as text, apart from `other` because they may
   change many times a second.

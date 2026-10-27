@@ -223,6 +223,7 @@ fn notices(state: &Json, now: &libc::tm) -> Value {
             };
             record(vec![
                 ("id", Value::Number(n["id"].as_f64().unwrap_or(0.0))),
+                ("serial", Value::Number(n["serial"].as_f64().unwrap_or(0.0))),
                 ("app", text("app")),
                 ("summary", text("summary")),
                 ("body", text("body")),
