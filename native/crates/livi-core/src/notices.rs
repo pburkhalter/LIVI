@@ -37,14 +37,25 @@ fn first_id() -> u32 {
     ((now_ms() / 1000) as u32 & 0x7fff_ffff).max(1)
 }
 
+/// What the server hands out: ids, and the serials of changes
+struct Counters {
+    id: AtomicU32,
+    serial: AtomicU32,
+}
+
+impl Counters {
+    fn new(first_id: u32) -> Self {
+        Self {
+            id: AtomicU32::new(first_id),
+            serial: AtomicU32::new(1),
+        }
+    }
+}
+
 /// Puts a notice into the list and returns its id. It replaces the notice `replaces_id` if that is still there, else
-/// the same program's notice of the same category, and keeps its id; otherwise `next` gives a new one.
-fn put(
-    list: &mut Vec<Notice>,
-    mut notice: Notice,
-    replaces_id: u32,
-    next: impl FnOnce() -> u32,
-) -> u32 {
+/// the same program's notice of the same category, and keeps its id; otherwise it gets a new one. A notice that says
+/// something new goes to the end with a new serial; one that only repeats an old one keeps its place and serial.
+fn put(list: &mut Vec<Notice>, mut notice: Notice, replaces_id: u32, counters: &Counters) -> u32 {
     let old = list
         .iter()
         .position(|n| replaces_id != 0 && n.id == replaces_id)
@@ -53,10 +64,23 @@ fn put(
                 !notice.category.is_empty() && n.app == notice.app && n.category == notice.category
             })
         });
-    notice.id = match old {
-        Some(i) => list.remove(i).id,
-        None => next(),
-    };
+    if let Some(i) = old {
+        let kept = &mut list[i];
+        notice.id = kept.id;
+        notice.serial = kept.serial;
+        let repeat = Notice {
+            time: kept.time,
+            ..notice.clone()
+        } == *kept;
+        if repeat {
+            kept.time = notice.time;
+            return kept.id;
+        }
+        list.remove(i);
+    } else {
+        notice.id = counters.id.fetch_add(1, Ordering::Relaxed);
+    }
+    notice.serial = counters.serial.fetch_add(1, Ordering::Relaxed);
     let id = notice.id;
     list.push(notice);
     if list.len() > KEEP {
@@ -93,7 +117,7 @@ pub async fn dismiss(core: &Core, id: u32) {
 
 struct Server {
     core: Arc<Core>,
-    next: AtomicU32,
+    counters: Counters,
 }
 
 #[zbus::interface(name = "org.freedesktop.Notifications")]
@@ -132,12 +156,11 @@ impl Server {
             urgency,
             category,
             time,
+            serial: 0,
         };
         let mut id = 0;
         self.core.hub.update(|s| {
-            id = put(&mut s.notices, notice, replaces_id, || {
-                self.next.fetch_add(1, Ordering::Relaxed)
-            });
+            id = put(&mut s.notices, notice, replaces_id, &self.counters);
         });
         // A timeout in ms lets it expire; -1 (the server decides) and 0 keep it until it is closed, as the list is the
         // place to look later. A critical notice does not expire.
@@ -183,7 +206,7 @@ impl Server {
 async fn connect(core: Arc<Core>) -> zbus::Result<zbus::Connection> {
     let server = Server {
         core,
-        next: AtomicU32::new(first_id()),
+        counters: Counters::new(first_id()),
     };
     zbus::connection::Builder::session()?
         .name(NAME)?
@@ -219,51 +242,64 @@ mod tests {
     #[test]
     fn a_notice_replaces_by_id_or_by_program_and_category() {
         let mut list = Vec::new();
-        let mut next = 10..;
-        let mut new_id = || next.next().unwrap();
+        let counters = Counters::new(10);
         let a = put(
             &mut list,
             notice("updates", "x-t100.updates", "3"),
             0,
-            &mut new_id,
+            &counters,
         );
-        let b = put(&mut list, notice("radio", "", "on air"), 0, &mut new_id);
+        let b = put(&mut list, notice("radio", "", "on air"), 0, &counters);
         assert_eq!((a, b), (10, 11));
+        let changed = notice("updates", "x-t100.updates", "4");
+        assert_eq!(put(&mut list, changed, 0, &counters), a);
         assert_eq!(
-            put(
-                &mut list,
-                notice("updates", "x-t100.updates", "4"),
-                0,
-                &mut new_id
-            ),
-            a
-        );
-        assert_eq!(
-            put(&mut list, notice("radio", "", "off air"), b, &mut new_id),
+            put(&mut list, notice("radio", "", "off air"), b, &counters),
             b
         );
         assert_eq!(list.len(), 2);
         assert_eq!(list.last().map(|n| n.summary.as_str()), Some("off air"));
         // a category of another program, or an id that is gone, makes a new notice
-        assert_eq!(
-            put(
-                &mut list,
-                notice("other", "x-t100.updates", "x"),
-                99,
-                &mut new_id
-            ),
-            12
+        let other = notice("other", "x-t100.updates", "x");
+        assert_eq!(put(&mut list, other, 99, &counters), 12);
+    }
+
+    #[test]
+    fn something_new_comes_last_a_repeat_stays() {
+        let mut list = Vec::new();
+        let counters = Counters::new(1);
+        let a = put(
+            &mut list,
+            notice("updates", "x-t100.updates", "3"),
+            0,
+            &counters,
         );
+        put(&mut list, notice("radio", "", "on air"), 0, &counters);
+        let serials = |list: &[Notice]| list.iter().map(|n| (n.id, n.serial)).collect::<Vec<_>>();
+        assert_eq!(serials(&list), [(1, 1), (2, 2)]);
+        // the same again, later: same place, same serial, the new time
+        let again = Notice {
+            time: 5,
+            ..notice("updates", "x-t100.updates", "3")
+        };
+        assert_eq!(put(&mut list, again, a, &counters), a);
+        assert_eq!(serials(&list), [(1, 1), (2, 2)]);
+        assert_eq!(list[0].time, 5);
+        // something new: last, with the next serial
+        let worse = Notice {
+            urgency: 2,
+            ..notice("updates", "x-t100.updates", "3")
+        };
+        put(&mut list, worse, a, &counters);
+        assert_eq!(serials(&list), [(2, 2), (1, 3)]);
     }
 
     #[test]
     fn the_list_keeps_the_newest() {
         let mut list = Vec::new();
-        let mut next = 1..;
+        let counters = Counters::new(1);
         for i in 0..KEEP + 5 {
-            put(&mut list, notice("a", "", &i.to_string()), 0, || {
-                next.next().unwrap()
-            });
+            put(&mut list, notice("a", "", &i.to_string()), 0, &counters);
         }
         assert_eq!(list.len(), KEEP);
         assert_eq!(list[0].summary, "5");
