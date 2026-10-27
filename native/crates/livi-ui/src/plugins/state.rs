@@ -204,6 +204,22 @@ fn car(t: &Json) -> Value {
     ])
 }
 
+/// Wi-Fi and Bluetooth: "off", "on" or "connected" (a phone over it); what the core does not tell reads "off"
+fn links(state: &Json) -> Value {
+    let link = |radio: &str| {
+        let told = state["links"][radio].as_str().unwrap_or_default();
+        s(if matches!(told, "on" | "connected") {
+            told
+        } else {
+            "off"
+        })
+    };
+    record(vec![
+        ("wifi", link("wifi")),
+        ("bluetooth", link("bluetooth")),
+    ])
+}
+
 /// The notices other programs sent (org.freedesktop.Notifications, served by the core), newest first, with the
 /// local time they came
 fn notices(state: &Json, now: &libc::tm) -> Value {
@@ -368,6 +384,7 @@ pub fn build(
         ("date", date(&tm)),
         ("dark", Value::Bool(ui.global::<Theme>().get_dark())),
         ("phone", s(phone)),
+        ("links", links(state)),
         ("pages", pages(ui, plugin, current)),
         ("media", media(ui)),
         ("playback", playback(ui)),
@@ -515,6 +532,18 @@ mod tests {
         assert_eq!(field(&rows.row_data(1).unwrap(), "urgency"), s("critical"));
         assert!(same(&notices(&json!({}), &now), &model(Vec::new())));
         assert_eq!(critical(&state), Value::Number(1.0));
+    }
+
+    #[test]
+    fn links_say_off_for_what_the_core_does_not_tell() {
+        let both = links(&json!({ "links": { "wifi": "connected", "bluetooth": "on" } }));
+        assert_eq!(field(&both, "wifi"), s("connected"));
+        assert_eq!(field(&both, "bluetooth"), s("on"));
+        let older_core = links(&json!({}));
+        assert_eq!(field(&older_core, "wifi"), s("off"));
+        assert_eq!(field(&older_core, "bluetooth"), s("off"));
+        let unknown = links(&json!({ "links": { "bluetooth": "pairing" } }));
+        assert_eq!(field(&unknown, "bluetooth"), s("off"));
     }
 
     #[test]

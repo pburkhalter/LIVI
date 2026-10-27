@@ -72,6 +72,7 @@ impl Rig {
             dab: Default::default(),
             cameras: Vec::new(),
             mfi: Default::default(),
+            links: Default::default(),
             notices: Vec::new(),
             config: defaults(),
         }));

@@ -80,6 +80,9 @@ global `Livi` with these properties:
 - `page`: the page on screen, a path;
 - `clock` and `date`;
 - `dark` (dark mode) and `phone` (`none`, `connected`, `streaming`);
+- `links`: Wi-Fi and Bluetooth, each `off` (no adapter, or it is switched off), `on` (ready, no phone over it) or
+  `connected` (a phone is connected over it). Bluetooth follows BlueZ on the system bus (`off` without it); Wi-Fi is
+  `on` while the system has a Wi-Fi interface and `connected` while a phone is present over Wi-Fi;
 - `pages`: the pages in tab order, with title, icon and whether each one is active;
 - `media`: title, artist, album, artwork, playing, duration;
 - `playback`: where the song is (progress, elapsed time);
