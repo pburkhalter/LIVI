@@ -46,6 +46,9 @@ use modes::*;
 type Surface =
     DrmCompositor<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 
+/// A frame for the `gpu-wait` thread: the CRTC it goes to, its number and the point the GPU reaches when done
+type GpuWait = std::sync::mpsc::Sender<(crtc::Handle, u64, SyncPoint)>;
+
 pub struct DrmState {
     session: LibSeatSession,
     libinput: Libinput,
@@ -55,7 +58,9 @@ pub struct DrmState {
     import_node: Option<DrmNode>,
     loop_handle: LoopHandle<'static, LiviState>,
     // frames whose GPU work is still running go here; a thread waits for them and hands them back to the loop
-    gpu_wait: std::sync::mpsc::Sender<(crtc::Handle, SyncPoint)>,
+    gpu_wait: GpuWait,
+    // numbers the frames sent to `gpu_wait`, so that one coming back after its output was reset or replaced is dropped
+    frames: u64,
     connectors: Vec<Connector>,
     outputs: Vec<Output>,
     wanted: BTreeSet<usize>,
@@ -85,8 +90,8 @@ struct Output {
     transform: Transform,
     surface: Surface,
     frame_pending: bool,
-    // rendered, waiting for the GPU to finish before it goes to the display
-    drawing: bool,
+    // rendered, waiting for the GPU to finish before it goes to the display: the frame's number
+    drawing: Option<u64>,
     direct: usize,
     needs_redraw: bool,
 }
@@ -200,6 +205,7 @@ fn start(
         import_node,
         loop_handle: handle.clone(),
         gpu_wait,
+        frames: 0,
         connectors,
         outputs: Vec::new(),
         wanted: BTreeSet::from([0]),
@@ -215,22 +221,24 @@ fn start(
 /// GPU has drawn it (see `render`), and waiting in the loop would hold back input and clients for as long.
 fn gpu_waiter(
     handle: &LoopHandle<'static, LiviState>,
-) -> Result<std::sync::mpsc::Sender<(crtc::Handle, SyncPoint)>, Box<dyn std::error::Error>> {
-    let (done, finished) = channel::channel::<crtc::Handle>();
+) -> Result<GpuWait, Box<dyn std::error::Error>> {
+    let (done, finished) = channel::channel::<(crtc::Handle, u64)>();
     handle
         .insert_source(finished, |event, _, state: &mut LiviState| {
-            if let channel::Event::Msg(crtc) = event {
-                drawn(state, crtc);
+            if let channel::Event::Msg((crtc, frame)) = event {
+                drawn(state, crtc, frame);
             }
         })
         .map_err(|e| e.error)?;
-    let (wait, frames) = std::sync::mpsc::channel::<(crtc::Handle, SyncPoint)>();
+    let (wait, frames) = std::sync::mpsc::channel::<(crtc::Handle, u64, SyncPoint)>();
     std::thread::Builder::new()
         .name("gpu-wait".into())
         .spawn(move || {
-            for (crtc, sync) in frames {
-                let _ = sync.wait();
-                if done.send(crtc).is_err() {
+            for (crtc, frame, sync) in frames {
+                if let Err(e) = sync.wait() {
+                    log::warn!("waiting for the GPU: {e}");
+                }
+                if done.send((crtc, frame)).is_err() {
                     break;
                 }
             }
@@ -582,7 +590,7 @@ fn light(
         transform,
         surface,
         frame_pending: false,
-        drawing: false,
+        drawing: None,
         direct: 0,
         needs_redraw: true,
     };
@@ -717,7 +725,7 @@ fn session_event(state: &mut LiviState, event: SessionEvent) {
                     log::error!("{} did not reset: {e}", output.connector);
                 }
                 output.frame_pending = false;
-                output.drawing = false;
+                output.drawing = None;
                 output.needs_redraw = true;
             }
             rescan(state);
@@ -744,15 +752,23 @@ fn vblank(state: &mut LiviState, crtc: crtc::Handle) {
 }
 
 /// The GPU has drawn the frame `render` left on `crtc`: it goes to the display now.
-fn drawn(state: &mut LiviState, crtc: crtc::Handle) {
+fn drawn(state: &mut LiviState, crtc: crtc::Handle, frame: u64) {
     let Some(drm) = state.drm.as_mut() else {
         return;
     };
-    // gone or reset in the meantime (e.g. after a VT switch): nothing waits for this frame any more
-    let Some(output) = drm.outputs.iter_mut().find(|o| o.crtc == crtc && o.drawing) else {
+    // Paused, or the output was reset or replaced in the meantime (VT switch, new mode): nothing waits for this frame
+    // any more, and activating the session renders anew.
+    if !drm.active {
+        return;
+    }
+    let Some(output) = drm
+        .outputs
+        .iter_mut()
+        .find(|o| o.crtc == crtc && o.drawing == Some(frame))
+    else {
         return;
     };
-    output.drawing = false;
+    output.drawing = None;
     if let Err(e) = output.surface.queue_frame(()) {
         log::error!("display flip: {e}");
         return;
@@ -776,7 +792,7 @@ pub fn pump(state: &mut LiviState) {
     let due: Vec<usize> = drm
         .outputs
         .iter()
-        .filter(|o| o.needs_redraw && !o.frame_pending && !o.drawing)
+        .filter(|o| o.needs_redraw && !o.frame_pending && o.drawing.is_none())
         .map(|o| o.screen_idx)
         .collect();
     for idx in due {
@@ -788,7 +804,10 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
     let ready = state.drm.as_ref().is_some_and(|d| {
         d.active
             && d.outputs.iter().any(|o| {
-                o.screen_idx == screen_idx && !o.frame_pending && !o.drawing && o.needs_redraw
+                o.screen_idx == screen_idx
+                    && !o.frame_pending
+                    && o.drawing.is_none()
+                    && o.needs_redraw
             })
     });
     if !ready || state.renderer.is_none() {
@@ -856,15 +875,18 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
                 && let PrimaryPlaneElement::Swapchain(element) = &frame.primary_element
                 && !element.sync.is_reached()
             {
+                drm.frames += 1;
                 if drm
                     .gpu_wait
-                    .send((output.crtc, element.sync.clone()))
+                    .send((output.crtc, drm.frames, element.sync.clone()))
                     .is_ok()
                 {
-                    output.drawing = true;
+                    output.drawing = Some(drm.frames);
                     return;
                 }
-                let _ = element.sync.wait();
+                if let Err(e) = element.sync.wait() {
+                    log::warn!("waiting for the GPU: {e}");
+                }
             }
             match output.surface.queue_frame(()) {
                 Ok(()) => true,
