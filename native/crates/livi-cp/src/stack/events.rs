@@ -186,6 +186,28 @@ impl<M: Media> Conn<M> {
         }
     }
 
+    /// Moves the phone's picture into the view area the config asks for now, if the phone knows it: the areas it got
+    /// in /info are still the same (otherwise only a new connection tells it)
+    pub(super) async fn follow_view_area(&mut self) {
+        let (areas, index) = {
+            let cfg = self.ctx.config.borrow();
+            (
+                cfg.info.main.view_areas.clone(),
+                cfg.info.main.view_area_index,
+            )
+        };
+        let Some((told, told_index)) = &self.view_areas_told else {
+            return;
+        };
+        if *told != areas || *told_index == index || index >= areas.len() || self.event.is_none() {
+            return;
+        }
+        println!("[cpStack] view area {index} of {}", areas.len());
+        self.view_areas_told = Some((areas.clone(), index));
+        let command = info::view_area_command(&self.main_uuid(), index, areas.len());
+        self.send_event_command(&command).await;
+    }
+
     pub(super) async fn follow_cluster_url(&mut self) {
         if self.cluster_url.is_none()
             || self.cluster_url == Some(self.wanted_cluster_url())

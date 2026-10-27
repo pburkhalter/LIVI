@@ -289,17 +289,27 @@ fn insets(top: u32, bottom: u32, left: u32, right: u32) -> Option<Insets> {
     })
 }
 
-/// Where the phone draws on the main screen: in the card (video_card_*) while the picture shows as one, else in the
-/// view area set for the projection
-fn main_view_area(cfg: &Config) -> Option<Insets> {
-    match cfg.video_card().filter(|_| cfg.projection_card) {
-        Some([top, bottom, left, right]) => insets(top, bottom, left, right),
-        None => insets(
-            cfg.projection_view_area_top,
-            cfg.projection_view_area_bottom,
-            cfg.projection_view_area_left,
-            cfg.projection_view_area_right,
-        ),
+/// Where the phone may draw on the main screen: the view area set for the projection, and with a card set
+/// (video_card_*) the card as a second one; and the one it draws in now (the card while the picture shows as one).
+/// The phone knows both from the start, so switching between them needs no new connection.
+fn main_view_areas(cfg: &Config) -> (Vec<Insets>, usize) {
+    let full = Insets {
+        top: cfg.projection_view_area_top.into(),
+        bottom: cfg.projection_view_area_bottom.into(),
+        left: cfg.projection_view_area_left.into(),
+        right: cfg.projection_view_area_right.into(),
+    };
+    match cfg.video_card() {
+        Some([top, bottom, left, right]) => {
+            let card = Insets {
+                top: top.into(),
+                bottom: bottom.into(),
+                left: left.into(),
+                right: right.into(),
+            };
+            (vec![full, card], usize::from(cfg.projection_card))
+        }
+        None => (vec![full], 0),
     }
 }
 
@@ -350,6 +360,7 @@ pub fn stack_config(
         even(or(cfg.projection_width, 1920)),
         even(or(cfg.projection_height, 1080)),
     );
+    let (main_areas, main_area) = main_view_areas(cfg);
     let main_mm = dpi_mm(cfg.projection_dpi, main_w, main_h)
         .or_else(|| panel_mm(panels.get("main"), main_w, main_h))
         .or_else(|| fullscreen_mm(screen, main_w, main_h));
@@ -367,12 +378,14 @@ pub fn stack_config(
             width_physical_mm: mm.map(|m| m.0),
             height_physical_mm: mm.map(|m| m.1),
             fps: Some(or(cfg.cluster_fps, 60).into()),
-            view_area: insets(
+            view_areas: insets(
                 cfg.cluster_view_area_top,
                 cfg.cluster_view_area_bottom,
                 cfg.cluster_view_area_left,
                 cfg.cluster_view_area_right,
-            ),
+            )
+            .into_iter()
+            .collect(),
             safe_area: insets(
                 cfg.cluster_safe_area_top,
                 cfg.cluster_safe_area_bottom,
@@ -409,7 +422,8 @@ pub fn stack_config(
                 height_physical_mm: main_mm.map(|m| m.1),
                 fps: Some(or(cfg.projection_fps, 60).into()),
                 primary_input_device: Some(1),
-                view_area: main_view_area(cfg),
+                view_areas: main_areas,
+                view_area_index: main_area,
                 safe_area: insets(
                     cfg.projection_safe_area_top,
                     cfg.projection_safe_area_bottom,
@@ -779,22 +793,27 @@ mod tests {
     }
 
     #[test]
-    fn the_phone_draws_in_the_card_while_the_picture_shows_as_one() {
+    fn the_phone_knows_the_card_and_draws_in_it_while_the_picture_shows_as_one() {
         let mut cfg = defaults();
         cfg.projection_view_area_left = 7;
-        let area = |cfg: &Config| {
-            let a = main_view_area(cfg).unwrap();
-            (a.top, a.bottom, a.left, a.right)
+        let areas = |cfg: &Config| {
+            let (areas, now) = main_view_areas(cfg);
+            let edges = areas
+                .iter()
+                .map(|a| (a.top, a.bottom, a.left, a.right))
+                .collect::<Vec<_>>();
+            (edges, now)
         };
-        assert_eq!(area(&cfg), (0, 0, 7, 0));
-        // a card without a place, or a place without the card: the view area set for the projection
+        // without a card: only the view area set for the projection, also with projection_card
+        assert_eq!(areas(&cfg), (vec![(0, 0, 7, 0)], 0));
         cfg.projection_card = true;
-        assert_eq!(area(&cfg), (0, 0, 7, 0));
+        assert_eq!(areas(&cfg), (vec![(0, 0, 7, 0)], 0));
+        // with a card: both, the card the one now
         (cfg.video_card_top, cfg.video_card_bottom) = (16, 156);
         (cfg.video_card_left, cfg.video_card_right) = (300, 24);
-        assert_eq!(area(&cfg), (16, 156, 300, 24));
+        assert_eq!(areas(&cfg), (vec![(0, 0, 7, 0), (16, 156, 300, 24)], 1));
         cfg.projection_card = false;
-        assert_eq!(area(&cfg), (0, 0, 7, 0));
+        assert_eq!(areas(&cfg).1, 0);
     }
 
     #[test]

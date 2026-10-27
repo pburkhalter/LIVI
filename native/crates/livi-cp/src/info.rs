@@ -38,7 +38,11 @@ pub struct DisplayConfig {
     pub height_physical_mm: Option<i64>,
     pub fps: Option<i64>,
     pub primary_input_device: Option<i64>,
-    pub view_area: Option<Insets>,
+    /// The areas of the picture the phone may draw in; with several the accessory switches between them in a session
+    /// (updateViewArea, view_area_command), without reconnecting
+    pub view_areas: Vec<Insets>,
+    /// The area the phone draws in now (initialViewArea)
+    pub view_area_index: usize,
     pub safe_area: Option<Insets>,
     pub safe_area_draw_outside: Option<bool>,
     pub status_bar_edge: Option<u64>,
@@ -171,8 +175,10 @@ fn audio_formats(entertainment_rate: u32) -> Value {
     ])
 }
 
-fn area(d: &DisplayConfig) -> Option<Value> {
-    let va = d.view_area?;
+/// How long the phone animates a switch between view areas
+const VIEW_AREA_ANIMATION_MS: i64 = 300;
+
+fn area(d: &DisplayConfig, va: Insets) -> Value {
     let (w, h) = (d.width_pixels, d.height_pixels);
     let mut view = vec![
         ("widthPixels".to_string(), num(w - va.left - va.right)),
@@ -195,12 +201,38 @@ fn area(d: &DisplayConfig) -> Option<Value> {
     if let Some(edge) = d.status_bar_edge {
         view.push(("viewAreaStatusBarEdge".to_string(), Value::Int(edge)));
     }
-    view.push(("viewAreaTransitionControl".to_string(), Value::Bool(false)));
+    // the accessory switches between several areas
+    let switched = d.view_areas.len() > 1;
+    view.push((
+        "viewAreaTransitionControl".to_string(),
+        Value::Bool(switched),
+    ));
     view.push((
         "viewAreaSupportsFocusTransfer".to_string(),
         Value::Bool(false),
     ));
-    Some(Value::Dict(view))
+    Value::Dict(view)
+}
+
+/// The command that moves the phone's picture on the display `uuid` into its view area `index` (event channel),
+/// with the other declared areas as its neighbours
+pub fn view_area_command(uuid: &str, index: usize, count: usize) -> Value {
+    let adjacent = (0..count)
+        .filter(|&i| i != index)
+        .map(|i| Value::Int(i as u64))
+        .collect();
+    dict([
+        ("type", Value::String("updateViewArea".into())),
+        (
+            "params",
+            dict([
+                ("uuid", Value::String(uuid.into())),
+                ("viewAreaIndex", Value::Int(index as u64)),
+                ("animationDurationMillis", num(VIEW_AREA_ANIMATION_MS)),
+                ("adjacentViewAreas", Value::Array(adjacent)),
+            ]),
+        ),
+    ])
 }
 
 const FALLBACK_DPI: f64 = 200.0;
@@ -246,9 +278,14 @@ fn display(d: &DisplayConfig, kind: u64, uuid: &str) -> Value {
             Value::Int(APPEARANCE_AUTOMATIC),
         ),
     ];
-    if let Some(view) = area(d) {
-        entry.push(("viewAreas".to_string(), Value::Array(vec![view])));
-        entry.push(("initialViewArea".to_string(), Value::Int(0)));
+    if !d.view_areas.is_empty() {
+        let areas = d.view_areas.iter().map(|&va| area(d, va)).collect();
+        entry.push(("viewAreas".to_string(), Value::Array(areas)));
+        let index = d.view_area_index.min(d.view_areas.len() - 1);
+        entry.push(("initialViewArea".to_string(), Value::Int(index as u64)));
+        if d.view_areas.len() > 1 {
+            entry.push(("viewAreaTransitionControl".to_string(), Value::Bool(true)));
+        }
     }
     if let Some(url) = d.initial_url.as_deref().filter(|u| !u.is_empty()) {
         entry.push(("initialURL".to_string(), Value::String(url.into())));
@@ -455,7 +492,7 @@ pub(crate) mod tests {
                 width_pixels: 1280,
                 height_pixels: 720,
                 fps: Some(60),
-                view_area: Some(Insets::default()),
+                view_areas: vec![Insets::default()],
                 safe_area: Some(Insets {
                     top: 0,
                     bottom: 0,
@@ -473,6 +510,57 @@ pub(crate) mod tests {
             right_hand_drive: false,
             theme_displays: None,
         }
+    }
+
+    #[test]
+    fn several_view_areas_are_switched_by_the_accessory() {
+        let mut cfg = sample();
+        let card = Insets {
+            top: 16,
+            bottom: 124,
+            left: 252,
+            right: 20,
+        };
+        cfg.main.view_areas = vec![Insets::default(), card];
+        cfg.main.view_area_index = 1;
+        let info = build(&cfg);
+        let main = &info.get("displays").and_then(Value::as_array).unwrap()[0];
+        let areas = main.get("viewAreas").and_then(Value::as_array).unwrap();
+        assert_eq!(areas.len(), 2);
+        let n = |v: &Value, key: &str| v.get(key).and_then(Value::as_int);
+        assert_eq!(n(&areas[1], "widthPixels"), Some(1280 - 252 - 20));
+        assert_eq!(n(&areas[1], "originXPixels"), Some(252));
+        assert_eq!(n(main, "initialViewArea"), Some(1));
+        assert_eq!(
+            main.get("viewAreaTransitionControl"),
+            Some(&Value::Bool(true))
+        );
+        // one area: as before, no switching
+        cfg.main.view_areas.truncate(1);
+        let info = build(&cfg);
+        let main = &info.get("displays").and_then(Value::as_array).unwrap()[0];
+        assert_eq!(n(main, "initialViewArea"), Some(0));
+        assert_eq!(main.get("viewAreaTransitionControl"), None);
+    }
+
+    #[test]
+    fn the_switch_names_the_area_and_its_neighbours() {
+        let c = view_area_command(MAIN_UUID, 1, 3);
+        assert_eq!(
+            c.get("type").and_then(Value::as_str),
+            Some("updateViewArea")
+        );
+        let p = c.get("params").unwrap();
+        assert_eq!(p.get("uuid").and_then(Value::as_str), Some(MAIN_UUID));
+        assert_eq!(p.get("viewAreaIndex").and_then(Value::as_int), Some(1));
+        assert_eq!(
+            p.get("animationDurationMillis").and_then(Value::as_int),
+            Some(300)
+        );
+        assert_eq!(
+            p.get("adjacentViewAreas"),
+            Some(&Value::Array(vec![Value::Int(0), Value::Int(2)]))
+        );
     }
 
     #[test]
