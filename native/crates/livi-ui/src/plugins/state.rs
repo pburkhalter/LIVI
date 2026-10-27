@@ -8,6 +8,7 @@ use slint::{ComponentHandle as _, Image, Model, ModelRc, SharedString, VecModel}
 use slint_interpreter::{Struct, Value};
 
 use super::plugin::Plugin;
+use crate::settings_ui::tr;
 use crate::{AppWindow, Page, Theme};
 
 fn num(v: &Json) -> Option<f64> {
@@ -29,13 +30,6 @@ fn record(fields: Vec<(&str, Value)>) -> Value {
 
 fn model(items: Vec<Value>) -> Value {
     Value::Model(ModelRc::from(Rc::new(VecModel::from(items))))
-}
-
-fn local_time() -> libc::tm {
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&now, &mut tm) };
-    tm
 }
 
 fn date(tm: &libc::tm) -> Value {
@@ -69,11 +63,11 @@ fn pages(ui: &AppWindow, plugin: &Plugin, current: &str) -> Value {
                 Page::Plugin => plugin
                     .page(&tab.plugin)
                     .map_or_else(|| tab.plugin.to_string(), |p| p.title.clone()),
-                Page::Projection => "Projection".into(),
-                Page::Telemetry => "Dashboard".into(),
-                Page::Media => "Media".into(),
-                Page::Camera => "Camera".into(),
-                Page::Settings => "Settings".into(),
+                Page::Projection => tr("settings.startPageHome", "Home"),
+                Page::Telemetry => tr("settings.dashboard", "Dashboard"),
+                Page::Media => tr("settings.startPageMedia", "Media"),
+                Page::Camera => tr("settings.startPageCamera", "Camera"),
+                Page::Settings => tr("settings.startPageSettings", "Settings"),
             };
             record(vec![
                 ("active", Value::Bool(path == current)),
@@ -103,9 +97,15 @@ fn media(ui: &AppWindow) -> Value {
         ("artwork", Value::Image(ui.get_artwork())),
         ("has-artwork", Value::Bool(ui.get_has_artwork())),
         ("playing", Value::Bool(ui.get_playing())),
+        ("total-ms", Value::Number(f64::from(ui.get_total_ms()))),
+    ])
+}
+
+/// Where the song is: apart from `media`, as it changes every second while it plays
+fn playback(ui: &AppWindow) -> Value {
+    record(vec![
         ("progress", Value::Number(f64::from(ui.get_progress()))),
         ("elapsed-ms", Value::Number(f64::from(ui.get_elapsed_ms()))),
-        ("total-ms", Value::Number(f64::from(ui.get_total_ms()))),
     ])
 }
 
@@ -150,26 +150,39 @@ const KNOWN: &[&str] = &[
     "notification",
 ];
 
-fn car(t: &Json) -> Value {
-    let f = |key: &str| num(&t[key]);
-    let b = |key: &str| Value::Bool(t[key].as_bool().unwrap_or(false));
-    let value = |key: &str| Value::Number(f(key).unwrap_or(0.0));
-    let has = |key: &str| Value::Bool(f(key).is_some());
+fn number(t: &Json, key: &str) -> Value {
+    Value::Number(num(&t[key]).unwrap_or(0.0))
+}
+
+fn has(t: &Json, key: &str) -> Value {
+    Value::Bool(num(&t[key]).is_some())
+}
+
+/// What changes many times a second while driving: apart from `car`, so that reading `car` costs nothing then
+fn drive(t: &Json) -> Value {
     let gear = match &t["gear"] {
         Json::String(g) => g.clone(),
         Json::Number(n) => n.to_string(),
         _ => String::new(),
     };
     record(vec![
+        ("speed-kph", number(t, "speedKph")),
+        ("has-speed", has(t, "speedKph")),
+        ("rpm", number(t, "rpm")),
+        ("has-rpm", has(t, "rpm")),
+        ("gear", s(gear)),
+    ])
+}
+
+fn car(t: &Json) -> Value {
+    let b = |key: &str| Value::Bool(t[key].as_bool().unwrap_or(false));
+    let value = |key: &str| number(t, key);
+    let has = |key: &str| has(t, key);
+    record(vec![
         (
             "known",
             Value::Bool(t.as_object().is_some_and(|o| !o.is_empty())),
         ),
-        ("speed-kph", value("speedKph")),
-        ("has-speed", has("speedKph")),
-        ("rpm", value("rpm")),
-        ("has-rpm", has("rpm")),
-        ("gear", s(gear)),
         ("ambient-c", value("ambientC")),
         ("has-ambient", has("ambientC")),
         ("fuel-pct", value("fuelPct")),
@@ -217,13 +230,18 @@ fn climate(c: &Json) -> Value {
     ])
 }
 
-/// Telemetry keys LIVI has no field for (e.g. doors from a CAN reader), as text
+/// Telemetry keys LIVI has no field for (e.g. doors from a CAN reader), as text. The entries of `can`, which LIVI
+/// keeps key by key for a CAN reader, come as "can.<key>".
 fn other(t: &Json) -> Value {
-    let out = t
-        .as_object()
-        .into_iter()
-        .flatten()
+    fn entries(v: &Json) -> impl Iterator<Item = (&String, &Json)> {
+        v.as_object().into_iter().flatten()
+    }
+    let top = entries(t)
         .filter(|(key, _)| !KNOWN.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value));
+    let can = entries(&t["can"]).map(|(key, value)| (format!("can.{key}"), value));
+    let out = top
+        .chain(can)
         .filter_map(|(key, value)| {
             let text = match value {
                 Json::String(v) => v.clone(),
@@ -277,7 +295,7 @@ pub fn build(
     phone: &str,
 ) -> Vec<(&'static str, Value)> {
     let t = &state["telemetry"];
-    let tm = local_time();
+    let tm = crate::clock::local_now();
     vec![
         ("page", s(current)),
         ("clock", s(format!("{:02}:{:02}", tm.tm_hour, tm.tm_min))),
@@ -286,10 +304,12 @@ pub fn build(
         ("phone", s(phone)),
         ("pages", pages(ui, plugin, current)),
         ("media", media(ui)),
+        ("playback", playback(ui)),
         (
             "nav",
             nav(state, |name| crate::icons::icon(name).unwrap_or_default()),
         ),
+        ("drive", drive(t)),
         ("car", car(t)),
         ("climate", climate(&t["climate"])),
         ("other", other(t)),
@@ -322,12 +342,22 @@ mod tests {
 
     #[test]
     fn car_values_say_whether_they_arrived() {
-        let c = car(&json!({ "speedKph": 84, "ambientC": -2.5 }));
-        assert_eq!(field(&c, "has-speed"), Value::Bool(true));
-        assert_eq!(field(&c, "speed-kph"), Value::Number(84.0));
+        let t = json!({ "speedKph": 84, "ambientC": -2.5 });
+        let d = drive(&t);
+        assert_eq!(field(&d, "has-speed"), Value::Bool(true));
+        assert_eq!(field(&d, "speed-kph"), Value::Number(84.0));
+        assert_eq!(field(&d, "has-rpm"), Value::Bool(false));
+        let c = car(&t);
         assert_eq!(field(&c, "ambient-c"), Value::Number(-2.5));
-        assert_eq!(field(&c, "has-rpm"), Value::Bool(false));
+        assert_eq!(field(&c, "has-fuel"), Value::Bool(false));
         assert_eq!(field(&car(&json!({})), "known"), Value::Bool(false));
+    }
+
+    #[test]
+    fn driving_leaves_the_car_values_as_they_were() {
+        let at = |speed: i32| json!({ "speedKph": speed, "rpm": speed * 30, "ambientC": 4 });
+        assert!(same(&car(&at(50)), &car(&at(80))));
+        assert!(!same(&drive(&at(50)), &drive(&at(80))));
     }
 
     #[test]
@@ -347,6 +377,17 @@ mod tests {
         assert!(keys.contains(&"oilC".to_string()));
         assert!(!keys.contains(&"speedKph".to_string()));
         assert!(!keys.contains(&"none".to_string()));
+    }
+
+    #[test]
+    fn raw_can_values_come_by_their_key() {
+        let Value::Model(values) = other(&json!({ "can": { "doors": 4, "boxVersion": "RZ 1.2" } }))
+        else {
+            panic!("not a model")
+        };
+        assert_eq!(find(&values, "can.doors"), s("4"));
+        assert_eq!(find(&values, "can.boxVersion"), s("RZ 1.2"));
+        assert_eq!(find(&values, "can"), s(""));
     }
 
     #[test]

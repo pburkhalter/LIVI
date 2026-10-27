@@ -43,7 +43,7 @@ plugin has errors, LIVI logs them and starts without it.
 | Key | Meaning |
 |---|---|
 | `api` | Plugin API the plugin is written for; LIVI refuses others. Currently `1`. |
-| `name` | Shown in logs and the debug overlay. |
+| `name` | Shown in logs. |
 | `file` | Main `.slint` file; it exports every component the manifest names. It may import other files of the folder. |
 | `start` | Page shown at start (an `id` from `pages`), instead of LIVI's start page. |
 | `splash` | Picture shown full window at start, until the UI has drawn; then it fades out. |
@@ -80,17 +80,23 @@ global `Livi` with these properties:
 - `clock` and `date`;
 - `dark` (dark mode) and `phone` (`none`, `connected`, `streaming`);
 - `pages`: the pages in tab order, with title, icon and whether each one is active;
-- `media`: title, artist, album, artwork, playing, progress;
+- `media`: title, artist, album, artwork, playing, duration;
+- `playback`: where the song is (progress, elapsed time);
 - `nav`: turn-by-turn from the phone (maneuver, its icon, distance, road, time left, destination);
-- `car`: speed, rpm, gear, outside temperature, fuel, range, odometer, lights and so on. Each value comes with a
+- `drive`: speed, rpm and gear;
+- `car`: outside temperature, fuel, range, odometer, lights and so on. Each value of `drive` and `car` comes with a
   `has-*` flag that says whether it arrived;
 - `climate`: as the car reports it. `known` is only true for values from outside (a telemetry source). LIVI's
   defaults and the values saved from the last run do not count;
 - `other`: telemetry keys LIVI has no field for, as text. A CAN reader can send e.g. `doors` to the telemetry input
-  and a plugin shows it; `Livi.value("doors")` gives one of them by its key (`""` when there is none).
+  and a plugin shows it; `Livi.value("doors")` gives one of them by its key (`""` when there is none). The entries of
+  the telemetry key `can` come as `can.<key>`.
 
 LIVI sets each property only when it changed. A binding runs again only when a property it reads changed: one that
-shows the speed does not run when the song changes. So a plugin causes no work while nothing it shows changes.
+shows the speed does not run when the song changes. A struct changes as a whole, though: a binding that reads one
+field of `car` runs again when any field of `car` changes. That is why speed, rpm and gear (`drive`) and the song's
+position (`playback`) have structs of their own; while driving they change several times a second. So a page causes
+no work while nothing it reads changes, as long as nothing on it runs by itself (a timer or an animation).
 
 ### Actions
 
@@ -100,7 +106,7 @@ shows the speed does not run when the song changes. So a plugin causes no work w
 | `Livi.action("open", "/media")` and the like | Shows one of LIVI's pages: `/projection`, `/media`, `/telemetry`, `/camera`, `/settings`. |
 | `Livi.action("open", "/projection/<app>")` | Brings the projection up with one of the phone's apps, e.g. `maps`, `music`, `mobilephone` (CarPlay). |
 | `Livi.action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
-| `Livi.action("page", "next")` | The next page in tab order (`prev`: the previous one), e.g. after a swipe. |
+| `Livi.action("page", "next")` | The plugin's next page in tab order (`prev`: the previous one), e.g. after a swipe; nothing at the first or last page. |
 
 ## Tools
 

@@ -171,6 +171,7 @@ pub fn install(ui: &AppWindow, on_action: impl Fn(&str, &str) + 'static) {
     ACTION.with_borrow_mut(|a| *a = Some(Rc::new(on_action)));
     if let Some(splash) = &p.splash {
         ui.set_intro_image(splash.clone());
+        ui.set_intro_done(false);
     }
     for (slot, component) in &p.shell {
         let f = factory(component.clone());

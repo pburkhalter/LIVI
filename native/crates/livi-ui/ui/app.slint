@@ -64,10 +64,10 @@ export component AppWindow inherits Window {
     in property <bool> has-plugin-top;
     in property <bool> has-plugin-bottom;
 
-    // Start: the plugin's start picture (or black) covers the window until the UI has its content, then fades out,
-    // so the boot splash goes over into LIVI without a hard cut
+    // Start: a plugin's start picture covers the window until the UI has its content, then fades out, so the boot
+    // splash goes over into LIVI without a hard cut (false while it covers, set by plugins/mod.rs)
     in property <image> intro-image;
-    in property <bool> intro-done;
+    in property <bool> intro-done: true;
 
     callback page-chosen(Page);
     callback touch(TouchPhase, float, float);
