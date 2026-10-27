@@ -362,6 +362,7 @@ mod tests {
             dab: Default::default(),
             cameras: Vec::new(),
             mfi: Default::default(),
+            links: Default::default(),
             notices: Vec::new(),
             video: Default::default(),
             config: defaults(),

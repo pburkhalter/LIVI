@@ -297,6 +297,12 @@ impl Projection {
 
     pub(super) fn publish(&mut self) {
         let list = devices::views(&self.devices.registry, &|ids| self.session_of(ids));
+        let wifi_phone = self
+            .devices
+            .registry
+            .entries()
+            .iter()
+            .any(|e| e.present.wifi);
         let targets = self.targets();
         self.devices.page(targets, false);
         let main = self.front_main();
@@ -323,6 +329,7 @@ impl Projection {
             s.now_playing = now_playing;
             s.navigation = navigation;
             s.devices = list;
+            s.links.wifi = crate::links::wifi(&s.system.wifi_interfaces, wifi_phone);
             s.cluster = self.cluster.clone();
         });
     }

@@ -36,6 +36,7 @@ mod host_setup;
 mod hub;
 mod hwaddr;
 mod kiosk_unit;
+mod links;
 mod log_file;
 mod mfi;
 mod nav_text;
@@ -192,6 +193,7 @@ async fn run() -> Result<Exit, String> {
         dab: Default::default(),
         cameras: Vec::new(),
         mfi: Default::default(),
+        links: Default::default(),
         notices: Vec::new(),
         video: livi_core_proto::state::VideoMode::of(&config),
         config,
@@ -219,6 +221,7 @@ async fn run() -> Result<Exit, String> {
     tokio::spawn(system_volume::follow(core.clone()));
     tokio::spawn(update::run(core.clone(), update_asks));
     tokio::spawn(notices::serve(core.clone()));
+    tokio::spawn(links::follow(core.hub.clone()));
     state_files::start(&core, core.activity(), &user_data);
     let res = Resources::from_env();
     tokio::spawn(audio_devices::follow(

@@ -28,6 +28,29 @@ pub struct State {
     /// Notifications other programs sent to LIVI (org.freedesktop.Notifications on the session bus), oldest first
     #[serde(default)]
     pub notices: Vec<Notice>,
+    /// Whether Wi-Fi and Bluetooth are off, on or connected to a phone, e.g. for status icons
+    #[serde(default)]
+    pub links: Links,
+}
+
+/// The radios a phone connects over; one that is not named is off
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Links {
+    pub wifi: LinkState,
+    pub bluetooth: LinkState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkState {
+    /// No adapter, or it is switched off
+    #[default]
+    Off,
+    /// Ready, no phone over it
+    On,
+    /// A phone is connected over it
+    Connected,
 }
 
 /// Whether the phone's picture shows as a card (config video_card_*) or full screen now: the setting
@@ -404,6 +427,25 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Sessions::default()).unwrap(),
             r#"{"active":null,"position":0,"total":0}"#
+        );
+    }
+
+    #[test]
+    fn links_are_lower_case_on_the_wire_and_off_when_missing() {
+        let links = Links {
+            wifi: LinkState::Connected,
+            bluetooth: LinkState::On,
+        };
+        assert_eq!(
+            serde_json::to_string(&links).unwrap(),
+            r#"{"wifi":"connected","bluetooth":"on"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<Links>(r#"{"wifi":"on"}"#).unwrap(),
+            Links {
+                wifi: LinkState::On,
+                bluetooth: LinkState::Off,
+            }
         );
     }
 }

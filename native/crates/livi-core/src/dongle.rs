@@ -4,13 +4,14 @@ use std::time::{Duration, Instant};
 
 use livi_core_proto::config::Config;
 use livi_core_proto::message::Radio;
-use livi_core_proto::state::{DongleRadios, LinkSpeed};
+use livi_core_proto::state::{DongleRadios, LinkSpeed, LinkState};
 use livi_link_host::ap;
 use livi_link_host::link::CHOICE;
 use tokio::sync::watch;
 
 use crate::hub::Hub;
 use crate::hwaddr;
+use crate::links;
 use crate::projection::DongleAsks;
 
 const POLL: Duration = Duration::from_millis(1500);
@@ -329,6 +330,10 @@ impl Link {
             s.system.interface_models = models;
             s.system.dongle = dongle;
             s.system.link_speed = link_speed;
+            // whether a phone is present over Wi-Fi is the sessions' to say (projection publish); here only the
+            // interfaces may have changed
+            let phone = s.links.wifi == LinkState::Connected;
+            s.links.wifi = links::wifi(&s.system.wifi_interfaces, phone);
         });
         status
     }

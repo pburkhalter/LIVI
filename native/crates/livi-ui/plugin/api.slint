@@ -41,6 +41,13 @@ export struct LiviDate {
     weekday: int,
 }
 
+// The radios a phone connects over, each "off" (no adapter, or it is switched off), "on" (ready, no phone over it) or
+// "connected" (a phone is connected over it).
+export struct LiviLinks {
+    wifi: string,
+    bluetooth: string,
+}
+
 // Texts are empty when nothing plays.
 export struct LiviMedia {
     title: string,
@@ -260,6 +267,8 @@ export global Livi {
     in property <bool> dark;
     // "none", "connected" or "streaming"
     in property <string> phone;
+    // Wi-Fi and Bluetooth: "off", "on" or "connected"
+    in property <LiviLinks> links;
     // LIVI's and the plugin's pages in tab order
     in property <[LiviPage]> pages;
     in property <LiviMedia> media;
