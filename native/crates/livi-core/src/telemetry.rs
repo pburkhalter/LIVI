@@ -328,8 +328,19 @@ pub fn socket(
     (app, io, pushed)
 }
 
+/// Where the endpoint listens: on all interfaces, or only on the address in LIVI_TELEMETRY_ADDR (e.g. 127.0.0.1 when
+/// only services on the same machine push values; a pushed `gear` or `reverse` lifts CarPlay's driving restrictions)
+fn listen_addrs(own: Option<&str>) -> Vec<String> {
+    match own.map(str::trim).filter(|a| !a.is_empty()) {
+        Some(a) if a.contains(':') && !a.starts_with('[') => vec![format!("[{a}]:{PORT}")],
+        Some(a) => vec![format!("{a}:{PORT}")],
+        None => vec![format!("[::]:{PORT}"), format!("0.0.0.0:{PORT}")],
+    }
+}
+
 async fn listen() -> Option<TcpListener> {
-    for addr in [format!("[::]:{PORT}"), format!("0.0.0.0:{PORT}")] {
+    let own = std::env::var("LIVI_TELEMETRY_ADDR").ok();
+    for addr in listen_addrs(own.as_deref()) {
         match TcpListener::bind(&addr).await {
             Ok(listener) => return Some(listener),
             Err(e) => eprintln!("[telemetry] cannot listen on {addr}: {e}"),
@@ -386,6 +397,15 @@ mod tests {
     use crate::config_file::tests::TempDir;
     use crate::config_file::{ConfigFile, defaults};
     use crate::hub::Hub;
+
+    #[test]
+    fn listens_everywhere_unless_told_an_address() {
+        assert_eq!(listen_addrs(None), ["[::]:4000", "0.0.0.0:4000"]);
+        assert_eq!(listen_addrs(Some(" ")), ["[::]:4000", "0.0.0.0:4000"]);
+        assert_eq!(listen_addrs(Some("127.0.0.1")), ["127.0.0.1:4000"]);
+        assert_eq!(listen_addrs(Some("::1")), ["[::1]:4000"]);
+        assert_eq!(listen_addrs(Some("[::1]")), ["[::1]:4000"]);
+    }
 
     fn state(config: Config, telemetry: Snapshot) -> State {
         State {
