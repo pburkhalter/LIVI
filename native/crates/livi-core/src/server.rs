@@ -13,6 +13,8 @@ use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, Notify, broadcast, oneshot, watch};
 
+use livi_core_proto::state::VideoMode;
+
 use crate::config_file::{ConfigFile, apply_patch};
 use crate::dab::DabAsk;
 use crate::dongle::LinkSpeedViewer;
@@ -97,8 +99,47 @@ impl Core {
         self.config_file
             .save(&next)
             .map_err(|e| format!("not saved: {e}"))?;
-        self.hub.update(|s| s.config = next);
+        let mut reconnect = false;
+        self.hub.update(|s| {
+            // a changed setting takes over from a switch for a while
+            let setting = VideoMode::of(&next);
+            if setting != VideoMode::of(&s.config) {
+                reconnect |= setting.projection_card != s.video.projection_card;
+                s.video = setting;
+            }
+            // the phone draws in the card it got when it connected
+            reconnect |= s.video.projection_card && s.config.video_card() != next.video_card();
+            s.config = next;
+        });
+        if reconnect {
+            self.reconnect_phone();
+        }
         Ok(())
+    }
+
+    /// Shows a picture as a card or full screen for a while (Action::SetVideoCard)
+    pub fn set_video_card(&self, page: &str, card: bool) -> Result<(), String> {
+        let mut phone_changed = false;
+        self.hub.update(|s| match page {
+            "projection" => {
+                phone_changed = s.video.projection_card != card;
+                s.video.projection_card = card;
+            }
+            "camera" => s.video.camera_card = card,
+            _ => {}
+        });
+        if !matches!(page, "projection" | "camera") {
+            return Err(format!("no picture {page}"));
+        }
+        if phone_changed {
+            self.reconnect_phone();
+        }
+        Ok(())
+    }
+
+    /// The phone gets the area it draws in when it connects: a running session connects anew
+    fn reconnect_phone(&self) {
+        let _ = self.asks.commands.send(UiCommand::Reconnect);
     }
 
     pub fn activity(&self) -> watch::Receiver<Activity> {
@@ -159,6 +200,7 @@ impl Core {
                 self.quit.notify_one();
                 Ok(())
             }
+            Action::SetVideoCard { page, card } => self.set_video_card(&page, card),
             Action::DismissNotice { id } => {
                 crate::notices::dismiss(self, id).await;
                 Ok(())
@@ -489,6 +531,7 @@ mod tests {
             cameras: Vec::new(),
             mfi: Default::default(),
             notices: Vec::new(),
+            video: Default::default(),
             config: defaults(),
         });
         let file = ConfigFile::new(dir.0.join("config.json"), dir.0.join("backup.json"));
@@ -830,6 +873,37 @@ mod tests {
         let mut rude = Peer::connect(&path).await;
         rude.send(&ToCore::Resync).await;
         assert!(matches!(rude.recv().await, Some(FromCore::Refused { .. })));
+    }
+
+    #[tokio::test]
+    async fn a_picture_switches_for_a_while_until_the_setting_changes() {
+        let dir = TempDir::new();
+        let (core, _path, mut asks, _, _) = start_with_asks(&dir);
+        let video = || core.hub.watch().borrow().video;
+        core.set_config(&serde_json::json!({ "projectionCard": true }))
+            .await
+            .unwrap();
+        assert!(video().projection_card);
+        assert!(matches!(asks.commands.try_recv(), Ok(UiCommand::Reconnect)));
+        // switched for a while: the setting stays, the phone connects anew
+        core.set_video_card("projection", false).unwrap();
+        assert!(!video().projection_card);
+        assert!(core.hub.config().projection_card);
+        assert!(matches!(asks.commands.try_recv(), Ok(UiCommand::Reconnect)));
+        // the camera has no phone to reconnect
+        core.set_video_card("camera", true).unwrap();
+        assert!(video().camera_card);
+        assert!(asks.commands.try_recv().is_err());
+        assert!(core.set_video_card("radio", true).is_err());
+        // another setting leaves the switch alone; a changed card setting takes over
+        core.set_config(&serde_json::json!({ "darkMode": true }))
+            .await
+            .unwrap();
+        assert!(!video().projection_card);
+        core.set_config(&serde_json::json!({ "cameraCard": true }))
+            .await
+            .unwrap();
+        assert!(video().projection_card && video().camera_card);
     }
 
     #[tokio::test]

@@ -47,7 +47,7 @@ plugin has errors, LIVI logs them and starts without it.
 | `file` | Main `.slint` file; it exports every component the manifest names. It may import other files of the folder. |
 | `start` | Page shown at start (an `id` from `pages`), instead of LIVI's start page. |
 | `splash` | Picture shown full window at start, until the UI has drawn; then it fades out. |
-| `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). The `background` steps aside while a page shows a video (the phone streaming, a camera picture): the compositor draws the video below LIVI's window, where the window is transparent. The bars stay on the camera page; on the projection they go with LIVI's navigation. `overlay` covers the whole window above everything, also on full screen pages and over the projection, e.g. for warnings; touches go through it except where it has a `TouchArea`. |
+| `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). The `background` steps aside while a page shows a video (the phone streaming, a camera picture): the compositor draws the video below LIVI's window, where the window is transparent. The bars stay on the camera page; on the projection they go with LIVI's navigation. With a card set (below) the picture shows as a card instead and the background draws around it. `overlay` covers the whole window above everything, also on full screen pages and over the projection, e.g. for warnings; touches go through it except where it has a `TouchArea`. |
 | `empty` | Components for LIVI's pages while they have nothing to show: `projection` (no phone streaming), `camera` (no camera found). |
 | `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`; `"tab": false` keeps a page out of the tabs and the order for swiping (e.g. one the plugin opens from its own button); `"settings"` makes it the page for LIVI's settings (see Settings). |
 | `fullscreen` | Paths of pages that show without the bars, e.g. `"/camera"`. |
@@ -91,6 +91,8 @@ global `Livi` with these properties:
   defaults and the values saved from the last run do not count;
 - `other`: telemetry keys LIVI has no field for, as text. A CAN reader can send e.g. `doors` to the telemetry input
   and a plugin shows it; `Livi.value("doors")` gives one of them by its key (`""` when there is none);
+- `video`: the card the phone's or the camera's picture shows in (below), `shown` while it does, with its distances
+  from the window's edges and its corner radius in the window's pixels;
 - `notices`: notifications other programs sent, newest first. LIVI serves `org.freedesktop.Notifications` on the
   session bus, so any program notifies with the usual tools, e.g. `notify-send -u critical "Title" "Text"`. Each has
   program, summary, body, urgency (`low`, `normal`, `critical`) and the local time it came, and a `serial` that grows
@@ -150,3 +152,24 @@ only lists.
 
 [native/crates/livi-ui/plugin/example](../native/crates/livi-ui/plugin/example) has one page, a bar with a button
 per page and a settings page that draws LIVI's settings lists. The tests compile it.
+
+## Pictures as a card
+
+With bars of its own, a plugin can have the phone's picture (CarPlay) and the camera picture shown as a card in the
+free area between its bars instead of full screen, like its own pages. The settings (Video, Main Video, Card):
+
+| Setting | Meaning |
+|---|---|
+| `projectionCard`, `cameraCard` | the phone's or the camera's picture as a card; otherwise full screen |
+| `videoCardTop`, `videoCardBottom`, `videoCardLeft`, `videoCardRight`, `videoCardRadius` | the card, in pixels of the phone's picture (`projectionWidth` x `projectionHeight`, like the view area); all 0: no card |
+
+- CarPlay gets the card as its view area and draws only there. The picture keeps its size; CarPlay leaves the rest.
+  Android Auto stays full screen.
+- LIVI keeps the plugin's bars and its background, and leaves the card transparent: the plugin's `background` draws
+  around it with `Livi.video` (e.g. a `Path` with `fill-rule: evenodd`). Touches in the card go to the phone, touches
+  on the bars stay in LIVI.
+- LIVI draws a button on the picture that switches between card and full screen until LIVI starts again or the
+  setting changes (`Action::SetVideoCard`). Full screen hides the bars; the button leads back.
+- The phone learns its area when it connects: switching the phone's picture, or moving the card, makes it connect
+  anew (a few seconds).
+

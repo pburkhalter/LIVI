@@ -289,6 +289,20 @@ fn insets(top: u32, bottom: u32, left: u32, right: u32) -> Option<Insets> {
     })
 }
 
+/// Where the phone draws on the main screen: in the card (video_card_*) while the picture shows as one, else in the
+/// view area set for the projection
+fn main_view_area(cfg: &Config) -> Option<Insets> {
+    match cfg.video_card().filter(|_| cfg.projection_card) {
+        Some([top, bottom, left, right]) => insets(top, bottom, left, right),
+        None => insets(
+            cfg.projection_view_area_top,
+            cfg.projection_view_area_bottom,
+            cfg.projection_view_area_left,
+            cfg.projection_view_area_right,
+        ),
+    }
+}
+
 fn icons(cfg: &Config) -> Vec<Icon> {
     let pick = |own: &Option<String>, default: &str| {
         own.as_deref()
@@ -395,12 +409,7 @@ pub fn stack_config(
                 height_physical_mm: main_mm.map(|m| m.1),
                 fps: Some(or(cfg.projection_fps, 60).into()),
                 primary_input_device: Some(1),
-                view_area: insets(
-                    cfg.projection_view_area_top,
-                    cfg.projection_view_area_bottom,
-                    cfg.projection_view_area_left,
-                    cfg.projection_view_area_right,
-                ),
+                view_area: main_view_area(cfg),
                 safe_area: insets(
                     cfg.projection_safe_area_top,
                     cfg.projection_safe_area_bottom,
@@ -628,11 +637,10 @@ impl ConfigSource {
     pub fn refresh(&self) {
         let (cfg, cluster, dongle_up) = {
             let s = self.state.borrow();
-            (
-                s.config.clone(),
-                s.cluster.theme.clone(),
-                s.system.dongle.is_some(),
-            )
+            // card or full screen as it is now, not only as set
+            let mut cfg = s.config.clone();
+            cfg.projection_card = s.video.projection_card;
+            (cfg, s.cluster.theme.clone(), s.system.dongle.is_some())
         };
         let reachable = |name: &str| dongle_up || name != livi_link_host::link::CHOICE;
         let wifi = reachable(&cfg.wifi_interface);
@@ -715,6 +723,7 @@ impl ConfigSource {
                     let sys = &s.system;
                     (
                         s.config.clone(),
+                        s.video,
                         sys.dongle,
                         sys.wifi_interfaces.clone(),
                         sys.bt_adapters.clone(),
@@ -767,6 +776,25 @@ mod tests {
             bt_mac: "22:22:22:22:22:22".into(),
             access_point: None,
         }
+    }
+
+    #[test]
+    fn the_phone_draws_in_the_card_while_the_picture_shows_as_one() {
+        let mut cfg = defaults();
+        cfg.projection_view_area_left = 7;
+        let area = |cfg: &Config| {
+            let a = main_view_area(cfg).unwrap();
+            (a.top, a.bottom, a.left, a.right)
+        };
+        assert_eq!(area(&cfg), (0, 0, 7, 0));
+        // a card without a place, or a place without the card: the view area set for the projection
+        cfg.projection_card = true;
+        assert_eq!(area(&cfg), (0, 0, 7, 0));
+        (cfg.video_card_top, cfg.video_card_bottom) = (16, 156);
+        (cfg.video_card_left, cfg.video_card_right) = (300, 24);
+        assert_eq!(area(&cfg), (16, 156, 300, 24));
+        cfg.projection_card = false;
+        assert_eq!(area(&cfg), (0, 0, 7, 0));
     }
 
     #[test]
@@ -841,6 +869,7 @@ mod tests {
             cameras: Vec::new(),
             mfi: Default::default(),
             notices: Vec::new(),
+            video: Default::default(),
             config,
         };
         let (_state_tx, state_rx) = watch::channel(state);

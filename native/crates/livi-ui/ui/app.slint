@@ -14,6 +14,19 @@ import { MaskData } from "mask.slint";
 
 export { Theme, Focus, FocusZone, Page, PhoneState, TabData, TouchPhase, SettingsState, ScreenKind, RowData, RowKind, PickData, KnobData, MediaText, Press, DabState, StationData, DashState, GaugeData, CapData, TrailData, LabelData, OverlayState, MaskData }
 
+// Whether the phone's and the camera's picture show as a card in the free area of a plugin with bars, and the card:
+// distances from the edges of the phone's picture and corner radius, in its pixels (settings projectionCard,
+// cameraCard, videoCard*, like the view area)
+export struct VideoCardData {
+    projection: bool,
+    camera: bool,
+    top: int,
+    bottom: int,
+    left: int,
+    right: int,
+    radius: int,
+}
+
 // A page of the UI plugin, as the window shows it
 export struct PluginView {
     id: string,
@@ -32,6 +45,7 @@ export component AppWindow inherits Window {
     in property <MaskData> main-mask;
     in property <bool> camera-found;
     in property <string> status;
+    in property <VideoCardData> video-card;
 
     in property <string> track-title;
     in property <string> artist;
@@ -83,15 +97,44 @@ export component AppWindow inherits Window {
     callback next();
     callback seek(float);
     callback spectrum-changed(bool);
+    // the button on the picture: card (true) or full screen for the phone's picture (projection) or the camera's
+    callback video-card-chosen(Page, bool);
 
-    property <bool> nav-hidden: root.page == Page.projection && root.phone == PhoneState.streaming;
     // the page shows a picture of the phone or the camera: the compositor draws it below this window and shows it where
     // the window is transparent, so a plugin's background leaves it uncovered
-    property <bool> video-shown: root.nav-hidden || (root.page == Page.camera && root.camera-found);
+    property <bool> video-shown: (root.page == Page.projection && root.phone == PhoneState.streaming)
+        || (root.page == Page.camera && root.camera-found);
+    // ... or, with a card set and a plugin's bars, draws around the card and keeps its bars (the phone draws in the card:
+    // the core gives it the card as its view area); a button switches between card and full screen
+    property <bool> card-set: !root.own-nav
+        && root.video-card.top + root.video-card.bottom + root.video-card.left + root.video-card.right > 0;
+    // the card in the window: the phone's picture fills the window as far as its shape allows (as the compositor
+    // shows it), the card's pixels scale with it
+    property <float> picture-scale: min(root.width / 1px / max(1, root.stream-width),
+        root.height / 1px / max(1, root.stream-height));
+    property <length> picture-x: (root.width - root.stream-width * 1px * root.picture-scale) / 2;
+    property <length> picture-y: (root.height - root.stream-height * 1px * root.picture-scale) / 2;
+    out property <length> card-top: root.picture-y + root.video-card.top * 1px * root.picture-scale;
+    out property <length> card-bottom: root.picture-y + root.video-card.bottom * 1px * root.picture-scale;
+    out property <length> card-left: root.picture-x + root.video-card.left * 1px * root.picture-scale;
+    out property <length> card-right: root.picture-x + root.video-card.right * 1px * root.picture-scale;
+    out property <length> card-radius: root.video-card.radius * 1px * root.picture-scale;
+    out property <bool> video-card-shown: root.video-shown && root.card-set
+        && (root.page == Page.projection ? root.video-card.projection : root.video-card.camera);
+    property <bool> nav-hidden: root.page == Page.projection && root.phone == PhoneState.streaming
+        && !root.video-card-shown;
     property <bool> nav-asleep;
     // a plugin bar at the side takes the place of LIVI's navigation
     property <bool> own-nav: !root.has-plugin-start && !root.has-plugin-end;
-    property <bool> bars-shown: !root.nav-hidden && !root.plugin-bars-hidden;
+    // full screen hides the bars; the button leads back (without a card set, the camera page keeps them: no way back)
+    property <bool> bars-shown: !root.nav-hidden && !root.plugin-bars-hidden
+        && !(root.video-shown && root.card-set && !root.video-card-shown);
+    // where the button is, for touches the phone must not get (touch_ui.rs)
+    out property <bool> video-button-shown: root.video-shown && root.card-set;
+    out property <length> video-button-size: 72px;
+    out property <length> video-button-x: root.video-card-shown
+        ? root.width - root.card-right - 20px - self.video-button-size : 20px;
+    out property <length> video-button-y: root.video-card-shown ? root.card-top + 20px : 20px;
 
     public function wake-nav() {
         root.nav-asleep = false;
@@ -133,10 +176,25 @@ export component AppWindow inherits Window {
         root.wake-nav();
     }
 
-    if root.has-plugin-background && !root.video-shown: ComponentContainer {
+    if root.has-plugin-background && (!root.video-shown || root.video-card-shown): ComponentContainer {
         width: root.width;
         height: root.height;
         component-factory: root.plugin-background;
+    }
+
+    // the phone's picture as a card: the page takes the whole window below the bars, touches count in the card
+    if root.video-card-shown && root.page == Page.projection: ProjectionPage {
+        width: root.width;
+        height: root.height;
+        streaming: true;
+        stream-width: root.stream-width;
+        stream-height: root.stream-height;
+        mask: root.main-mask;
+        area-top: root.card-top;
+        area-bottom: root.card-bottom;
+        area-left: root.card-left;
+        area-right: root.card-right;
+        touch(phase, x, y) => { root.touch(phase, x, y); }
     }
 
     // with LIVI's own navigation the dashboard takes the whole window (the navigation goes to sleep over it); next to a
@@ -186,7 +244,8 @@ export component AppWindow inherits Window {
                 height: parent.height;
                 component-factory: root.plugin-no-phone;
             }
-            if root.page == Page.projection && !(root.has-plugin-no-phone && root.phone != PhoneState.streaming): ProjectionPage {
+            if root.page == Page.projection && !root.video-card-shown
+                && !(root.has-plugin-no-phone && root.phone != PhoneState.streaming): ProjectionPage {
                 width: parent.width;
                 height: parent.height;
                 streaming: root.phone == PhoneState.streaming;
@@ -272,6 +331,31 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
         component-factory: root.plugin-overlay;
+    }
+
+    if root.video-button-shown: Rectangle {
+        x: root.video-button-x;
+        y: root.video-button-y;
+        width: root.video-button-size;
+        height: root.video-button-size;
+        border-radius: self.height / 2;
+        background: video-touch.pressed ? #000000d9 : #0000008c;
+        border-width: 1px;
+        border-color: #ffffff38;
+        Path {
+            width: 36px;
+            height: 36px;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #ffffff;
+            // Material "fullscreen" and "fullscreen exit"
+            commands: root.video-card-shown
+                ? "M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
+                : "M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z";
+        }
+        video-touch := TouchArea {
+            clicked => { root.video-card-chosen(root.page, !root.video-card-shown); }
+        }
     }
 
     LevelOverlay {

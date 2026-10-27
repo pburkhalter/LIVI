@@ -209,6 +209,18 @@ fn apply(ui: &AppWindow, update: Update) {
         Update::Volume(level) => overlay_ui::volume(ui, level),
         Update::PhoneName(name) => overlay_ui::phone(ui, &name),
         Update::Camera(found) => ui.set_camera_found(found),
+        Update::VideoCard(card) => {
+            let n = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
+            ui.set_video_card(VideoCardData {
+                projection: card.projection,
+                camera: card.camera,
+                top: n(card.top),
+                bottom: n(card.bottom),
+                left: n(card.left),
+                right: n(card.right),
+                radius: n(card.radius),
+            });
+        }
         Update::MainMask(mask) => ui.set_main_mask(dashboard_ui::mask_data(mask)),
     }
 }
@@ -309,6 +321,8 @@ fn reported(ui: &AppWindow, client: &Client, page: Page) {
         }
     };
     plugins::show_page(ui);
+    // at once, not with the next second: whether a picture shows as a card changes with the page
+    sync_plugin(ui);
     client.show(Screen::Main, front);
     client.path(path);
     client.spectrum(page == Page::Media && ui.get_show_spectrum());
@@ -557,6 +571,19 @@ fn wire(ui: &AppWindow, client: &Client) {
     ui.on_spectrum_changed({
         let c = client.clone();
         move |on| c.spectrum(on)
+    });
+    ui.on_video_card_chosen({
+        let c = client.clone();
+        move |page, card| {
+            let page = match page {
+                Page::Camera => "camera",
+                _ => "projection",
+            };
+            c.act(Action::SetVideoCard {
+                page: page.into(),
+                card,
+            });
+        }
     });
     dashboard_ui::wire(&ui.global::<DashState>(), client);
 }

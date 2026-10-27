@@ -144,6 +144,7 @@ mod tests {
             cameras,
             mfi: Default::default(),
             notices: Vec::new(),
+            video: Default::default(),
             config,
         }
     }

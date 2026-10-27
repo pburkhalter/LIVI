@@ -31,6 +31,30 @@ fn picture(ui: &AppWindow, x: f64, y: f64) -> Option<(f64, f64)> {
         .then(|| (lx / pw, ly / ph))
 }
 
+/// Whether a touch starting at (x, y), in pixels of the screen, is the phone's: not on the button that switches the
+/// picture between card and full screen, and in the card while it shows as one (app.slint)
+fn for_phone(ui: &AppWindow, x: f64, y: f64) -> bool {
+    let scale = f64::from(ui.window().scale_factor());
+    let (x, y) = (x / scale, y / scale);
+    let f = |v: f32| f64::from(v);
+    if ui.get_video_button_shown() {
+        let (bx, by, size) = (
+            f(ui.get_video_button_x()),
+            f(ui.get_video_button_y()),
+            f(ui.get_video_button_size()),
+        );
+        if (bx..=bx + size).contains(&x) && (by..=by + size).contains(&y) {
+            return false;
+        }
+    }
+    if !ui.get_video_card_shown() {
+        return true;
+    }
+    let size = ui.window().size().to_logical(ui.window().scale_factor());
+    (f(ui.get_card_left())..=f(size.width) - f(ui.get_card_right())).contains(&x)
+        && (f(ui.get_card_top())..=f(size.height) - f(ui.get_card_bottom())).contains(&y)
+}
+
 fn send(client: &Client, points: Vec<Point>) {
     client.input(Input::Pointer {
         screen: Screen::Main,
@@ -39,8 +63,10 @@ fn send(client: &Client, points: Vec<Point>) {
 }
 
 pub fn handle(ui: &AppWindow, client: &Client, touch: &winit::event::Touch) -> bool {
-    let on_picture = ui.get_page() == Page::Projection && ui.get_phone() == PhoneState::Streaming;
     let held = FINGERS.with_borrow(|f| f.holds(touch.id));
+    let on_picture = ui.get_page() == Page::Projection
+        && ui.get_phone() == PhoneState::Streaming
+        && (held || for_phone(ui, touch.location.x, touch.location.y));
     if !on_picture && !held {
         return false;
     }

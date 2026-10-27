@@ -56,6 +56,12 @@ pub enum Action {
     DismissNotice {
         id: u32,
     },
+    /// Shows the phone's picture ("projection") or the camera picture ("camera") as a card or full screen until the
+    /// next start or a change of the setting (state video)
+    SetVideoCard {
+        page: String,
+        card: bool,
+    },
     Show {
         screen: Screen,
         front: Front,
