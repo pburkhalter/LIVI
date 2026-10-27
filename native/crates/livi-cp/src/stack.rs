@@ -323,6 +323,10 @@ struct Conn<M: Media> {
     cluster_url: Option<String>,
     /// The main display's view areas the phone got in /info, and the one it draws in now
     view_areas_told: Option<(Vec<info::Insets>, usize)>,
+    /// CSeq of the last updateViewArea on the event channel, until the phone answers it
+    view_area_cseq: Option<u32>,
+    /// The phone refused to move into another view area: the session ends, it connects anew with the area in /info
+    view_area_refused: bool,
     video_active: bool,
     audio_active: bool,
     call_active: bool,
@@ -591,6 +595,8 @@ pub async fn run<M: Media>(
         cluster_want: false,
         cluster_url: None,
         view_areas_told: None,
+        view_area_cseq: None,
+        view_area_refused: false,
         video_active: false,
         audio_active: false,
         call_active: false,
@@ -644,6 +650,8 @@ pub async fn run<M: Media>(
             accepted = accept(&conn.event_listener) => {
                 if let Ok((sock, _)) = accepted {
                     conn.on_event_connection(sock);
+                    // a switch made before the channel was there
+                    conn.follow_view_area().await;
                 }
             }
             read = read_event(&mut conn.event, &mut event_buf) => match read {
@@ -651,7 +659,12 @@ pub async fn run<M: Media>(
                     println!("[cpStack] event channel closed");
                     conn.event = None;
                 }
-                Ok(n) => conn.on_event_bytes(&event_buf[..n]).await,
+                Ok(n) => {
+                    conn.on_event_bytes(&event_buf[..n]).await;
+                    if conn.view_area_refused {
+                        break;
+                    }
+                }
             },
             read = read_relay(&mut conn.iap_relay, &mut relay_buf) => match read {
                 Ok(0) | Err(_) => conn.iap_relay = None,

@@ -60,8 +60,6 @@ pub struct Config {
     /// The phone's picture (CarPlay) as a card in the free area of a UI plugin with bars, see video_card_*; else full
     /// screen. Also switched for a while with Action::SetVideoCard (state video).
     pub projection_card: bool,
-    /// The camera picture as such a card
-    pub camera_card: bool,
     /// The card: its distance from the picture's edges and the radius of its corners, in pixels of the phone's
     /// picture (projection_width x projection_height, like the view area)
     pub video_card_top: u32,
@@ -392,9 +390,24 @@ pub struct KeyBindings {
     pub voice_assistant_release: String,
 }
 
+/// The smallest card, in pixels of the phone's picture each way
+pub const VIDEO_CARD_MIN: u32 = 64;
+
+/// Whether a card (top, bottom, left, right from the picture's edges) leaves at least VIDEO_CARD_MIN of a picture of
+/// `width` x `height` (0: the phone's default, 1920 x 1080)
+pub fn video_card_fits(card: [u32; 4], width: u32, height: u32) -> bool {
+    let [top, bottom, left, right] = card.map(u64::from);
+    let (w, h) = (
+        u64::from(if width == 0 { 1920 } else { width }),
+        u64::from(if height == 0 { 1080 } else { height }),
+    );
+    let min = u64::from(VIDEO_CARD_MIN);
+    left + right + min <= w && top + bottom + min <= h
+}
+
 impl Config {
-    /// The card for the pictures (video_card_*) as distances from the window's edges: top, bottom, left, right; None
-    /// while none is set
+    /// The card for the phone's picture (video_card_*): distances from the picture's edges, top, bottom, left, right;
+    /// None while none is set or it does not fit the picture
     pub fn video_card(&self) -> Option<[u32; 4]> {
         let card = [
             self.video_card_top,
@@ -402,7 +415,9 @@ impl Config {
             self.video_card_left,
             self.video_card_right,
         ];
-        card.iter().any(|&v| v > 0).then_some(card)
+        (card.iter().any(|&v| v > 0)
+            && video_card_fits(card, self.projection_width, self.projection_height))
+        .then_some(card)
     }
 }
 
@@ -469,7 +484,6 @@ pub fn defaults() -> Config {
         projection_safe_area_right: 0,
         projection_safe_area_draw_outside: true,
         projection_card: false,
-        camera_card: false,
         video_card_top: 0,
         video_card_bottom: 0,
         video_card_left: 0,

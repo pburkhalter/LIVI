@@ -213,7 +213,7 @@ fn apply(ui: &AppWindow, update: Update) {
             let n = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
             ui.set_video_card(VideoCardData {
                 projection: card.projection,
-                camera: card.camera,
+                android: card.android,
                 top: n(card.top),
                 bottom: n(card.bottom),
                 left: n(card.left),
@@ -574,13 +574,9 @@ fn wire(ui: &AppWindow, client: &Client) {
     });
     ui.on_video_card_chosen({
         let c = client.clone();
-        move |page, card| {
-            let page = match page {
-                Page::Camera => "camera",
-                _ => "projection",
-            };
+        move |card| {
             c.act(Action::SetVideoCard {
-                page: page.into(),
+                page: "projection".into(),
                 card,
             });
         }

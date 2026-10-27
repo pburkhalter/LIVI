@@ -9,13 +9,6 @@ impl Projection {
         self.cp.send(CpCmd::DropSessions);
     }
 
-    pub(super) fn reconnect(&mut self) {
-        if !self.sessions.is_empty() {
-            println!("[core] the phone connects anew");
-            self.cp.send(CpCmd::DropSessions);
-        }
-    }
-
     pub(super) fn apply_when_idle(&mut self) {
         self.apply_due = (self.sessions.is_empty() && self.hub.apply_pending())
             .then(|| tokio::time::Instant::now() + APPLY_AFTER_QUIET);

@@ -1129,20 +1129,36 @@ async fn the_phone_moves_between_its_view_areas_without_reconnecting() {
         plain.extend(data);
         let (msgs, rest) = rtsp::parse(&plain);
         plain = rest;
-        if let Some(body) = msgs
-            .iter()
-            .map(|m| bplist::decode(&m.body).unwrap())
-            .find(|b| b.get("type").and_then(Value::as_str) == Some("updateViewArea"))
-        {
-            break body;
+        if let Some(found) = msgs.iter().find_map(|m| {
+            let body = bplist::decode(&m.body).unwrap();
+            (body.get("type").and_then(Value::as_str) == Some("updateViewArea"))
+                .then(|| (body, m.headers["cseq"].clone()))
+        }) {
+            break found;
         }
     };
+    let (moved, cseq) = moved;
     let params = moved.get("params").unwrap();
     assert_eq!(params.get("viewAreaIndex").and_then(Value::as_int), Some(0));
     assert_eq!(
         params.get("adjacentViewAreas"),
         Some(&Value::Array(vec![Value::Int(1)]))
     );
+    // the phone refuses: the session ends, so that it connects anew with the area in /info
+    let refusal = format!("RTSP/1.0 400 Bad Request\r\nCSeq: {cseq}\r\nContent-Length: 0\r\n\r\n");
+    event
+        .write_all(&event_cipher.encrypt(refusal.as_bytes()))
+        .await
+        .unwrap();
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), rig.events.recv())
+            .await
+            .unwrap()
+        {
+            Some(StackEvent::Closed { .. }) | None => break,
+            Some(_) => {}
+        }
+    }
 }
 
 #[tokio::test]
