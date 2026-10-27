@@ -217,8 +217,11 @@ export struct LiviPick {
 
 // A notification another program sent (org.freedesktop.Notifications, e.g. notify-send), newest first in `notices`.
 // `urgency`: "low", "normal" or "critical". The local time it came: `today`, `hour`, `minute`, `day`, `month`.
+// `serial` grows with every notice that comes or says something new (the newest first has the highest), so a page
+// tells what is new since it last looked; a program repeating its notice does not change it.
 export struct LiviNotice {
     id: int,
+    serial: int,
     app: string,
     summary: string,
     body: string,
