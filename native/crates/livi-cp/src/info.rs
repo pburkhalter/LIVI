@@ -187,6 +187,17 @@ fn area(d: &DisplayConfig, va: Insets) -> Value {
         ("originYPixels".to_string(), num(va.top)),
     ];
     if let Some(sa) = d.safe_area {
+        // within the view area: the phone ends the session when an area's safe area reaches out of it (iOS 27,
+        // with a card as the second area); no overlap at all takes the view area itself
+        let mut sa = Insets {
+            top: sa.top.max(va.top),
+            bottom: sa.bottom.max(va.bottom),
+            left: sa.left.max(va.left),
+            right: sa.right.max(va.right),
+        };
+        if sa.left + sa.right >= w || sa.top + sa.bottom >= h {
+            sa = va;
+        }
         let mut safe = vec![
             ("widthPixels".to_string(), num(w - sa.left - sa.right)),
             ("heightPixels".to_string(), num(h - sa.top - sa.bottom)),
@@ -201,12 +212,8 @@ fn area(d: &DisplayConfig, va: Insets) -> Value {
     if let Some(edge) = d.status_bar_edge {
         view.push(("viewAreaStatusBarEdge".to_string(), Value::Int(edge)));
     }
-    // the accessory switches between several areas
-    let switched = d.view_areas.len() > 1;
-    view.push((
-        "viewAreaTransitionControl".to_string(),
-        Value::Bool(switched),
-    ));
+    // switching is announced once for the display (displayEntry), not per area
+    view.push(("viewAreaTransitionControl".to_string(), Value::Bool(false)));
     view.push((
         "viewAreaSupportsFocusTransfer".to_string(),
         Value::Bool(false),
@@ -530,6 +537,20 @@ pub(crate) mod tests {
         let n = |v: &Value, key: &str| v.get(key).and_then(Value::as_int);
         assert_eq!(n(&areas[1], "widthPixels"), Some(1280 - 252 - 20));
         assert_eq!(n(&areas[1], "originXPixels"), Some(252));
+        // the safe area stays inside the card (the display's reaches 10 px from either side)
+        let safe = areas[1].get("safeArea").unwrap();
+        assert_eq!(n(safe, "originXPixels"), Some(252));
+        assert_eq!(n(safe, "originYPixels"), Some(16));
+        assert_eq!(n(safe, "widthPixels"), Some(1280 - 252 - 20));
+        assert_eq!(n(safe, "heightPixels"), Some(720 - 16 - 124));
+        // and the full area keeps the display's
+        let safe = areas[0].get("safeArea").unwrap();
+        assert_eq!(n(safe, "originXPixels"), Some(10));
+        assert_eq!(n(safe, "widthPixels"), Some(1280 - 20));
+        assert_eq!(
+            areas[1].get("viewAreaTransitionControl"),
+            Some(&Value::Bool(false))
+        );
         assert_eq!(n(main, "initialViewArea"), Some(1));
         assert_eq!(
             main.get("viewAreaTransitionControl"),
