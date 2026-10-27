@@ -85,6 +85,9 @@ export component AppWindow inherits Window {
     callback spectrum-changed(bool);
 
     property <bool> nav-hidden: root.page == Page.projection && root.phone == PhoneState.streaming;
+    // the page shows a picture of the phone or the camera: the compositor draws it below this window and shows it where
+    // the window is transparent, so a plugin's background leaves it uncovered
+    property <bool> video-shown: root.nav-hidden || (root.page == Page.camera && root.camera-found);
     property <bool> nav-asleep;
     // a plugin bar at the side takes the place of LIVI's navigation
     property <bool> own-nav: !root.has-plugin-start && !root.has-plugin-end;
@@ -130,7 +133,7 @@ export component AppWindow inherits Window {
         root.wake-nav();
     }
 
-    if root.has-plugin-background: ComponentContainer {
+    if root.has-plugin-background && !root.video-shown: ComponentContainer {
         width: root.width;
         height: root.height;
         component-factory: root.plugin-background;
