@@ -159,6 +159,10 @@ impl Core {
                 self.quit.notify_one();
                 Ok(())
             }
+            Action::DismissNotice { id } => {
+                crate::notices::dismiss(self, id).await;
+                Ok(())
+            }
             Action::Show { screen, front } => {
                 self.asks.wants.send_modify(|w| *w.get_mut(screen) = front);
                 Ok(())
@@ -484,6 +488,7 @@ mod tests {
             dab: Default::default(),
             cameras: Vec::new(),
             mfi: Default::default(),
+            notices: Vec::new(),
             config: defaults(),
         });
         let file = ConfigFile::new(dir.0.join("config.json"), dir.0.join("backup.json"));

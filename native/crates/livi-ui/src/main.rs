@@ -493,6 +493,17 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
         ("media", "play-pause") => ui.invoke_play_pause(),
         ("media", "next") => ui.invoke_next(),
         ("media", "prev") => ui.invoke_prev(),
+        ("notice", argument) => match argument
+            .strip_prefix("dismiss:")
+            .and_then(|id| id.parse().ok())
+        {
+            Some(id) => CLIENT.with_borrow(|c| {
+                if let Some(c) = c {
+                    c.act(Action::DismissNotice { id });
+                }
+            }),
+            None => println!("[ui] plugin action notice {argument} unknown"),
+        },
         ("settings", argument) => {
             if !plugins::settings_act(&ui, argument) {
                 println!("[ui] plugin action settings {argument} unknown");
