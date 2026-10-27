@@ -91,6 +91,10 @@ global `Livi` with these properties:
   defaults and the values saved from the last run do not count;
 - `other`: telemetry keys LIVI has no field for, as text. A CAN reader can send e.g. `doors` to the telemetry input
   and a plugin shows it; `Livi.value("doors")` gives one of them by its key (`""` when there is none);
+- `notices`: notifications other programs sent, newest first. LIVI serves `org.freedesktop.Notifications` on the
+  session bus, so any program notifies with the usual tools, e.g. `notify-send -u critical "Title" "Text"`. Each has
+  program, summary, body, urgency (`low`, `normal`, `critical`) and the local time it came;
+  `Livi.action("notice", "dismiss:<id>")` closes one;
 - `can`: the raw values a CAN reader keeps under the telemetry key `can`, as text, apart from `other` because they may
   change many times a second.
 

@@ -1,7 +1,11 @@
 pub fn local_now() -> libc::tm {
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    local_at(unsafe { libc::time(std::ptr::null_mut()) })
+}
+
+/// Local time of a Unix time in seconds
+pub fn local_at(secs: libc::time_t) -> libc::tm {
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&now, &mut tm) };
+    unsafe { libc::localtime_r(&secs, &mut tm) };
     tm
 }
 
