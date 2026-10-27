@@ -181,6 +181,7 @@ impl<M: Media> Conn<M> {
             }
             let cfg = self.ctx.config.borrow().info.clone();
             let mut info = info::build(&cfg);
+            self.view_areas_told = Some((cfg.main.view_areas.clone(), cfg.main.view_area_index));
             if self.video_playback {
                 let features = info.get("features").and_then(Value::as_int).unwrap_or(0);
                 if let Value::Dict(entries) = &mut info {

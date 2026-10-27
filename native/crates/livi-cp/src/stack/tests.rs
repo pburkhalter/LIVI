@@ -233,6 +233,7 @@ struct Rig {
     events: mpsc::UnboundedReceiver<StackEvent>,
     helper_lines: Arc<Mutex<Vec<String>>>,
     secret: [u8; 32],
+    config: watch::Sender<StackConfig>,
 }
 
 impl Rig {
@@ -250,7 +251,7 @@ impl Rig {
         let helper_lines = crate::helper_sock::tests::serve(&helper_path, |_| None);
         let mut info = crate::info::tests::sample();
         info.hevc = false;
-        let (_tx, config) = watch::channel(StackConfig {
+        let (config_tx, config) = watch::channel(StackConfig {
             info,
             audio_device: "out".into(),
             audio_input_device: "in".into(),
@@ -264,7 +265,6 @@ impl Rig {
             cluster_content: None,
             images: Vec::new(),
         });
-        std::mem::forget(_tx);
         let media = FakeMedia::new();
         let ctx = Arc::new(StackCtx {
             identity,
@@ -298,6 +298,7 @@ impl Rig {
             events,
             helper_lines,
             secret,
+            config: config_tx,
         }
     }
 
@@ -1078,6 +1079,70 @@ async fn vehicle_state_is_always_described_and_enabled_only_when_offered() {
         assert!(info.get("vehicleStateProtocolInfo").is_some());
         assert!(info.get("displayPanels").is_some());
     }
+}
+
+#[tokio::test]
+async fn the_phone_moves_between_its_view_areas_without_reconnecting() {
+    let mut rig = Rig::new().await;
+    let card = crate::info::Insets {
+        top: 16,
+        bottom: 124,
+        left: 252,
+        right: 20,
+    };
+    rig.config.send_modify(|c| {
+        c.info.main.view_areas = vec![crate::info::Insets::default(), card];
+        c.info.main.view_area_index = 1;
+    });
+    let secret = rig.secret;
+    rig.phone.verify(&secret, b"phone-1").await;
+    let info = rig.phone.plist("GET", "/info", &dict([])).await;
+    let main = &info.get("displays").and_then(Value::as_array).unwrap()[0];
+    assert_eq!(main.get("initialViewArea").and_then(Value::as_int), Some(1));
+    let session = dict([
+        ("name", Value::String("iPhone".into())),
+        ("deviceID", Value::String("AA:BB".into())),
+        ("timingPort", Value::Int(9)),
+    ]);
+    let resp = rig.phone.plist("SETUP", "/s", &session).await;
+    let _ = rig.event().await;
+    let mut event = TcpStream::connect(("127.0.0.1", int_of(&resp, "eventPort") as u16))
+        .await
+        .unwrap();
+    let shared = rig.phone.shared;
+    let mut event_cipher = ControlCipher::new(
+        hkdf_sha512(&shared, b"Events-Salt", b"Events-Write-Encryption-Key"),
+        hkdf_sha512(&shared, b"Events-Salt", b"Events-Read-Encryption-Key"),
+    );
+    // the same areas, another one now: the phone is told to move
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    rig.config.send_modify(|c| c.info.main.view_area_index = 0);
+    let (mut sealed, mut plain, mut chunk) = (Vec::new(), Vec::new(), vec![0u8; 16 * 1024]);
+    let moved = loop {
+        let n = tokio::time::timeout(Duration::from_secs(5), event.read(&mut chunk))
+            .await
+            .unwrap()
+            .unwrap();
+        sealed.extend_from_slice(&chunk[..n]);
+        let (data, rest) = event_cipher.decrypt(&sealed).unwrap();
+        sealed = rest;
+        plain.extend(data);
+        let (msgs, rest) = rtsp::parse(&plain);
+        plain = rest;
+        if let Some(body) = msgs
+            .iter()
+            .map(|m| bplist::decode(&m.body).unwrap())
+            .find(|b| b.get("type").and_then(Value::as_str) == Some("updateViewArea"))
+        {
+            break body;
+        }
+    };
+    let params = moved.get("params").unwrap();
+    assert_eq!(params.get("viewAreaIndex").and_then(Value::as_int), Some(0));
+    assert_eq!(
+        params.get("adjacentViewAreas"),
+        Some(&Value::Array(vec![Value::Int(1)]))
+    );
 }
 
 #[tokio::test]

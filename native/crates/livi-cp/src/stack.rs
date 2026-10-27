@@ -321,6 +321,8 @@ struct Conn<M: Media> {
     limited_ui: Option<bool>,
     cluster_want: bool,
     cluster_url: Option<String>,
+    /// The main display's view areas the phone got in /info, and the one it draws in now
+    view_areas_told: Option<(Vec<info::Insets>, usize)>,
     video_active: bool,
     audio_active: bool,
     call_active: bool,
@@ -588,6 +590,7 @@ pub async fn run<M: Media>(
         limited_ui: None,
         cluster_want: false,
         cluster_url: None,
+        view_areas_told: None,
         video_active: false,
         audio_active: false,
         call_active: false,
@@ -604,7 +607,10 @@ pub async fn run<M: Media>(
     config.mark_unchanged();
     loop {
         tokio::select! {
-            Ok(()) = config.changed() => conn.follow_cluster_url().await,
+            Ok(()) = config.changed() => {
+                conn.follow_cluster_url().await;
+                conn.follow_view_area().await;
+            }
             read = rd.read(&mut buf) => match read {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {

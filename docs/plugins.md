@@ -163,13 +163,13 @@ free area between its bars instead of full screen, like its own pages. The setti
 | `projectionCard`, `cameraCard` | the phone's or the camera's picture as a card; otherwise full screen |
 | `videoCardTop`, `videoCardBottom`, `videoCardLeft`, `videoCardRight`, `videoCardRadius` | the card, in pixels of the phone's picture (`projectionWidth` x `projectionHeight`, like the view area); all 0: no card |
 
-- CarPlay gets the card as its view area and draws only there. The picture keeps its size; CarPlay leaves the rest.
-  Android Auto stays full screen.
+- CarPlay knows two view areas from the start, full screen and the card, and draws only in the one it is told. The
+  picture keeps its size; CarPlay leaves the rest. Android Auto stays full screen.
 - LIVI keeps the plugin's bars and its background, and leaves the card transparent: the plugin's `background` draws
   around it with `Livi.video` (e.g. a `Path` with `fill-rule: evenodd`). Touches in the card go to the phone, touches
   on the bars stay in LIVI.
 - LIVI draws a button on the picture that switches between card and full screen until LIVI starts again or the
   setting changes (`Action::SetVideoCard`). Full screen hides the bars; the button leads back.
-- The phone learns its area when it connects: switching the phone's picture, or moving the card, makes it connect
-  anew (a few seconds).
+- Switching moves CarPlay into the other area during the session (`updateViewArea` on the event channel, animated),
+  without a new connection. Moving the card changes the areas themselves: the phone connects anew (a few seconds).
 
