@@ -238,6 +238,20 @@ pub fn install(ui: &AppWindow, on_action: impl Fn(&str, &str) + 'static) {
             _ => {}
         }
     }
+    for (page, component) in &p.empty {
+        let f = factory(component.clone());
+        match *page {
+            "projection" => {
+                ui.set_plugin_no_phone(f);
+                ui.set_has_plugin_no_phone(true);
+            }
+            "camera" => {
+                ui.set_plugin_no_camera(f);
+                ui.set_has_plugin_no_camera(true);
+            }
+            _ => {}
+        }
+    }
     let views: Vec<PluginView> = p
         .pages
         .iter()
