@@ -48,6 +48,10 @@ thread_local! {
     static ZOOM: Cell<f32> = const { Cell::new(1.0) };
     static INTRO: Cell<bool> = const { Cell::new(false) };
     static STATE_READY: Cell<bool> = const { Cell::new(false) };
+    // LIVI's settings page shows a screen the plugin's settings page does not draw; it hands it back once it can
+    static SETTINGS_LENT: Cell<bool> = const { Cell::new(false) };
+    // the plugin's settings page opens on a screen chosen before (handed back, or a path): not at the top
+    static SETTINGS_KEEP: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Lets the start picture fade out once the core's state is there and the window has drawn its content: the first
@@ -184,7 +188,7 @@ fn apply(ui: &AppWindow, update: Update) {
         Update::Look(look) => apply_look(ui, look),
         Update::Kiosk(on) => fullscreen::follow_main(ui.window(), on),
         Update::Settings => {
-            if ui.get_page() == Page::Settings {
+            if ui.get_page() == Page::Settings || plugins::settings_shown(ui) {
                 CLIENT.with_borrow(|c| {
                     if let Some(c) = c {
                         settings_ui::render(ui, c);
@@ -245,13 +249,39 @@ fn open_path(ui: &AppWindow, path: &str) {
         (Page::Media, Some("phone")) => ui.global::<DabState>().set_view_dab(false),
         _ => {}
     }
+    // a plugin with its own settings page shows LIVI's settings there
+    let page = match plugins::settings_page() {
+        Some(id) if page == Page::Settings => {
+            ui.set_plugin_page_id(id.into());
+            SETTINGS_KEEP.set(true);
+            Page::Plugin
+        }
+        _ => page,
+    };
     choose(ui, page);
-    if page == Page::Settings {
+    if page == Page::Settings || plugins::settings_shown(ui) {
         CLIENT.with_borrow(|c| {
             if let Some(c) = c {
                 settings_ui::open_path(ui, c, &parts[1..].join("/"));
             }
         });
+    }
+}
+
+/// After LIVI's settings drew a screen: with a settings page of the plugin, the screen goes to whichever of the two
+/// pages can show it (settings_ui.rs calls this at the end of each drawing)
+pub(crate) fn settings_rendered(ui: &AppWindow) {
+    let Some(id) = plugins::settings_page() else {
+        return;
+    };
+    let drawable = plugins::settings_drawable(ui);
+    if plugins::settings_shown(ui) && !drawable {
+        SETTINGS_LENT.set(true);
+        choose(ui, Page::Settings);
+    } else if ui.get_page() == Page::Settings && SETTINGS_LENT.get() && drawable {
+        SETTINGS_KEEP.set(true);
+        ui.set_plugin_page_id(id.into());
+        choose(ui, Page::Plugin);
     }
 }
 
@@ -284,6 +314,15 @@ fn reported(ui: &AppWindow, client: &Client, page: Page) {
     client.spectrum(page == Page::Media && ui.get_show_spectrum());
     media_ui::follow(ui);
     if page != Page::Settings {
+        SETTINGS_LENT.set(false);
+    }
+    if plugins::settings_shown(ui) {
+        if SETTINGS_KEEP.take() {
+            settings_ui::render(ui, client);
+        } else {
+            settings_ui::reset_to_root(ui, client);
+        }
+    } else if page != Page::Settings {
         settings_ui::leave(client);
     }
     settle_projection_focus(ui);
@@ -454,6 +493,11 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
         ("media", "play-pause") => ui.invoke_play_pause(),
         ("media", "next") => ui.invoke_next(),
         ("media", "prev") => ui.invoke_prev(),
+        ("settings", argument) => {
+            if !plugins::settings_act(&ui, argument) {
+                println!("[ui] plugin action settings {argument} unknown");
+            }
+        }
         ("page", step @ ("next" | "prev")) => {
             // among the plugin's own pages and without wrapping around: a swipe at either end does nothing
             let Some(i) = active_tab(&ui) else { return };

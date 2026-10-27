@@ -26,6 +26,8 @@ pub struct PluginPage {
     pub component: ComponentDefinition,
     /// among the tabs (and so in the order for swiping); a page only opened from the plugin's own buttons is not
     pub tab: bool,
+    /// the kinds of LIVI's settings screens the page draws (settings.rs); empty: not a settings page
+    pub settings: Vec<String>,
 }
 
 pub struct Plugin {
@@ -129,6 +131,12 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
         pages.push(PluginPage {
             title: text(p, "title").unwrap_or_else(|| id.clone()),
             tab: p["tab"].as_bool().unwrap_or(true),
+            settings: p["settings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|k| k.as_str().map(str::to_string))
+                .collect(),
             id,
             icon,
             component,
@@ -180,6 +188,9 @@ mod tests {
         assert!(p.shell.contains_key("bottom"));
         assert_eq!(p.fullscreen, vec!["/camera".to_string()]);
         assert_eq!(p.hide, vec!["/telemetry".to_string()]);
+        let settings = p.page("settings").expect("settings page");
+        assert_eq!(settings.settings, vec!["list".to_string()]);
+        assert!(!settings.tab);
     }
 
     #[test]

@@ -3,10 +3,29 @@
   "name": "Example",
   "file": "example.slint",
   "start": "hello",
-  "shell": { "bottom": "Bar" },
+  "shell": {
+    "bottom": "Bar"
+  },
   "pages": [
-    { "id": "hello", "title": "Hello", "component": "Hello" }
+    {
+      "id": "hello",
+      "title": "Hello",
+      "component": "Hello"
+    },
+    {
+      "id": "settings",
+      "title": "Settings",
+      "component": "Settings",
+      "tab": false,
+      "settings": [
+        "list"
+      ]
+    }
   ],
-  "fullscreen": ["/camera"],
-  "hide": ["/telemetry"]
+  "fullscreen": [
+    "/camera"
+  ],
+  "hide": [
+    "/telemetry"
+  ]
 }
