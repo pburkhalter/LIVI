@@ -1,10 +1,11 @@
-// Example UI plugin for LIVI (docs/plugins.md): one page and a bar at the bottom. Copy the folder to
+// Example UI plugin for LIVI (docs/plugins.md): one page, a bar at the bottom and a page for LIVI's settings. Copy the folder to
 // ~/.config/LIVI/ui-plugin (or point LIVI_UI_PLUGIN at it) and restart LIVI; check it with `LIVI --check-plugin <dir>`.
 
 import { Livi } from "@livi/api.slint";
 
 // LIVI reaches the state only through a global the main file exports
 export { Livi }
+export { Settings } from "settings.slint";
 
 // A page: a window LIVI embeds; it reads the state from Livi
 export component Hello inherits Window {

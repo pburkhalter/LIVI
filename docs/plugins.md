@@ -48,7 +48,7 @@ plugin has errors, LIVI logs them and starts without it.
 | `start` | Page shown at start (an `id` from `pages`), instead of LIVI's start page. |
 | `splash` | Picture shown full window at start, until the UI has drawn; then it fades out. |
 | `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). `overlay` covers the whole window above everything, also on full screen pages and over the projection, e.g. for warnings; touches go through it except where it has a `TouchArea`. |
-| `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`; `"tab": false` keeps a page out of the tabs and the order for swiping (e.g. one the plugin opens from its own button). |
+| `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`; `"tab": false` keeps a page out of the tabs and the order for swiping (e.g. one the plugin opens from its own button); `"settings"` makes it the page for LIVI's settings (see Settings). |
 | `fullscreen` | Paths of pages that show without the bars, e.g. `"/camera"`. |
 | `hide` | Paths of LIVI's pages the plugin replaces with its own, e.g. `"/media"`: their tabs go away, the paths still work. |
 
@@ -109,6 +109,25 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
 | `Livi.action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
 | `Livi.action("page", "next")` | The plugin's next page in tab order (`prev`: the previous one), e.g. after a swipe; nothing at the first or last page. |
 
+### Settings
+
+A page with `"settings": ["list", "select", ...]` in the manifest shows LIVI's settings in the plugin's design. The
+list names the kinds of screens the page draws: `list`, `select`, `number`, `text`, `color`, `slider`,
+`calibration`, `pending`. LIVI keeps the logic, saving and translations; the page gets the screen on top of LIVI's
+settings stack and sends the user's wishes back:
+
+- `settings`: kind, title, whether there is a way back or an apply button, and the values of a number or slider screen;
+- `setting-rows`: the rows of a list (kind, label, icon, value, switch, level, enabled, node);
+- `setting-picks`: the choices of a select screen;
+- `Livi.action("settings", ...)`: `open:<node>`, `toggle:<row>`, `press:<row>`, `capture:<row>`,
+  `slide:<node>:<level>`, `slide-done:<node>:<level>`, `pick:<index>`, `number:<value>`, `level:<level>`,
+  `level-done:<level>`, `back`, `apply`.
+
+A screen of another kind, a dialog and the wait for a key LIVI shows on its own settings page; once the screen is one
+the page draws again, LIVI shows the plugin's page. `/settings` (e.g. from `Livi.action("open", "/settings")`) opens
+the plugin's page; `"hide": ["/settings"]` takes LIVI's tab away. The example plugin has a settings page that draws
+only lists.
+
 ## Tools
 
 - `LIVI --check-plugin <folder>` compiles a plugin without a display and reports its errors.
@@ -119,5 +138,5 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
 
 ## Example
 
-[native/crates/livi-ui/plugin/example](../native/crates/livi-ui/plugin/example) has one page and a bar with a button
-per page. The tests compile it.
+[native/crates/livi-ui/plugin/example](../native/crates/livi-ui/plugin/example) has one page, a bar with a button
+per page and a settings page that draws LIVI's settings lists. The tests compile it.

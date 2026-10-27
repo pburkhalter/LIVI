@@ -11,6 +11,10 @@
 //   Livi.action("media", what)   "play-pause", "next" or "prev" for the phone's player
 //   Livi.action("page", "next")  the plugin's next page in the tab order ("prev": the previous one), e.g. after a
 //                                swipe; nothing at the first or last one
+//   Livi.action("settings", w)   on the plugin's settings page (LiviSettings below): "open:<node>", "toggle:<row>",
+//                                "press:<row>", "capture:<row>", "slide:<node>:<level>", "slide-done:<node>:<level>",
+//                                "pick:<index>", "number:<value>", "level:<level>", "level-done:<level>", "back",
+//                                "apply"
 //
 // Every component LIVI shows from a plugin inherits Window: the interpreter builds only exported windows, and LIVI
 // embeds them into its own.
@@ -117,6 +121,58 @@ export struct LiviClimate {
     passenger-seat-heating: int,
 }
 
+// LIVI's settings, the screen on top of its settings stack, while the plugin's settings page is on screen (a page with
+// "settings" in the manifest, which names the kinds it draws; LIVI shows the other ones on its own settings page and
+// hands them back). `kind`: "list", "select", "number", "text", "color", "slider", "calibration" or "pending".
+export struct LiviSettings {
+    kind: string,
+    title: string,
+    can-back: bool,
+    show-apply: bool,
+    apply-text: string,
+    read-only: bool,
+    // number: the value, how LIVI writes it, its bounds and step
+    number-value: float,
+    number-text: string,
+    number-min: float,
+    number-max: float,
+    has-min: bool,
+    has-max: bool,
+    number-step: float,
+    // slider: 0 to 1
+    level: float,
+    level-text: string,
+    // pending: what waits for a restart
+    pending-name: string,
+}
+
+// A row of a settings list. `kind`: "route" and "value" open a screen ("open:<node>"), "toggle" switches
+// ("toggle:<row>"), "slider" slides ("slide:<node>:<level>"), "button", "device" and "pick" are pressed
+// ("press:<row>"), "custom" opens as well, "key-binding" waits for a key ("capture:<row>", shown by LIVI's page);
+// "info", "progress", "picture", "item" and "devices" only show. <row> is the row's position in `setting-rows`.
+export struct LiviSettingRow {
+    kind: string,
+    label: string,
+    icon: image,
+    has-icon: bool,
+    value: string,
+    checked: bool,
+    // slider and progress: 0 to 1
+    level: float,
+    enabled: bool,
+    dimmed: bool,
+    alert: bool,
+    // the text of a button
+    button: string,
+    node: int,
+}
+
+// A choice of a select screen ("pick:<index>")
+export struct LiviPick {
+    label: string,
+    selected: bool,
+}
+
 // A telemetry value LIVI has no field for (for example doors from a CAN reader), as text.
 export struct LiviValue {
     key: string,
@@ -144,6 +200,9 @@ export global Livi {
     // what a CAN reader keeps under the telemetry key `can`: raw values that may change many times a second, apart
     // from `other`
     in property <[LiviValue]> can;
+    in property <LiviSettings> settings;
+    in property <[LiviSettingRow]> setting-rows;
+    in property <[LiviPick]> setting-picks;
     callback action(verb: string, argument: string);
 
     // The value of a key in `other`, "" when there is none, e.g. Livi.value("doors")

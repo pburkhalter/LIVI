@@ -619,6 +619,7 @@ pub fn render(ui: &AppWindow, client: &Client) {
     with(|c| render_screen(c, &ui.global::<SettingsState>(), &state));
     let now = with(|c| c.model.watches(&c.stack)).unwrap_or_default();
     follow_watches(client, now);
+    crate::settings_rendered(ui);
 }
 
 pub fn leave(client: &Client) {

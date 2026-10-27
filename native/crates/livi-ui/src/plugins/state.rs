@@ -15,11 +15,11 @@ fn num(v: &Json) -> Option<f64> {
     v.as_f64().filter(|f| f.is_finite())
 }
 
-fn s(text: impl AsRef<str>) -> Value {
+pub(super) fn s(text: impl AsRef<str>) -> Value {
     Value::String(SharedString::from(text.as_ref()))
 }
 
-fn record(fields: Vec<(&str, Value)>) -> Value {
+pub(super) fn record(fields: Vec<(&str, Value)>) -> Value {
     Value::Struct(
         fields
             .into_iter()
@@ -28,7 +28,7 @@ fn record(fields: Vec<(&str, Value)>) -> Value {
     )
 }
 
-fn model(items: Vec<Value>) -> Value {
+pub(super) fn model(items: Vec<Value>) -> Value {
     Value::Model(ModelRc::from(Rc::new(VecModel::from(items))))
 }
 
@@ -306,7 +306,11 @@ pub fn build(
 ) -> Vec<(&'static str, Value)> {
     let t = &state["telemetry"];
     let tm = crate::clock::local_now();
-    vec![
+    let settings_shown = plugin
+        .pages
+        .iter()
+        .any(|p| !p.settings.is_empty() && current == tab_path(Page::Plugin, &p.id));
+    let mut fields = vec![
         ("page", s(current)),
         ("clock", s(format!("{:02}:{:02}", tm.tm_hour, tm.tm_min))),
         ("date", date(&tm)),
@@ -324,7 +328,9 @@ pub fn build(
         ("climate", climate(&t["climate"])),
         ("other", other(t)),
         ("can", can(t)),
-    ]
+    ];
+    fields.extend(super::settings::fields(ui, settings_shown));
+    fields
 }
 
 #[cfg(test)]
