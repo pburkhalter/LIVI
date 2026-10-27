@@ -43,7 +43,7 @@ plugin has errors, LIVI logs them and starts without it.
 | Key | Meaning |
 |---|---|
 | `api` | Plugin API the plugin is written for; LIVI refuses others. Currently `1`. |
-| `name` | Shown in logs. |
+| `name` | Shown in logs and the debug overlay. |
 | `file` | Main `.slint` file; it exports every component the manifest names. It may import other files of the folder. |
 | `start` | Page shown at start (an `id` from `pages`), instead of LIVI's start page. |
 | `splash` | Picture shown full window at start, until the UI has drawn; then it fades out. |
@@ -116,8 +116,6 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
   recorded state. The files in `native/crates/livi-ui/fixtures/` are examples. Add `LIVI_UI_SIZE=2400x900` for the
   size of your screen and `LIVI_UI_PAGE=plugin/<id>` to open a page.
 - `LIVI_UI_TRACE=1` prints how long the steps of the start take, up to the first frames.
-- The setting *System → Logs → Debug overlay* (or `LIVI_DEBUG_OVERLAY=1`) shows the frame rate, load and memory in a
-  corner.
 
 ## Example
 

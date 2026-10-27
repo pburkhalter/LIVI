@@ -67,6 +67,7 @@ LIVI_GST_DEBUG=1 ./LIVI*.AppImage
 | `LIVI_UI_PAGE=<page>` | Open the UI on `projection`, `media`, `telemetry`, `camera`, `settings` or a plugin's page, `plugin/<id>`. Empty counts as not set. |
 | `LIVI_UI_PLUGIN=<folder>` | Load the UI plugin from this folder instead of `~/.config/LIVI/ui-plugin` (`docs/plugins.md`). `LIVI --check-plugin <folder>` only compiles it and reports its errors. |
 | `LIVI_UI_TRACE=1` | Print how long the steps of the UI's start take, up to the first frames. |
+| `LIVI_DEBUG_OVERLAY=1` | Show the debug overlay (frame rate, load, memory, page, plugin) in a corner, like the setting *System → Logs → Debug overlay*. |
 | `LIVI_UI_SETTINGS=<path>` | With the settings page, open this settings path, e.g. `general/connections`. |
 | `LIVI_UI_SNAPSHOT=<file.png>` | Save a picture of the UI window 3 s after start, `LIVI_UI_SNAPSHOT_MS` sets another wait. |
 | `LIVI_UI_STATE=<file.json>` | Show this core state without a core, e.g. `native/crates/livi-ui/fixtures/dab.json`. |
