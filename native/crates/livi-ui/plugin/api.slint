@@ -13,8 +13,11 @@
 //                                swipe; nothing at the first or last one
 //   Livi.action("settings", w)   on the plugin's settings page (LiviSettings below): "open:<node>", "toggle:<row>",
 //                                "press:<row>", "capture:<row>", "slide:<node>:<level>", "slide-done:<node>:<level>",
-//                                "pick:<index>", "number:<value>", "level:<level>", "level-done:<level>", "back",
-//                                "apply"
+//                                "pick:<index>", "number:<value>", "level:<level>", "level-done:<level>",
+//                                "text:<text>", "hex:<rrggbb>", "color-slide:<0 hue|1 sat.|2 light.>:<level>",
+//                                "color-slide-done:<i>:<level>", "color-reset", "knob:<i>:<level>",
+//                                "knob-done:<i>:<level>", "knob-reset:<i>", "dialog-press:<row>", "capture-cancel",
+//                                "back", "apply"
 //
 // Every component LIVI shows from a plugin inherits Window: the interpreter builds only exported windows, and LIVI
 // embeds them into its own.
@@ -123,7 +126,8 @@ export struct LiviClimate {
 
 // LIVI's settings, the screen on top of its settings stack, while the plugin's settings page is on screen (a page with
 // "settings" in the manifest, which names the kinds it draws; LIVI shows the other ones on its own settings page and
-// hands them back). `kind`: "list", "select", "number", "text", "color", "slider", "calibration" or "pending".
+// hands them back). `kind`: "list", "select", "number", "text", "color", "slider", "calibration" or "pending"; a
+// dialog over the screen and the wait for a key count as "dialog" and "capture".
 export struct LiviSettings {
     kind: string,
     title: string,
@@ -144,6 +148,43 @@ export struct LiviSettings {
     level-text: string,
     // pending: what waits for a restart
     pending-name: string,
+    // text
+    text-value: string,
+    text-max: int,
+    // color: the colour, as hex, whether it is the user's own, and its hue, saturation and lightness (0 to 1) with
+    // the colours for the rails of their sliders
+    color-preview: color,
+    color-hex: string,
+    color-custom: bool,
+    hue: float,
+    saturation: float,
+    lightness: float,
+    saturation-from: color,
+    saturation-to: color,
+    lightness-mid: color,
+    hue-label: string,
+    saturation-label: string,
+    lightness-label: string,
+    // calibration: a grey wedge instead of the colour swatches; the sliders are `setting-knobs`
+    wedge: bool,
+    // a dialog over the screen: its title, its rows are `setting-dialog-rows` ("dialog-press:<row>")
+    dialog-open: bool,
+    dialog-title: string,
+    // waiting for a key ("capture-cancel" stops it)
+    capture-open: bool,
+    capture-title: string,
+    capture-hint: string,
+}
+
+// A slider of a calibration screen ("knob:<index>:<level>", "knob-reset:<index>" unless it is `neutral`)
+export struct LiviKnob {
+    text: string,
+    icon: image,
+    has-icon: bool,
+    tint: color,
+    has-tint: bool,
+    level: float,
+    neutral: bool,
 }
 
 // A row of a settings list. `kind`: "route" and "value" open a screen ("open:<node>"), "toggle" switches
@@ -203,6 +244,8 @@ export global Livi {
     in property <LiviSettings> settings;
     in property <[LiviSettingRow]> setting-rows;
     in property <[LiviPick]> setting-picks;
+    in property <[LiviKnob]> setting-knobs;
+    in property <[LiviSettingRow]> setting-dialog-rows;
     callback action(verb: string, argument: string);
 
     // The value of a key in `other`, "" when there is none, e.g. Livi.value("doors")

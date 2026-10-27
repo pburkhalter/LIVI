@@ -18,6 +18,8 @@ const API_DIR: &str = "/livi-plugin-api";
 
 /// The places around the pages a plugin can fill
 pub const SLOTS: [&str; 6] = ["background", "start", "end", "top", "bottom", "overlay"];
+/// LIVI's pages whose empty state a plugin can draw ("empty" in the manifest)
+pub const EMPTY: [&str; 2] = ["projection", "camera"];
 
 pub struct PluginPage {
     pub id: String,
@@ -40,6 +42,8 @@ pub struct Plugin {
     /// LIVI's pages the plugin replaces: not among the tabs, still reachable by path, e.g. "/media"
     pub hide: Vec<String>,
     pub shell: HashMap<&'static str, ComponentDefinition>,
+    /// what the plugin shows on LIVI's pages while they have nothing to show, by page: "projection", "camera"
+    pub empty: HashMap<&'static str, ComponentDefinition>,
     pub pages: Vec<PluginPage>,
 }
 
@@ -120,6 +124,12 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
             shell.insert(slot, component(c)?);
         }
     }
+    let mut empty = HashMap::new();
+    for page in EMPTY {
+        if let Some(c) = manifest["empty"][page].as_str() {
+            empty.insert(page, component(c)?);
+        }
+    }
     let mut pages = Vec::new();
     for p in manifest["pages"].as_array().into_iter().flatten() {
         let id = text(p, "id").ok_or("a page without \"id\"")?;
@@ -167,6 +177,7 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
         fullscreen,
         hide,
         shell,
+        empty,
         pages,
     })
 }

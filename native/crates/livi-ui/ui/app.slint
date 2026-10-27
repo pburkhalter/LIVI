@@ -59,6 +59,11 @@ export component AppWindow inherits Window {
     in property <bool> has-plugin-background;
     in property <component-factory> plugin-overlay;
     in property <bool> has-plugin-overlay;
+    // what the plugin shows on LIVI's pages while they have nothing to show: no phone streaming, no camera
+    in property <component-factory> plugin-no-phone;
+    in property <bool> has-plugin-no-phone;
+    in property <component-factory> plugin-no-camera;
+    in property <bool> has-plugin-no-camera;
     // the plugin wants the page on screen without its bars (e.g. a camera picture)
     in property <bool> plugin-bars-hidden;
     in property <bool> has-plugin-start;
@@ -131,7 +136,9 @@ export component AppWindow inherits Window {
         component-factory: root.plugin-background;
     }
 
-    if root.page == Page.telemetry: Dashboard {
+    // with LIVI's own navigation the dashboard takes the whole window (the navigation goes to sleep over it); next to a
+    // plugin's bar it takes the page's place like the other pages, below
+    if root.page == Page.telemetry && root.own-nav: Dashboard {
         width: root.width;
         height: root.height;
     }
@@ -167,7 +174,16 @@ export component AppWindow inherits Window {
                 height: parent.height;
                 component-factory: view.factory;
             }
-            if root.page == Page.projection: ProjectionPage {
+            if root.page == Page.telemetry && !root.own-nav: Dashboard {
+                width: parent.width;
+                height: parent.height;
+            }
+            if root.page == Page.projection && root.has-plugin-no-phone && root.phone != PhoneState.streaming: ComponentContainer {
+                width: parent.width;
+                height: parent.height;
+                component-factory: root.plugin-no-phone;
+            }
+            if root.page == Page.projection && !(root.has-plugin-no-phone && root.phone != PhoneState.streaming): ProjectionPage {
                 width: parent.width;
                 height: parent.height;
                 streaming: root.phone == PhoneState.streaming;
@@ -203,7 +219,12 @@ export component AppWindow inherits Window {
                 width: parent.width;
                 height: parent.height;
             }
-            if root.page == Page.camera && !root.camera-found: Rectangle {
+            if root.page == Page.camera && !root.camera-found && root.has-plugin-no-camera: ComponentContainer {
+                width: parent.width;
+                height: parent.height;
+                component-factory: root.plugin-no-camera;
+            }
+            if root.page == Page.camera && !root.camera-found && !root.has-plugin-no-camera: Rectangle {
                 background: Theme.background;
                 Text {
                     text: "No camera found";
