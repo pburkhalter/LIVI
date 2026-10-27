@@ -415,6 +415,20 @@ fn refresh_overlay(ui: &AppWindow) {
     }
 }
 
+/// The page asked for at start; empty counts as not set, e.g. from a script that passes an optional page on
+pub(crate) fn wanted_page() -> Option<String> {
+    std::env::var("LIVI_UI_PAGE").ok().filter(|p| !p.is_empty())
+}
+
+/// Where the page on screen is among the tabs; the plugin's pages are told apart by their id
+pub(crate) fn active_tab(ui: &AppWindow) -> Option<usize> {
+    let page = ui.get_page();
+    let id = ui.get_plugin_page_id();
+    ui.get_tabs()
+        .iter()
+        .position(|t| t.page == page && (page != Page::Plugin || t.plugin == id))
+}
+
 fn sync_plugin(ui: &AppWindow) {
     CLIENT.with_borrow(|c| {
         if let Some(c) = c {
@@ -441,22 +455,17 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
         ("media", "next") => ui.invoke_next(),
         ("media", "prev") => ui.invoke_prev(),
         ("page", step @ ("next" | "prev")) => {
-            let tabs = ui.get_tabs();
-            let n = tabs.row_count();
-            let page = ui.get_page();
-            let id = ui.get_plugin_page_id();
-            let Some(i) = tabs
-                .iter()
-                .position(|t| t.page == page && (page != Page::Plugin || t.plugin == id))
-            else {
-                return;
-            };
+            // among the plugin's own pages and without wrapping around: a swipe at either end does nothing
+            let Some(i) = active_tab(&ui) else { return };
             let j = if step == "next" {
-                (i + 1) % n
+                i.checked_add(1)
             } else {
-                (i + n - 1) % n
+                i.checked_sub(1)
             };
-            if let Some(t) = tabs.row_data(j) {
+            if let Some(t) = j
+                .and_then(|j| ui.get_tabs().row_data(j))
+                .filter(|t| t.page == Page::Plugin)
+            {
                 ui.set_plugin_page_id(t.plugin.clone());
                 choose(&ui, t.page);
             }
@@ -595,6 +604,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.set_clock(clock::now_text().into());
                 ui.global::<DashState>().set_clock(clock::now_text().into());
                 secondary::tick_clock(&clock::now_text());
+                // the song's position for the plugin's pages, once a second (LIVI's media page has its own tick)
+                if ui.get_page() == Page::Plugin {
+                    media_ui::follow(&ui);
+                }
                 sync_plugin(&ui);
                 refresh_overlay(&ui);
             }
@@ -654,8 +667,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.show()?;
     debug::trace("window shown");
     reported(&ui, &client, ui.get_page());
-    // empty counts as not set, e.g. from a script that passes an optional page on
-    if let Some(page) = std::env::var("LIVI_UI_PAGE").ok().filter(|p| !p.is_empty()) {
+    if let Some(page) = wanted_page() {
         let page = match page.as_str() {
             "projection" => Page::Projection,
             "camera" => Page::Camera,

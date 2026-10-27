@@ -180,10 +180,7 @@ fn enter_main(ui: &AppWindow) {
 
 fn to_nav(ui: &AppWindow) {
     let f = ui.global::<Focus>();
-    let tabs = ui.get_tabs();
-    let at = (0..tabs.row_count())
-        .find(|&i| tabs.row_data(i).is_some_and(|t| t.page == ui.get_page()))
-        .unwrap_or(0);
+    let at = crate::active_tab(ui).unwrap_or(0);
     f.set_editing(false);
     f.set_nav_index(at as i32);
     f.set_zone(FocusZone::Nav);

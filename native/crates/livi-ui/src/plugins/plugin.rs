@@ -17,7 +17,7 @@ const API_SOURCE: &str = include_str!("../../plugin/api.slint");
 const API_DIR: &str = "/livi-plugin-api";
 
 /// The places around the pages a plugin can fill
-pub const SLOTS: [&str; 5] = ["background", "start", "end", "top", "bottom"];
+pub const SLOTS: [&str; 6] = ["background", "start", "end", "top", "bottom", "overlay"];
 
 pub struct PluginPage {
     pub id: String,

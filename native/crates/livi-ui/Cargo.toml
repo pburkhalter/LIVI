@@ -31,7 +31,7 @@ slint = { version = "1.18.1", default-features = false, features = [
     "unstable-winit-030",
 ] }
 
-# UI plugins (src/plugins.rs): "internal" for create_embedded, so the version is pinned to the one of slint
+# UI plugins (src/plugins/): "internal" for create_embedded, so the version is pinned to the one of slint
 slint-interpreter = { version = "=1.18.1", default-features = false, features = [
     "compat-1-2",
     "internal",

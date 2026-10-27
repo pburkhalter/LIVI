@@ -171,10 +171,7 @@ impl Telemetry {
         if let Some(page) = patch.get("path").and_then(Value::as_str)
             && let Some(app) = projection_app(page)
         {
-            let _ = self.core.open_page.send(page.to_string());
-            if !app.is_empty() {
-                self.core.open_app(app.to_string());
-            }
+            self.core.open_projection(app);
         }
         let path = self.snap.get("path").cloned();
         let Some(changed) = merge(&mut self.snap, patch) else {
