@@ -29,6 +29,43 @@ pub enum Update {
     PhoneName(String),
     Camera(bool),
     MainMask(Option<Mask>),
+    VideoCard(VideoCard),
+}
+
+/// Whether the phone's and the camera's picture show as a card now, and the card: distances from the edges of the
+/// phone's picture and corner radius, in its pixels
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VideoCard {
+    pub projection: bool,
+    pub camera: bool,
+    pub top: u32,
+    pub bottom: u32,
+    pub left: u32,
+    pub right: u32,
+    pub radius: u32,
+}
+
+impl VideoCard {
+    fn read(state: &Value) -> Self {
+        let n = |key: &str| {
+            state["config"][key]
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or(0)
+        };
+        let on = |key: &str| state["video"][key].as_bool().unwrap_or(false);
+        // CarPlay draws in the card it gets; Android Auto has no such area here and stays full screen
+        let android = state["sessions"]["active"].as_str() == Some("androidauto");
+        Self {
+            projection: on("projectionCard") && !android,
+            camera: on("cameraCard"),
+            top: n("videoCardTop"),
+            bottom: n("videoCardBottom"),
+            left: n("videoCardLeft"),
+            right: n("videoCardRight"),
+            radius: n("videoCardRadius"),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -45,6 +82,7 @@ pub struct Follow {
     phones: overlay::Phone,
     started: bool,
     main_mask: Option<Option<Mask>>,
+    video_card: Option<VideoCard>,
     // start page of a UI plugin instead of LIVI's (read on the UI thread, Follow runs on the client's)
     start: Option<String>,
 }
@@ -99,6 +137,13 @@ impl Follow {
             if self.kiosk != Some(kiosk) {
                 self.kiosk = Some(kiosk);
                 out.push(Update::Kiosk(kiosk));
+            }
+        }
+        if hit("video") || hit("config") || hit("sessions") {
+            let next = VideoCard::read(state);
+            if self.video_card != Some(next) {
+                self.video_card = Some(next);
+                out.push(Update::VideoCard(next));
             }
         }
         if hit("sessions") || hit("config") {
@@ -172,5 +217,47 @@ impl Follow {
             out.push(Update::Open(start));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_card_comes_from_the_video_mode_and_the_settings() {
+        let state = |active: Value| {
+            json!({
+                "sessions": { "active": active },
+                "video": { "projectionCard": true, "cameraCard": false },
+                "config": { "videoCardTop": 16, "videoCardBottom": 156, "videoCardLeft": 300,
+                            "videoCardRight": 24, "videoCardRadius": 28 },
+            })
+        };
+        let card = VideoCard::read(&state(json!("carplay")));
+        assert!(card.projection && !card.camera);
+        assert_eq!(
+            (card.top, card.bottom, card.left, card.right, card.radius),
+            (16, 156, 300, 24, 28)
+        );
+        // Android Auto gets no card to draw in: full screen
+        assert!(!VideoCard::read(&state(json!("androidauto"))).projection);
+        assert_eq!(VideoCard::read(&json!({})), VideoCard::default());
+    }
+
+    #[test]
+    fn a_new_card_is_handed_on_once() {
+        let mut follow = Follow::default();
+        let state = json!({ "video": { "projectionCard": true }, "config": { "videoCardTop": 8 } });
+        let cards = |updates: Vec<Update>| {
+            updates
+                .into_iter()
+                .filter(|u| matches!(u, Update::VideoCard(_)))
+                .count()
+        };
+        assert_eq!(cards(follow.changed(None, &state)), 1);
+        assert_eq!(cards(follow.changed(None, &state)), 0);
     }
 }

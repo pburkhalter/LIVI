@@ -22,9 +22,30 @@ pub struct State {
     pub cluster: Cluster,
     pub dab: Dab,
     pub config: Config,
+    /// Whether the pictures show as a card or full screen now
+    #[serde(default)]
+    pub video: VideoMode,
     /// Notifications other programs sent to LIVI (org.freedesktop.Notifications on the session bus), oldest first
     #[serde(default)]
     pub notices: Vec<Notice>,
+}
+
+/// Whether the phone's picture and the camera picture show as a card (config video_card_*) or full screen now: the
+/// settings projection_card and camera_card, switched for a while with Action::SetVideoCard
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoMode {
+    pub projection_card: bool,
+    pub camera_card: bool,
+}
+
+impl VideoMode {
+    pub fn of(config: &crate::config::Config) -> Self {
+        Self {
+            projection_card: config.projection_card,
+            camera_card: config.camera_card,
+        }
+    }
 }
 
 /// A notification after the freedesktop.org Desktop Notifications specification

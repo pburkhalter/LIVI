@@ -59,6 +59,18 @@ pub struct Config {
     pub projection_safe_area_left: u32,
     pub projection_safe_area_right: u32,
     pub projection_safe_area_draw_outside: bool,
+    /// The phone's picture (CarPlay) as a card in the free area of a UI plugin with bars, see video_card_*; else full
+    /// screen. Also switched for a while with Action::SetVideoCard (state video).
+    pub projection_card: bool,
+    /// The camera picture as such a card
+    pub camera_card: bool,
+    /// The card: its distance from the picture's edges and the radius of its corners, in pixels of the phone's
+    /// picture (projection_width x projection_height, like the view area)
+    pub video_card_top: u32,
+    pub video_card_bottom: u32,
+    pub video_card_left: u32,
+    pub video_card_right: u32,
+    pub video_card_radius: u32,
 
     pub cluster_width: u32,
     pub cluster_height: u32,
@@ -382,6 +394,20 @@ pub struct KeyBindings {
     pub voice_assistant_release: String,
 }
 
+impl Config {
+    /// The card for the pictures (video_card_*) as distances from the window's edges: top, bottom, left, right; None
+    /// while none is set
+    pub fn video_card(&self) -> Option<[u32; 4]> {
+        let card = [
+            self.video_card_top,
+            self.video_card_bottom,
+            self.video_card_left,
+            self.video_card_right,
+        ];
+        card.iter().any(|&v| v > 0).then_some(card)
+    }
+}
+
 pub fn defaults() -> Config {
     let off = PerScreen {
         main: false,
@@ -445,6 +471,13 @@ pub fn defaults() -> Config {
         projection_safe_area_left: 0,
         projection_safe_area_right: 0,
         projection_safe_area_draw_outside: true,
+        projection_card: false,
+        camera_card: false,
+        video_card_top: 0,
+        video_card_bottom: 0,
+        video_card_left: 0,
+        video_card_right: 0,
+        video_card_radius: 0,
         cluster_width: 1280,
         cluster_height: 720,
         cluster_fps: 60,

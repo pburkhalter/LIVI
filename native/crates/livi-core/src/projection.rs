@@ -477,6 +477,8 @@ pub enum UiCommand {
     ForgetDevice(String),
     CameraFound(bool),
     OpenApp(String),
+    /// The phone connects anew, e.g. to draw in another area
+    Reconnect,
 }
 
 fn kept_cluster(cfg: &Config, theme: Theme) -> Cluster {
@@ -696,6 +698,7 @@ impl Projection {
                     UiCommand::ForgetDevice(id) => self.forget_device(&id),
                     UiCommand::CameraFound(found) => self.camera_found(found),
                     UiCommand::OpenApp(target) => self.open_app(&target),
+                    UiCommand::Reconnect => self.reconnect(),
                 },
                 Some(input) = asks.input.recv() => self.input(input),
                 Some(done) = asks.goodbye.recv() => self.goodbye(done),

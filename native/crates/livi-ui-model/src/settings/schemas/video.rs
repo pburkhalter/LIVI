@@ -92,6 +92,41 @@ fn view_area(children: Vec<Node>) -> Node {
     .icon("viewArea")
 }
 
+/// The phone's and the camera's picture as a card in the free area of a UI plugin with bars, or full screen
+fn card() -> Node {
+    Node::route(
+        "videoCard",
+        Label::new("settings.videoCard", "Card"),
+        vec![
+            Node::checkbox(
+                Label::new("settings.projectionCard", "Phone as a card"),
+                "projectionCard",
+            )
+            .icon("fullscreen"),
+            Node::checkbox(
+                Label::new("settings.cameraCard", "Camera as a card"),
+                "cameraCard",
+            )
+            .icon("camera"),
+            top("videoCardTop", "Card Top"),
+            bottom("videoCardBottom", "Card Bottom"),
+            left("videoCardLeft", "Card Left"),
+            right("videoCardRight", "Card Right"),
+            number(
+                "settings.videoCardRadius",
+                "Corner radius",
+                "viewArea",
+                "videoCardRadius",
+                0.0,
+                200.0,
+                AREA_STEP,
+                "Card Corner Radius",
+            ),
+        ],
+    )
+    .icon("viewArea")
+}
+
 fn safe_area(children: Vec<Node>) -> Node {
     Node::route(
         "safeArea",
@@ -167,6 +202,7 @@ pub fn schema() -> Node {
                         )
                         .icon("drawOutside"),
                     ]),
+                    card(),
                 ],
             )
             .icon("mainVideo"),

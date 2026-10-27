@@ -617,6 +617,7 @@ mod tests {
             cameras: Vec::new(),
             mfi: Default::default(),
             notices: Vec::new(),
+            video: Default::default(),
             config,
         }
     }

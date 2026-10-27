@@ -9,6 +9,11 @@ export component ProjectionPage inherits Rectangle {
     in property <bool> streaming;
     in property <MaskData> mask;
     in property <image> idle-icon;
+    // only touches in this area go to the phone (the card of a plugin with bars, see app.slint)
+    in property <length> area-top;
+    in property <length> area-bottom;
+    in property <length> area-left;
+    in property <length> area-right;
     callback touch(TouchPhase, float, float);
 
     background: root.streaming ? transparent : Theme.background;
@@ -21,21 +26,33 @@ export component ProjectionPage inherits Rectangle {
 
         TouchArea {
             enabled: root.streaming;
+            // a touch counts when it starts in the area
+            property <bool> held;
             pointer-event(e) => {
                 if (e.kind == PointerEventKind.down) {
-                    root.touch(TouchPhase.down, self.mouse-x / self.width, self.mouse-y / self.height);
-                } else if (e.kind == PointerEventKind.up) {
+                    self.held = root.in-area(self.x + parent.x + self.mouse-x, self.y + parent.y + self.mouse-y);
+                    if (self.held) {
+                        root.touch(TouchPhase.down, self.mouse-x / self.width, self.mouse-y / self.height);
+                    }
+                } else if (self.held && e.kind == PointerEventKind.up) {
+                    self.held = false;
                     root.touch(TouchPhase.up, self.mouse-x / self.width, self.mouse-y / self.height);
-                } else if (e.kind == PointerEventKind.cancel) {
+                } else if (self.held && e.kind == PointerEventKind.cancel) {
+                    self.held = false;
                     root.touch(TouchPhase.cancel, self.mouse-x / self.width, self.mouse-y / self.height);
                 }
             }
             moved => {
-                if (self.pressed) {
+                if (self.held) {
                     root.touch(TouchPhase.move, self.mouse-x / self.width, self.mouse-y / self.height);
                 }
             }
         }
+    }
+
+    function in-area(x: length, y: length) -> bool {
+        return x >= root.area-left && x <= root.width - root.area-right && y >= root.area-top
+            && y <= root.height - root.area-bottom;
     }
 
     if root.streaming: ViewAreaMask {

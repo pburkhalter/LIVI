@@ -245,6 +245,19 @@ fn notices(state: &Json, now: &libc::tm) -> Value {
     model(out)
 }
 
+/// The card the phone's or the camera's picture shows in, for a background drawn around it (app.slint)
+fn video(ui: &AppWindow) -> Value {
+    let px = |v: f32| Value::Number(f64::from(v));
+    record(vec![
+        ("shown", Value::Bool(ui.get_video_card_shown())),
+        ("top", px(ui.get_card_top())),
+        ("bottom", px(ui.get_card_bottom())),
+        ("left", px(ui.get_card_left())),
+        ("right", px(ui.get_card_right())),
+        ("radius", px(ui.get_card_radius())),
+    ])
+}
+
 /// How many notices are critical (a binding cannot count in a list)
 fn critical(state: &Json) -> Value {
     let n = state["notices"]
@@ -382,6 +395,7 @@ pub fn build(
         ("can", can(t)),
         ("notices", notices(state, &tm)),
         ("notices-critical", critical(state)),
+        ("video", video(ui)),
     ];
     fields.extend(super::settings::fields(ui, settings_shown));
     fields

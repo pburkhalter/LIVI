@@ -12,6 +12,7 @@
 //   Livi.action("page", "next")  the plugin's next page in the tab order ("prev": the previous one), e.g. after a
 //                                swipe; nothing at the first or last one
 //   Livi.action("notice", "dismiss:<id>")  close a notice (LiviNotice)
+// LIVI draws the button that switches the phone's or the camera's picture between card and full screen itself.
 //   Livi.action("settings", w)   on the plugin's settings page (LiviSettings below): "open:<node>", "toggle:<row>",
 //                                "press:<row>", "capture:<row>", "slide:<node>:<level>", "slide-done:<node>:<level>",
 //                                "pick:<index>", "number:<value>", "level:<level>", "level-done:<level>",
@@ -233,6 +234,18 @@ export struct LiviNotice {
     month: int,
 }
 
+// The card the phone's or the camera's picture shows in (settings projectionCard, cameraCard, videoCard*): `shown`
+// while it does; distances from the window's edges and the corner radius, in the window's pixels. LIVI leaves the card transparent, the
+// picture lies below the window: a `background` leaves out the card, e.g. as a Path with fill-rule evenodd.
+export struct LiviVideo {
+    shown: bool,
+    top: length,
+    bottom: length,
+    left: length,
+    right: length,
+    radius: length,
+}
+
 // A telemetry value LIVI has no field for (for example doors from a CAN reader), as text.
 export struct LiviValue {
     key: string,
@@ -263,6 +276,7 @@ export global Livi {
     in property <[LiviNotice]> notices;
     // how many of them are critical
     in property <int> notices-critical;
+    in property <LiviVideo> video;
     in property <LiviSettings> settings;
     in property <[LiviSettingRow]> setting-rows;
     in property <[LiviPick]> setting-picks;
