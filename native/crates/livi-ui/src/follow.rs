@@ -163,7 +163,7 @@ impl Follow {
         }
         if keys.is_none()
             && !std::mem::replace(&mut self.started, true)
-            && std::env::var_os("LIVI_UI_PAGE").is_none()
+            && crate::wanted_page().is_none()
         {
             let start = self
                 .start

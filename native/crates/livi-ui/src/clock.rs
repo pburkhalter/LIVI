@@ -1,7 +1,12 @@
-pub fn now_text() -> String {
+pub fn local_now() -> libc::tm {
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&now, &mut tm) };
+    tm
+}
+
+pub fn now_text() -> String {
+    let tm = local_now();
     let sep = if tm.tm_sec % 2 == 0 { ':' } else { ' ' };
     format!("{:02}{sep}{:02}", tm.tm_hour, tm.tm_min)
 }

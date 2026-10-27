@@ -176,6 +176,7 @@ pub fn install(ui: &AppWindow, on_action: impl Fn(&str, &str) + 'static) {
     ACTION.with_borrow_mut(|a| *a = Some(Rc::new(on_action)));
     if let Some(splash) = &p.splash {
         ui.set_intro_image(splash.clone());
+        ui.set_intro_done(false);
     }
     for (slot, component) in &p.shell {
         let f = factory(component.clone());
@@ -196,10 +197,15 @@ pub fn install(ui: &AppWindow, on_action: impl Fn(&str, &str) + 'static) {
                 ui.set_plugin_top(f);
                 ui.set_has_plugin_top(true);
             }
-            _ => {
+            "bottom" => {
                 ui.set_plugin_bottom(f);
                 ui.set_has_plugin_bottom(true);
             }
+            "overlay" => {
+                ui.set_plugin_overlay(f);
+                ui.set_has_plugin_overlay(true);
+            }
+            _ => {}
         }
     }
     let views: Vec<PluginView> = p

@@ -70,6 +70,16 @@ impl Core {
         let _ = self.asks.commands.send(UiCommand::OpenApp(target));
     }
 
+    /// Shows the projection, with one of the phone's apps unless `app` is empty: the path `/projection/<app>`
+    pub fn open_projection(&self, app: &str) {
+        if app.is_empty() {
+            let _ = self.open_page.send("/projection".into());
+        } else {
+            let _ = self.open_page.send(format!("/projection/{app}"));
+            self.open_app(app.into());
+        }
+    }
+
     pub async fn refresh_mfi(&self) -> Result<(), String> {
         let view = crate::mfi::read(&self.mfi_dir);
         let files = crate::mfi::digest(&self.mfi_dir);
@@ -158,8 +168,7 @@ impl Core {
                 Ok(())
             }
             Action::OpenApp { app } => {
-                let _ = self.open_page.send(format!("/projection/{app}"));
-                self.open_app(app);
+                self.open_projection(&app);
                 Ok(())
             }
             Action::ImportMfi { file, path } => {
@@ -486,6 +495,35 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
         tokio::spawn(serve(core.clone(), listener));
         (core, path, asks, dongle, update)
+    }
+
+    #[tokio::test]
+    async fn opening_an_app_shows_the_projection() {
+        let dir = TempDir::new();
+        let (_core, path, mut asks, _, _) = start_with_asks(&dir);
+        let mut ui = Peer::hello(&path).await;
+        for (id, app, page) in [(1, "maps", "/projection/maps"), (2, "", "/projection")] {
+            ui.send(&ToCore::Action {
+                id,
+                action: Action::OpenApp { app: app.into() },
+            })
+            .await;
+            // the reply and the page to open, in either order
+            let got = [ui.recv().await, ui.recv().await];
+            assert!(
+                got.contains(&Some(FromCore::Reply { id, error: None })),
+                "{got:?}"
+            );
+            assert!(
+                got.contains(&Some(FromCore::OpenPage { path: page.into() })),
+                "{got:?}"
+            );
+        }
+        assert_eq!(
+            asks.commands.try_recv(),
+            Ok(UiCommand::OpenApp("maps".into()))
+        );
+        assert!(asks.commands.try_recv().is_err(), "no app for an empty one");
     }
 
     #[tokio::test]

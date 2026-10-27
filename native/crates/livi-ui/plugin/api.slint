@@ -1,14 +1,16 @@
 // LIVI UI plugin API, version 1 (docs/plugins.md). Plugins import it as "@livi/api.slint".
 //
 // LIVI's state is in the global `Livi`. Each of its properties changes on its own, so a binding only runs again when
-// what it reads has changed. The plugin's main file exports the global, so that LIVI can reach it:
+// a property it reads has changed; a struct changes as a whole, so values that change often have structs of their own
+// (`drive`, `playback`). The plugin's main file exports the global, so that LIVI can reach it:
 //   export { Livi } from "@livi/api.slint";
 //
 // What the user wants goes to LIVI as Livi.action(verb, argument):
-//   Livi.action("open", path)    show a page: "/projection", "/projection/<app>" (e.g. maps, music, phone), "/media",
+//   Livi.action("open", path)    show a page: "/projection", "/projection/<app>" (e.g. maps, music, mobilephone), "/media",
 //                                "/telemetry", "/camera", "/settings", "/plugin/<page id>"
 //   Livi.action("media", what)   "play-pause", "next" or "prev" for the phone's player
-//   Livi.action("page", "next")  the next page in the tab order ("prev": the previous one), e.g. after a swipe
+//   Livi.action("page", "next")  the plugin's next page in the tab order ("prev": the previous one), e.g. after a
+//                                swipe; nothing at the first or last one
 //
 // Every component LIVI shows from a plugin inherits Window: the interpreter builds only exported windows, and LIVI
 // embeds them into its own.
@@ -39,10 +41,14 @@ export struct LiviMedia {
     artwork: image,
     has-artwork: bool,
     playing: bool,
+    total-ms: float,
+}
+
+// Where the song is; changes every second while it plays.
+export struct LiviPlayback {
     // 0 to 1
     progress: float,
     elapsed-ms: float,
-    total-ms: float,
 }
 
 export struct LiviNav {
@@ -57,14 +63,20 @@ export struct LiviNav {
     app: string,
 }
 
-// Vehicle telemetry; `has-*` tells whether a value has arrived at all.
-export struct LiviCar {
-    known: bool,
+// What changes many times a second while driving; `has-*` tells whether a value has arrived at all.
+export struct LiviDrive {
     speed-kph: float,
     has-speed: bool,
     rpm: float,
     has-rpm: bool,
     gear: string,
+}
+
+// The other vehicle telemetry; `known`: any telemetry has arrived.
+export struct LiviCar {
+    known: bool,
+    // the speed is above 0
+    moving: bool,
     ambient-c: float,
     has-ambient: bool,
     fuel-pct: float,
@@ -123,10 +135,15 @@ export global Livi {
     // LIVI's and the plugin's pages in tab order
     in property <[LiviPage]> pages;
     in property <LiviMedia> media;
+    in property <LiviPlayback> playback;
     in property <LiviNav> nav;
+    in property <LiviDrive> drive;
     in property <LiviCar> car;
     in property <LiviClimate> climate;
     in property <[LiviValue]> other;
+    // what a CAN reader keeps under the telemetry key `can`: raw values that may change many times a second, apart
+    // from `other`
+    in property <[LiviValue]> can;
     callback action(verb: string, argument: string);
 
     // The value of a key in `other`, "" when there is none, e.g. Livi.value("doors")
