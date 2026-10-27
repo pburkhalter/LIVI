@@ -103,11 +103,6 @@ fn card() -> Node {
                 "projectionCard",
             )
             .icon("fullscreen"),
-            Node::checkbox(
-                Label::new("settings.cameraCard", "Camera as a card"),
-                "cameraCard",
-            )
-            .icon("camera"),
             top("videoCardTop", "Card Top"),
             bottom("videoCardBottom", "Card Bottom"),
             left("videoCardLeft", "Card Left"),

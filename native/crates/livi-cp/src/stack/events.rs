@@ -39,6 +39,17 @@ impl<M: Media> Conn<M> {
         ev.plain = rest;
         for msg in messages {
             if msg.method.starts_with("RTSP/") || msg.method.starts_with("HTTP/") {
+                let cseq = msg.headers.get("cseq").and_then(|c| c.parse::<u32>().ok());
+                if cseq.is_some() && cseq == self.view_area_cseq {
+                    self.view_area_cseq = None;
+                    if msg.path != "200" {
+                        println!(
+                            "[cpStack] the phone refused the view area ({}): it connects anew",
+                            msg.path
+                        );
+                        self.view_area_refused = true;
+                    }
+                }
                 if msg.path != "200" || (debug && !msg.body.is_empty()) {
                     let body = match bplist::decode(&msg.body) {
                         Ok(v) => format!(" {v:?}"),
@@ -206,6 +217,7 @@ impl<M: Media> Conn<M> {
         self.view_areas_told = Some((areas.clone(), index));
         let command = info::view_area_command(&self.main_uuid(), index, areas.len());
         self.send_event_command(&command).await;
+        self.view_area_cseq = self.event.as_ref().map(|ev| ev.cseq);
     }
 
     pub(super) async fn follow_cluster_url(&mut self) {

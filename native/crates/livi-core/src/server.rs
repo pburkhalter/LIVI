@@ -99,39 +99,26 @@ impl Core {
         self.config_file
             .save(&next)
             .map_err(|e| format!("not saved: {e}"))?;
-        let mut reconnect = false;
         self.hub.update(|s| {
-            // a changed setting takes over from a switch for a while
+            // a changed setting takes over from a switch for a while; a moved card reaches the phone when the
+            // settings are applied (restart.rs), like the view area
             let setting = VideoMode::of(&next);
             if setting != VideoMode::of(&s.config) {
                 s.video = setting;
             }
-            // the phone learns its areas (the card among them) when it connects; switching between them needs none
-            reconnect = s.config.video_card() != next.video_card();
             s.config = next;
         });
-        if reconnect {
-            self.reconnect_phone();
-        }
         Ok(())
     }
 
-    /// Shows a picture as a card or full screen for a while (Action::SetVideoCard); the phone moves into the other of
-    /// the areas it knows (carplay.rs main_view_areas)
+    /// Shows the phone's picture as a card or full screen for a while (Action::SetVideoCard); the phone moves into the
+    /// other of the areas it knows (carplay.rs main_view_areas)
     pub fn set_video_card(&self, page: &str, card: bool) -> Result<(), String> {
-        if !matches!(page, "projection" | "camera") {
-            return Err(format!("no picture {page}"));
+        if page != "projection" {
+            return Err(format!("no picture {page} as a card"));
         }
-        self.hub.update(|s| match page {
-            "projection" => s.video.projection_card = card,
-            _ => s.video.camera_card = card,
-        });
+        self.hub.update(|s| s.video.projection_card = card);
         Ok(())
-    }
-
-    /// The phone learns the areas it may draw in when it connects: a running session connects anew
-    fn reconnect_phone(&self) {
-        let _ = self.asks.commands.send(UiCommand::Reconnect);
     }
 
     pub fn activity(&self) -> watch::Receiver<Activity> {
@@ -880,25 +867,24 @@ mod tests {
         core.set_video_card("projection", false).unwrap();
         assert!(!video().projection_card);
         assert!(core.hub.config().projection_card);
-        core.set_video_card("camera", true).unwrap();
-        assert!(video().camera_card);
-        assert!(core.set_video_card("radio", true).is_err());
-        assert!(asks.commands.try_recv().is_err());
+        assert!(core.set_video_card("camera", true).is_err());
         // another setting leaves the switch alone; a changed card setting takes over
         core.set_config(&serde_json::json!({ "darkMode": true }))
             .await
             .unwrap();
         assert!(!video().projection_card);
-        core.set_config(&serde_json::json!({ "cameraCard": true }))
+        core.set_config(&serde_json::json!({ "projectionCard": false }))
             .await
             .unwrap();
-        assert!(video().projection_card && video().camera_card);
-        assert!(asks.commands.try_recv().is_err());
-        // a card in another place: the phone must learn it, it connects anew
+        core.set_config(&serde_json::json!({ "projectionCard": true }))
+            .await
+            .unwrap();
+        assert!(video().projection_card);
+        // nothing of it makes the phone connect anew (a moved card waits for the settings to be applied)
         core.set_config(&serde_json::json!({ "videoCardLeft": 252 }))
             .await
             .unwrap();
-        assert!(matches!(asks.commands.try_recv(), Ok(UiCommand::Reconnect)));
+        assert!(asks.commands.try_recv().is_err());
     }
 
     #[tokio::test]

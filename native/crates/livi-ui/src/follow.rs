@@ -32,12 +32,13 @@ pub enum Update {
     VideoCard(VideoCard),
 }
 
-/// Whether the phone's and the camera's picture show as a card now, and the card: distances from the edges of the
-/// phone's picture and corner radius, in its pixels
+/// Whether the phone's picture shows as a card now, and the card: distances from the edges of the phone's picture
+/// and corner radius, in its pixels (all 0: no card, or one that does not fit the picture); Android Auto has no card
+/// to draw in and stays full screen
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VideoCard {
     pub projection: bool,
-    pub camera: bool,
+    pub android: bool,
     pub top: u32,
     pub bottom: u32,
     pub left: u32,
@@ -53,16 +54,30 @@ impl VideoCard {
                 .and_then(|v| u32::try_from(v).ok())
                 .unwrap_or(0)
         };
-        let on = |key: &str| state["video"][key].as_bool().unwrap_or(false);
-        // CarPlay draws in the card it gets; Android Auto has no such area here and stays full screen
         let android = state["sessions"]["active"].as_str() == Some("androidauto");
+        // the same card the core gives the phone (Config::video_card)
+        let card = [
+            n("videoCardTop"),
+            n("videoCardBottom"),
+            n("videoCardLeft"),
+            n("videoCardRight"),
+        ];
+        let [top, bottom, left, right] = if livi_core_proto::config::video_card_fits(
+            card,
+            n("projectionWidth"),
+            n("projectionHeight"),
+        ) {
+            card
+        } else {
+            [0; 4]
+        };
         Self {
-            projection: on("projectionCard") && !android,
-            camera: on("cameraCard"),
-            top: n("videoCardTop"),
-            bottom: n("videoCardBottom"),
-            left: n("videoCardLeft"),
-            right: n("videoCardRight"),
+            projection: state["video"]["projectionCard"].as_bool().unwrap_or(false) && !android,
+            android,
+            top,
+            bottom,
+            left,
+            right,
             radius: n("videoCardRadius"),
         }
     }
@@ -228,22 +243,27 @@ mod tests {
 
     #[test]
     fn the_card_comes_from_the_video_mode_and_the_settings() {
-        let state = |active: Value| {
+        let state = |active: Value, left: u32| {
             json!({
                 "sessions": { "active": active },
-                "video": { "projectionCard": true, "cameraCard": false },
-                "config": { "videoCardTop": 16, "videoCardBottom": 156, "videoCardLeft": 300,
-                            "videoCardRight": 24, "videoCardRadius": 28 },
+                "video": { "projectionCard": true },
+                "config": { "videoCardTop": 16, "videoCardBottom": 124, "videoCardLeft": left,
+                            "videoCardRight": 20, "videoCardRadius": 22,
+                            "projectionWidth": 1920, "projectionHeight": 720 },
             })
         };
-        let card = VideoCard::read(&state(json!("carplay")));
-        assert!(card.projection && !card.camera);
+        let card = VideoCard::read(&state(json!("carplay"), 252));
+        assert!(card.projection && !card.android);
         assert_eq!(
             (card.top, card.bottom, card.left, card.right, card.radius),
-            (16, 156, 300, 24, 28)
+            (16, 124, 252, 20, 22)
         );
-        // Android Auto gets no card to draw in: full screen
-        assert!(!VideoCard::read(&state(json!("androidauto"))).projection);
+        // Android Auto gets no card to draw in: full screen, and no button
+        let aa = VideoCard::read(&state(json!("androidauto"), 252));
+        assert!(!aa.projection && aa.android);
+        // a card that does not fit the picture is none, as for the core
+        let wide = VideoCard::read(&state(json!("carplay"), 1900));
+        assert_eq!((wide.top, wide.left), (0, 0));
         assert_eq!(VideoCard::read(&json!({})), VideoCard::default());
     }
 
