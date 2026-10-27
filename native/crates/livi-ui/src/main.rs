@@ -705,7 +705,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => Page::Media,
         };
         choose(&ui, page);
-        if page == Page::Settings {
+        if page == Page::Settings || plugins::settings_shown(&ui) {
             settings_ui::open_path(
                 &ui,
                 &client,
