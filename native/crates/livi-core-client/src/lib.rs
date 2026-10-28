@@ -68,6 +68,7 @@ impl Client {
         client.send(&ToCore::Hello {
             protocol: PROTOCOL,
             client: name.into(),
+            subscribe: Vec::new(),
         });
         let state = client.state.clone();
         thread::Builder::new()

@@ -1,7 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use livi_core_proto::PROTOCOL;
@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, Notify, broadcast, oneshot, watch};
 
 use livi_core_proto::state::VideoMode;
 
+use crate::companion::{ClientId, Companion, Event};
 use crate::config_file::{ConfigFile, apply_patch};
 use crate::dab::DabAsk;
 use crate::dongle::LinkSpeedViewer;
@@ -34,6 +35,9 @@ pub struct Core {
     pub ui_path: watch::Sender<String>,
     pub open_page: broadcast::Sender<String>,
     pub relaunch: std::sync::Mutex<Option<PathBuf>>,
+    /// What clients publish for plugins and plugins send them (docs/plugins.md, companion channel)
+    pub companion: Companion,
+    clients: AtomicU64,
     asks: UiSenders,
     uid: u32,
     mfi_dir: PathBuf,
@@ -55,6 +59,8 @@ impl Core {
             restart: AtomicBool::new(false),
             quit_asked: AtomicBool::new(false),
             relaunch: std::sync::Mutex::new(None),
+            companion: Companion::default(),
+            clients: AtomicU64::new(1),
             ui_path: watch::channel(String::new()).0,
             open_page: broadcast::channel(8).0,
             asks,
@@ -166,9 +172,13 @@ impl Core {
         heard
     }
 
-    async fn act(&self, action: Action) -> Result<(), String> {
+    async fn act(&self, client: ClientId, action: Action) -> Result<(), String> {
         match action {
             Action::SetConfig { patch } => self.set_config(&patch).await,
+            Action::SetExtension { topic, value } => {
+                self.companion.publish(&self.hub, client, &topic, value)
+            }
+            Action::Emit { topic, name, value } => self.companion.emit(&topic, &name, value),
             Action::Quit => {
                 self.quit_asked.store(true, Ordering::SeqCst);
                 self.quit.notify_one();
@@ -328,6 +338,27 @@ async fn next_spectrum(viewer: &mut Option<Viewer>) -> Frame {
     }
 }
 
+async fn next_event(
+    events: &mut Option<broadcast::Receiver<Event>>,
+) -> Result<Event, broadcast::error::RecvError> {
+    match events {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// While a client is connected: what it published goes with it, however it leaves
+struct Connected<'a> {
+    core: &'a Core,
+    id: ClientId,
+}
+
+impl Drop for Connected<'_> {
+    fn drop(&mut self) {
+        self.core.companion.leave(&self.core.hub, self.id);
+    }
+}
+
 async fn client(core: Arc<Core>, stream: UnixStream) -> io::Result<()> {
     let peer = stream.peer_cred()?.uid();
     if peer != core.uid {
@@ -348,7 +379,12 @@ async fn client(core: Arc<Core>, stream: UnixStream) -> io::Result<()> {
         }
         dec.push(&buf[..n]);
     };
-    let ToCore::Hello { protocol, client } = hello else {
+    let ToCore::Hello {
+        protocol,
+        client,
+        subscribe,
+    } = hello
+    else {
         let reason = "the first message has to be hello".into();
         return send(&mut wr, &FromCore::Refused { reason }).await;
     };
@@ -357,6 +393,11 @@ async fn client(core: Arc<Core>, stream: UnixStream) -> io::Result<()> {
         return send(&mut wr, &FromCore::Refused { reason }).await;
     }
     println!("[core] {client} connected");
+    let me = Connected {
+        core: &core,
+        id: core.clients.fetch_add(1, Ordering::Relaxed),
+    };
+    let mut events = (!subscribe.is_empty()).then(|| core.companion.events());
     let mut pages = core.open_page.subscribe();
     let mut patches = welcome(&core, &mut wr).await?;
     let mut viewer: Option<Viewer> = None;
@@ -374,7 +415,7 @@ async fn client(core: Arc<Core>, stream: UnixStream) -> io::Result<()> {
                     match msg {
                         Ok(ToCore::Resync) => patches = welcome(&core, &mut wr).await?,
                         Ok(ToCore::Action { id, action }) => {
-                            let error = core.act(action).await.err();
+                            let error = core.act(me.id, action).await.err();
                             send(&mut wr, &FromCore::Reply { id, error }).await?;
                         }
                         Ok(ToCore::Input { input }) => {
@@ -409,6 +450,14 @@ async fn client(core: Arc<Core>, stream: UnixStream) -> io::Result<()> {
                 Ok(path) => send(&mut wr, &FromCore::OpenPage { path }).await?,
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => break,
+            },
+            event = next_event(&mut events) => match event {
+                Ok(Event { topic, name, value }) if subscribe.contains(&topic) => {
+                    send(&mut wr, &FromCore::Event { topic, name, value }).await?;
+                }
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Lagged(n)) => println!("[core] {client} missed {n} events"),
+                Err(broadcast::error::RecvError::Closed) => events = None,
             },
         }
     }
@@ -463,10 +512,15 @@ mod tests {
         }
 
         async fn hello(path: &std::path::Path) -> Self {
+            Self::subscribing(path, &[]).await
+        }
+
+        async fn subscribing(path: &std::path::Path, topics: &[&str]) -> Self {
             let mut peer = Self::connect(path).await;
             peer.send(&ToCore::Hello {
                 protocol: PROTOCOL,
                 client: "test".into(),
+                subscribe: topics.iter().map(|t| t.to_string()).collect(),
             })
             .await;
             assert!(matches!(
@@ -501,6 +555,7 @@ mod tests {
             sessions: Default::default(),
             now_playing: Default::default(),
             telemetry: Default::default(),
+            extensions: Default::default(),
             navigation: Default::default(),
             system: Default::default(),
             devices: Default::default(),
@@ -817,6 +872,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_published_state_reaches_the_others_and_goes_with_its_client() {
+        let dir = TempDir::new();
+        let (core, path) = start(&dir);
+        let mut service = Peer::hello(&path).await;
+        let mut ui = Peer::hello(&path).await;
+        let value = json!({ "state": "ready", "level": 0 });
+        service
+            .send(&ToCore::Action {
+                id: 1,
+                action: Action::SetExtension {
+                    topic: "voice".into(),
+                    value: value.clone(),
+                },
+            })
+            .await;
+        let set = PatchOp::Set {
+            path: vec!["extensions".into(), "voice".into()],
+            value,
+        };
+        // the reply and the patch, in either order
+        let got = [service.recv().await, service.recv().await];
+        assert!(
+            got.contains(&Some(FromCore::Reply { id: 1, error: None })),
+            "{got:?}"
+        );
+        assert_eq!(
+            ui.recv().await,
+            Some(FromCore::Patch {
+                rev: 1,
+                ops: vec![set]
+            })
+        );
+        // another client may not take it over
+        ui.send(&ToCore::Action {
+            id: 2,
+            action: Action::SetExtension {
+                topic: "voice".into(),
+                value: json!({}),
+            },
+        })
+        .await;
+        assert!(matches!(
+            ui.recv().await,
+            Some(FromCore::Reply {
+                id: 2,
+                error: Some(_)
+            })
+        ));
+        drop(service);
+        let removed = PatchOp::Remove {
+            path: vec!["extensions".into(), "voice".into()],
+        };
+        assert_eq!(
+            ui.recv().await,
+            Some(FromCore::Patch {
+                rev: 2,
+                ops: vec![removed]
+            })
+        );
+        assert!(core.hub.watch().borrow().extensions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_event_reaches_the_clients_that_subscribed_its_topic() {
+        let dir = TempDir::new();
+        let (_core, path) = start(&dir);
+        let mut voice = Peer::subscribing(&path, &["voice"]).await;
+        let mut radio = Peer::subscribing(&path, &["radio"]).await;
+        let mut ui = Peer::hello(&path).await;
+        for (id, topic, name) in [
+            (1, "voice", "press"),
+            (2, "radio", "next"),
+            (3, "voice", "model"),
+        ] {
+            ui.send(&ToCore::Action {
+                id,
+                action: Action::Emit {
+                    topic: topic.into(),
+                    name: name.into(),
+                    value: json!(""),
+                },
+            })
+            .await;
+            assert_eq!(ui.recv().await, Some(FromCore::Reply { id, error: None }));
+        }
+        let event = |topic: &str, name: &str| {
+            Some(FromCore::Event {
+                topic: topic.into(),
+                name: name.into(),
+                value: json!(""),
+            })
+        };
+        // each gets only its own topic's, in order
+        assert_eq!(voice.recv().await, event("voice", "press"));
+        assert_eq!(voice.recv().await, event("voice", "model"));
+        assert_eq!(radio.recv().await, event("radio", "next"));
+        ui.send(&ToCore::Action {
+            id: 4,
+            action: Action::Emit {
+                topic: "voice".into(),
+                name: "".into(),
+                value: json!(""),
+            },
+        })
+        .await;
+        assert!(matches!(
+            ui.recv().await,
+            Some(FromCore::Reply {
+                id: 4,
+                error: Some(_)
+            })
+        ));
+    }
+
+    #[tokio::test]
     async fn resync_sends_the_whole_state_again() {
         let dir = TempDir::new();
         let (core, path) = start(&dir);
@@ -845,6 +1015,7 @@ mod tests {
         old.send(&ToCore::Hello {
             protocol: PROTOCOL + 1,
             client: "old".into(),
+            subscribe: Vec::new(),
         })
         .await;
         assert!(matches!(old.recv().await, Some(FromCore::Refused { .. })));

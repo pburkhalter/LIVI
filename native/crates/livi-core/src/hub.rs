@@ -109,7 +109,7 @@ impl Hub {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use livi_core_proto::frame::Decoder;
     use livi_core_proto::patch::PatchOp;
     use livi_core_proto::state::{Front, PerScreen};
@@ -118,7 +118,7 @@ mod tests {
     use super::*;
     use crate::config_file::defaults;
 
-    fn hub() -> Hub {
+    pub(crate) fn hub() -> Hub {
         let livi = PerScreen {
             main: Front::Livi,
             cluster: Front::Livi,
@@ -129,6 +129,7 @@ mod tests {
             sessions: Default::default(),
             now_playing: Default::default(),
             telemetry: Default::default(),
+            extensions: Default::default(),
             navigation: Default::default(),
             system: Default::default(),
             devices: Default::default(),
@@ -144,7 +145,7 @@ mod tests {
         })
     }
 
-    fn decode(frame: &[u8]) -> FromCore {
+    pub(crate) fn decode(frame: &[u8]) -> FromCore {
         let mut dec = Decoder::new();
         dec.push(frame);
         dec.next_message().unwrap().unwrap()

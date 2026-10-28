@@ -20,6 +20,7 @@ mod camera;
 mod car_bridge;
 mod carplay;
 mod child;
+mod companion;
 mod config_file;
 mod cp_radio;
 mod cp_telemetry;
@@ -182,6 +183,7 @@ async fn run() -> Result<Exit, String> {
         sessions: Default::default(),
         now_playing: Default::default(),
         telemetry: Default::default(),
+        extensions: Default::default(),
         navigation: Default::default(),
         system: livi_core_proto::state::System {
             start_page: start,

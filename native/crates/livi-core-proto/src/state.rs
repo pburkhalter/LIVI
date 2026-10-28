@@ -18,6 +18,10 @@ pub struct State {
     pub cameras: Vec<CameraView>,
     pub mfi: Mfi,
     pub telemetry: Map<String, Value>,
+    /// Companion channel: what clients of the core publish for UI plugins, an object per topic
+    /// (Action::SetExtension); kept while the client stays connected, never saved
+    #[serde(default)]
+    pub extensions: Map<String, Value>,
     pub update: Update,
     pub cluster: Cluster,
     pub dab: Dab,

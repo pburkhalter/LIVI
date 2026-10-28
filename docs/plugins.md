@@ -102,7 +102,9 @@ global `Livi` with these properties:
   with every notice that comes or says something new (for banners: what is new since the page last looked);
   `Livi.action("notice", "dismiss:<id>")` closes one;
 - `can`: the raw values a CAN reader keeps under the telemetry key `can`, as text, apart from `other` because they may
-  change many times a second.
+  change many times a second;
+- `extensions`: what programs beside LIVI publish for the plugin (companion channel, below);
+  `Livi.extension(topic, key)` gives one value as text.
 
 LIVI sets each property only when it changed. A binding runs again only when a property it reads changed: one that
 shows the speed does not run when the song changes. A struct changes as a whole, though: a binding that reads one
@@ -142,6 +144,47 @@ A screen of another kind, a dialog and the wait for a key LIVI shows on its own 
 the page draws again, LIVI shows the plugin's page. `/settings` (e.g. from `Livi.action("open", "/settings")`) opens
 the plugin's page; `"hide": ["/settings"]` takes LIVI's tab away. The example plugin has a settings page that draws
 only lists.
+
+## Companion channel
+
+A program beside LIVI (a voice assistant, a radio, a CAN reader) and the plugin can talk to each other through LIVI's
+core, without LIVI knowing what they say:
+
+- The program publishes a small state of its own under a **topic**; the plugin reads it with
+  `Livi.extension(topic, key)` as text (`""` when there is none). A key of a nested object is read as `key.inner`; the
+  object itself reads as JSON. Numbers read as e.g. `0.5`, booleans as `true` and `false`.
+- The plugin sends the program **events** with `Livi.emit(topic, name, value)`; the value is text, `""` when there is
+  nothing to say. LIVI hands each event to the programs that listen to the topic at that moment, and to no one
+  otherwise; there is no answer.
+
+```slint
+// a button of a radio program: hidden while it publishes nothing
+if Livi.extension("radio", "station") != "": TouchArea {
+    clicked => { Livi.emit("radio", "next", ""); }
+}
+```
+
+A binding that reads `Livi.extension` runs again whenever any program publishes a change. A program that changes a
+value many times a second (e.g. a level) makes the plugin redraw what reads it as often; read such a value in a
+`Timer` that runs while it matters, and take slower values over in a `changed` handler.
+
+**On the core socket** (`$XDG_RUNTIME_DIR/livi/core.sock`, frames of 4 bytes of length, little endian, and JSON;
+`native/crates/livi-core-proto/src/message.rs`), any client of the user's id can do the program's part:
+
+| Message | Meaning |
+|---|---|
+| `{"type":"hello","protocol":11,"client":"radio","subscribe":["radio"]}` | The first message; `subscribe` (may be left out) names the topics whose events the client wants. |
+| `{"type":"action","id":1,"action":{"kind":"setExtension","topic":"radio","value":{"station":"SRF 3"}}}` | Publishes the client's state under the topic: an object that replaces the one before, at most 4096 bytes as JSON; `null` takes it away. LIVI sends its clients only what changed (patches of `extensions`). |
+| `{"type":"event","topic":"radio","name":"next","value":""}` | From LIVI: an event a plugin sent (`Livi.emit`). |
+| `{"type":"action","id":2,"action":{"kind":"emit","topic":"radio","name":"next","value":""}}` | Sends an event as a plugin does; the value may be any JSON here. |
+
+- A topic and an event's name have 1 to 64 letters, digits, `-` or `_`. A topic belongs to the client that published
+  it first, until that client takes it away or disconnects; a client publishes at most 8. LIVI answers each action with
+  a `reply`, with `error` when it refused it (another client's topic, too big, not an object).
+- Nothing is saved: when the client disconnects, its topics go from the state, and the plugin reads `""` again. A
+  program that starts again publishes its state anew.
+- The core checks nothing but the user id of a client. A program that should not reach the rest of LIVI's actions
+  needs a gate of its own in between.
 
 ## Tools
 
