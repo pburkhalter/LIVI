@@ -288,6 +288,7 @@ impl XdgShellHandler for LiviState {
             vis_h: 0.0,
             tier_w: 0.0,
             tier_h: 0.0,
+            area: None,
             position: Point::from((0, 0)),
             clear: false,
         });

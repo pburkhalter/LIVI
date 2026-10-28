@@ -85,6 +85,12 @@ pub enum Action {
         page: String,
         card: bool,
     },
+    /// Puts the camera's whole picture into a rectangle of the main window (state video): x, y, width, height in the
+    /// window's pixels, as a UI plugin lays out its camera page (it may reach beyond the window, so that black
+    /// borders of the picture lie under the plugin's background); None: the whole screen again
+    SetCameraArea {
+        area: Option<[i32; 4]>,
+    },
     /// Companion channel: the client's state under `topic` (state extensions), an object that replaces the one
     /// before; null takes it away, as does the client going
     SetExtension {

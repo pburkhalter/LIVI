@@ -78,6 +78,15 @@ export component AppWindow inherits Window {
     in property <bool> has-plugin-no-phone;
     in property <component-factory> plugin-no-camera;
     in property <bool> has-plugin-no-camera;
+    // what the plugin draws on the camera page around the picture ("frame" in the manifest), and where it put the
+    // picture (action camera-area, main.rs): the compositor shows it there, Livi.video tells the plugin's background
+    in property <component-factory> plugin-camera-frame;
+    in property <bool> has-plugin-camera-frame;
+    in property <length> camera-x;
+    in property <length> camera-y;
+    in property <length> camera-width;
+    in property <length> camera-height;
+    in property <length> camera-radius;
     // the plugin wants the page on screen without its bars (e.g. a camera picture)
     in property <bool> plugin-bars-hidden;
     in property <bool> has-plugin-start;
@@ -109,7 +118,11 @@ export component AppWindow inherits Window {
         || (root.page == Page.camera && root.camera-found);
     // ... or, with a card set, draws around the phone's picture as a card and keeps the bars (the phone draws in the
     // card: the core gives it the card as its view area, the same card as here); a button switches between card and
-    // full screen. The camera picture stays full screen below the window for now.
+    // full screen. The camera picture goes full screen below the window, or where a plugin's camera frame puts it.
+    out property <bool> camera-framed: root.page == Page.camera && root.camera-found && root.has-plugin-camera-frame
+        && root.camera-width > 0 && root.camera-height > 0;
+    out property <length> camera-right: root.width - root.camera-x - root.camera-width;
+    out property <length> camera-bottom: root.height - root.camera-y - root.camera-height;
     property <bool> card-set: !root.video-card.android
         && root.video-card.top + root.video-card.bottom + root.video-card.left + root.video-card.right > 0;
     // the card in the window: the phone's picture fills the window as far as its shape allows (as the compositor
@@ -179,7 +192,7 @@ export component AppWindow inherits Window {
         root.wake-nav();
     }
 
-    if root.has-plugin-background && (!root.video-shown || root.video-card-shown): ComponentContainer {
+    if root.has-plugin-background && (!root.video-shown || root.video-card-shown || root.camera-framed): ComponentContainer {
         width: root.width;
         height: root.height;
         component-factory: root.plugin-background;
@@ -307,6 +320,11 @@ export component AppWindow inherits Window {
             if root.page == Page.settings: SettingsView {
                 width: parent.width;
                 height: parent.height;
+            }
+            if root.page == Page.camera && root.camera-found && root.has-plugin-camera-frame: ComponentContainer {
+                width: parent.width;
+                height: parent.height;
+                component-factory: root.plugin-camera-frame;
             }
             if root.page == Page.camera && !root.camera-found && root.has-plugin-no-camera: ComponentContainer {
                 width: parent.width;

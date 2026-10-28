@@ -296,6 +296,25 @@ fn handle_line(state: &mut LiviState, line: &str) {
                 crate::layout::apply_cfg_to_video(state, &tag, v);
             }
         }
+        Some("videoarea") => {
+            log::info!("ctrl < {line}");
+            let Some(tag) = parts.next() else {
+                return;
+            };
+            let nums: Vec<f64> = parts.filter_map(|v| v.parse().ok()).collect();
+            if nums.len() != 4 {
+                return;
+            }
+            // width or height 0: the whole screen again
+            let area = (nums[2] > 0.0 && nums[3] > 0.0).then(|| [nums[0], nums[1], nums[2], nums[3]]);
+            let tag = tag.to_string();
+            state.cfg_for_tag(&tag).area = area;
+            if let Some(v) = state.find_video_by_tag(&tag) {
+                state.toplevels[v].area = area;
+                crate::layout::apply_video_layout(state, v);
+                crate::host::damage_all(state);
+            }
+        }
         Some("videoshow") => {
             log::info!("ctrl < {line}");
             let (Some(tag), Some(onoff)) = (
