@@ -559,9 +559,51 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
                 choose(&ui, t.page);
             }
         }
+        ("camera-area", argument) => match camera_area(argument) {
+            Some(area) => {
+                let (card, picture) = area.unzip();
+                let [x, y, w, h, r] = card.unwrap_or_default();
+                ui.set_camera_x(x);
+                ui.set_camera_y(y);
+                ui.set_camera_width(w);
+                ui.set_camera_height(h);
+                ui.set_camera_radius(r);
+                let area = picture.map(|a| a.map(|v| v.round() as i32));
+                CLIENT.with_borrow(|c| {
+                    if let Some(c) = c {
+                        c.act(Action::SetCameraArea { area });
+                    }
+                })
+            }
+            None => println!("[ui] plugin action camera-area {argument} unknown"),
+        },
         _ => println!("[ui] plugin action {verb} {argument} unknown"),
     }
     sync_plugin(&ui);
+}
+
+/// What a plugin's camera frame says, in the window's pixels: "x y width height [radius [px py pwidth pheight]]", the
+/// card the picture shows in (x ... radius) and where the whole picture goes (p...: larger than the card when the
+/// picture has borders, also beyond the window; the card when left out). "" for the whole screen again (Some(None)).
+#[allow(clippy::type_complexity)]
+fn camera_area(argument: &str) -> Option<Option<([f32; 5], [f32; 4])>> {
+    let numbers: Vec<f32> = argument
+        .split_whitespace()
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    let (card, picture) = match numbers[..] {
+        [] => return Some(None),
+        [x, y, w, h] => ([x, y, w, h, 0.0], [x, y, w, h]),
+        [x, y, w, h, r] => ([x, y, w, h, r], [x, y, w, h]),
+        [x, y, w, h, r, px, py, pw, ph] => ([x, y, w, h, r], [px, py, pw, ph]),
+        _ => return None,
+    };
+    let fine = card.iter().chain(&picture).all(|v| v.is_finite())
+        && card.iter().all(|v| *v >= 0.0)
+        && picture[2] > 0.0
+        && picture[3] > 0.0;
+    fine.then_some(Some((card, picture)))
 }
 
 /// An event a plugin component sent to the programs that listen to its topic (`Livi.emit`, companion channel)
@@ -825,4 +867,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(err.into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::camera_area;
+
+    #[test]
+    fn a_camera_area_comes_apart_or_is_refused() {
+        assert_eq!(camera_area(""), Some(None));
+        assert_eq!(
+            camera_area("1100 24 1180 720"),
+            Some(Some((
+                [1100.0, 24.0, 1180.0, 720.0, 0.0],
+                [1100.0, 24.0, 1180.0, 720.0]
+            )))
+        );
+        assert_eq!(
+            camera_area("1100 24 1180 720 24 1094 -1 1390 782"),
+            Some(Some((
+                [1100.0, 24.0, 1180.0, 720.0, 24.0],
+                [1094.0, -1.0, 1390.0, 782.0]
+            )))
+        );
+        assert_eq!(camera_area("1 2 3"), None);
+        assert_eq!(camera_area("-1 2 3 4"), None);
+        assert_eq!(camera_area("1 2 3 4 0 5 6 0 8"), None);
+        assert_eq!(camera_area("a b c d"), None);
+    }
 }

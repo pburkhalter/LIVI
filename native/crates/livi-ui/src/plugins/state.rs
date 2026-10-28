@@ -261,9 +261,20 @@ fn notices(state: &Json, now: &libc::tm) -> Value {
     model(out)
 }
 
-/// The card the phone's or the camera's picture shows in, for a background drawn around it (app.slint)
+/// The card the phone's or the camera's picture shows in, for a background drawn around it (app.slint): the phone's
+/// card, or the area the plugin's camera frame chose (action camera-area)
 fn video(ui: &AppWindow) -> Value {
     let px = |v: f32| Value::Number(f64::from(v));
+    if ui.get_camera_framed() {
+        return record(vec![
+            ("shown", Value::Bool(true)),
+            ("top", px(ui.get_camera_y())),
+            ("bottom", px(ui.get_camera_bottom())),
+            ("left", px(ui.get_camera_x())),
+            ("right", px(ui.get_camera_right())),
+            ("radius", px(ui.get_camera_radius())),
+        ]);
+    }
     record(vec![
         ("shown", Value::Bool(ui.get_video_card_shown())),
         ("top", px(ui.get_card_top())),

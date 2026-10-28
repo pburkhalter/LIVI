@@ -270,6 +270,10 @@ pub fn install(
             _ => {}
         }
     }
+    if let Some(component) = p.frame.get("camera") {
+        ui.set_plugin_camera_frame(factory(component.clone()));
+        ui.set_has_plugin_camera_frame(true);
+    }
     let views: Vec<PluginView> = p
         .pages
         .iter()

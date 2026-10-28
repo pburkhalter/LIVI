@@ -110,7 +110,10 @@ impl Core {
             // settings are applied (restart.rs), like the view area
             let setting = VideoMode::of(&next);
             if setting != VideoMode::of(&s.config) {
-                s.video = setting;
+                s.video = VideoMode {
+                    camera_area: s.video.camera_area,
+                    ..setting
+                };
             }
             s.config = next;
         });
@@ -190,6 +193,10 @@ impl Core {
                 Ok(())
             }
             Action::SetVideoCard { page, card } => self.set_video_card(&page, card),
+            Action::SetCameraArea { area } => {
+                self.hub.update(|s| s.video.camera_area = area);
+                Ok(())
+            }
             Action::DismissNotice { id } => {
                 crate::notices::dismiss(self, id).await;
                 Ok(())

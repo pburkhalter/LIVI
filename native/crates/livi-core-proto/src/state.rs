@@ -63,12 +63,17 @@ pub enum LinkState {
 #[serde(rename_all = "camelCase")]
 pub struct VideoMode {
     pub projection_card: bool,
+    /// Where the camera's whole picture goes (Action::SetCameraArea, from a UI plugin that frames it): x, y, width,
+    /// height in pixels of the main window; None: the whole screen
+    #[serde(default)]
+    pub camera_area: Option<[i32; 4]>,
 }
 
 impl VideoMode {
     pub fn of(config: &crate::config::Config) -> Self {
         Self {
             projection_card: config.projection_card,
+            camera_area: None,
         }
     }
 }

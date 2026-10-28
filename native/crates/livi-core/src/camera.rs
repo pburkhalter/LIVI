@@ -58,6 +58,7 @@ pub async fn run(
     gst.watch_cameras();
     let mut state: watch::Receiver<State> = hub.watch();
     let mut shown: Option<CameraOrder> = None;
+    let mut placed: Option<[i32; 4]> = None;
     loop {
         tokio::select! {
             event = events.recv() => match event {
@@ -78,7 +79,15 @@ pub async fn run(
                 return;
             },
         }
-        let next = wanted(&state.borrow_and_update());
+        let (next, area) = {
+            let s = state.borrow_and_update();
+            (wanted(&s), s.video.camera_area)
+        };
+        if area != placed {
+            println!("[core] camera area {area:?}");
+            plane.place(area);
+            placed = area;
+        }
         if next == shown {
             continue;
         }

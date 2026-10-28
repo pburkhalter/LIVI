@@ -274,6 +274,14 @@ impl CompositorControl {
         let _ = self.tx.send(Cmd::State(format!("cfg:{tag}"), line));
     }
 
+    /// The part of the screen's UI window the video goes into: x, y, width, height; None for the whole screen
+    pub fn videoarea(&self, tag: &str, area: Option<[f64; 4]>) {
+        let n = |v: f64| round_half_up(v) as i64;
+        let [x, y, w, h] = area.unwrap_or([0.0; 4]);
+        let line = format!("videoarea {tag} {} {} {} {}\n", n(x), n(y), n(w), n(h));
+        let _ = self.tx.send(Cmd::State(format!("area:{tag}"), line));
+    }
+
     pub fn videoshow(&self, tag: &str, visible: bool) {
         let line = format!("videoshow {tag} {}\n", u8::from(visible));
         let _ = self.tx.send(Cmd::State(format!("show:{tag}"), line));

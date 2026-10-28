@@ -49,6 +49,7 @@ plugin has errors, LIVI logs them and starts without it.
 | `splash` | Picture shown full window at start, until the UI has drawn; then it fades out. |
 | `shell` | Components for the places around the pages: `background`, `start`, `end`, `top`, `bottom`. Each takes the size it prefers (`preferred-width` at the sides, `preferred-height` at top and bottom). The `background` steps aside while a page shows a video (the phone streaming, a camera picture): the compositor draws the video below LIVI's window, where the window is transparent. The bars stay on the camera page; on the projection they go with LIVI's navigation. With a card set (below) the picture shows as a card instead and the background draws around it. `overlay` covers the whole window above everything, also on full screen pages and over the projection, e.g. for warnings; touches go through it except where it has a `TouchArea`. |
 | `empty` | Components for LIVI's pages while they have nothing to show: `projection` (no phone streaming), `camera` (no camera found). |
+| `frame` | Components that lay out a page of LIVI around its picture while it shows: `camera`. The component says where the picture goes (`camera-area`, Actions); see Pictures as a card. |
 | `pages` | Pages of the plugin: `id`, `title`, `icon` (file in the folder), `component`; `"tab": false` keeps a page out of the tabs and the order for swiping (e.g. one the plugin opens from its own button); `"settings"` makes it the page for LIVI's settings (see Settings). |
 | `fullscreen` | Paths of pages that show without the bars, e.g. `"/camera"`. |
 | `hide` | Paths of LIVI's pages the plugin replaces with its own, e.g. `"/media"`: their tabs go away, the paths still work. |
@@ -121,6 +122,7 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
 | `Livi.action("open", "/projection/<app>")` | Brings the projection up with one of the phone's apps, e.g. `maps`, `music`, `mobilephone` (CarPlay). |
 | `Livi.action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
 | `Livi.action("page", "next")` | The plugin's next page in tab order (`prev`: the previous one), e.g. after a swipe; nothing at the first or last page. |
+| `Livi.action("camera-area", "<x> <y> <width> <height> [<radius> [<px> <py> <pwidth> <pheight>]]")` | From a `frame` component of the camera page: the card the camera's picture shows in (window pixels, e.g. from `absolute-position`), and where the whole picture goes, fitted and centred (`p…`, the card when left out; larger than the card for a picture with borders, also beyond the window). `""` puts it back on the whole screen. |
 
 ### Settings
 
@@ -219,4 +221,12 @@ bars instead of full screen, like its own pages. The settings (Video, Main Video
 - Switching moves CarPlay into the other area during the session (`updateViewArea` on the event channel, animated),
   without a new connection. Should the phone refuse it, the session ends and the phone connects anew with the area
   it should be in. A moved card reaches the phone when the settings are applied, like the view area.
-- The camera picture stays full screen below the window for now (the compositor does not place it in the card yet).
+- The camera's picture goes full screen below the window, unless the plugin frames the camera page (`frame.camera`
+  in the manifest). Its component draws the page (e.g. further cards beside the picture), and with
+  `Livi.action("camera-area", …)` it says where the picture goes. LIVI then keeps the bars and the plugin's
+  background and reports the area in `Livi.video` like the phone's card, so the same `background` leaves it out; the
+  compositor fits the whole picture into it (`videoarea` on its control socket; LIVI's own video view without the
+  compositor still shows it full screen). The area stays until the plugin sends another one.
+- The picture's rectangle may be larger than the card, also beyond the window: a camera whose picture has black
+  borders (e.g. a video converter) gets a rectangle around its card so that only the picture's content lies in the
+  card and the borders lie under the background, which leaves out only the card (`Livi.video`).

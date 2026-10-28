@@ -20,6 +20,9 @@ const API_DIR: &str = "/livi-plugin-api";
 pub const SLOTS: [&str; 6] = ["background", "start", "end", "top", "bottom", "overlay"];
 /// LIVI's pages whose empty state a plugin can draw ("empty" in the manifest)
 pub const EMPTY: [&str; 2] = ["projection", "camera"];
+/// LIVI's pages whose picture a plugin can frame: it lays out the page around it and says where the picture goes
+/// (action camera-area); "frame" in the manifest
+pub const FRAME: [&str; 1] = ["camera"];
 
 pub struct PluginPage {
     pub id: String,
@@ -44,6 +47,8 @@ pub struct Plugin {
     pub shell: HashMap<&'static str, ComponentDefinition>,
     /// what the plugin shows on LIVI's pages while they have nothing to show, by page: "projection", "camera"
     pub empty: HashMap<&'static str, ComponentDefinition>,
+    /// what the plugin draws around LIVI's picture while it shows, by page: "camera"
+    pub frame: HashMap<&'static str, ComponentDefinition>,
     pub pages: Vec<PluginPage>,
 }
 
@@ -130,6 +135,12 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
             empty.insert(page, component(c)?);
         }
     }
+    let mut frame = HashMap::new();
+    for page in FRAME {
+        if let Some(c) = manifest["frame"][page].as_str() {
+            frame.insert(page, component(c)?);
+        }
+    }
     let mut pages = Vec::new();
     for p in manifest["pages"].as_array().into_iter().flatten() {
         let id = text(p, "id").ok_or("a page without \"id\"")?;
@@ -178,6 +189,7 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
         hide,
         shell,
         empty,
+        frame,
         pages,
     })
 }

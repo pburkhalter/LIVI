@@ -250,6 +250,12 @@ impl CameraPlane {
         true
     }
 
+    /// Where the picture goes in the main window (x, y, width, height); None: the whole screen
+    pub fn place(&self, area: Option<[i32; 4]>) {
+        self.comp
+            .videoarea(CAMERA_TAG, area.map(|a| a.map(f64::from)));
+    }
+
     pub fn close(&self) {
         self.stops.fetch_add(1, Ordering::SeqCst);
         self.comp.release(CAMERA_TAG);

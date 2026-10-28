@@ -39,6 +39,9 @@ pub struct VideoCfg {
     pub vis_h: f64,
     pub tier_w: f64,
     pub tier_h: f64,
+    /// The part of the screen the video goes into (videoarea): x, y, width, height from the corner of the UI
+    /// window; None for the whole screen
+    pub area: Option<[f64; 4]>,
     pub has_visible: bool,
     pub visible: bool,
 }
@@ -65,6 +68,7 @@ pub struct TopLevel {
     pub vis_h: f64,
     pub tier_w: f64,
     pub tier_h: f64,
+    pub area: Option<[f64; 4]>,
     pub position: Point<i32, Logical>,
     pub clear: bool,
 }
