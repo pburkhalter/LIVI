@@ -19,6 +19,7 @@ use crate::{AppWindow, Page, PhoneState, PluginView, TabData};
 use plugin::Plugin;
 
 type ActionHandler = Rc<dyn Fn(&str, &str)>;
+type EmitHandler = Rc<dyn Fn(&str, &str, &str)>;
 
 /// The global in plugin/api.slint that holds the state and the callback `action`
 const GLOBAL: &str = "Livi";
@@ -30,6 +31,7 @@ thread_local! {
     // the properties of the global Livi as last handed out
     static STATE: RefCell<Vec<(&'static str, Value)>> = const { RefCell::new(Vec::new()) };
     static ACTION: RefCell<Option<ActionHandler>> = const { RefCell::new(None) };
+    static EMIT: RefCell<Option<EmitHandler>> = const { RefCell::new(None) };
 }
 
 /// Folder of the plugin: `LIVI_UI_PLUGIN`, otherwise `ui-plugin` in LIVI's user data folder if it holds a plugin.json.
@@ -183,6 +185,16 @@ fn factory(component: ComponentDefinition) -> ComponentFactory {
             });
             Value::Void
         });
+        let _ = instance.set_global_callback(GLOBAL, "emit", |args| {
+            let arg = |i: usize| match args.get(i) {
+                Some(Value::String(s)) => s.to_string(),
+                _ => String::new(),
+            };
+            if let Some(handle) = EMIT.with_borrow(Clone::clone) {
+                handle(&arg(0), &arg(1), &arg(2));
+            }
+            Value::Void
+        });
         let _ = instance.set_global_callback(GLOBAL, "find", |args| {
             match (args.first(), args.get(1)) {
                 (Some(Value::Model(values)), Some(Value::String(key))) => state::find(values, key),
@@ -195,10 +207,16 @@ fn factory(component: ComponentDefinition) -> ComponentFactory {
     })
 }
 
-/// Puts the plugin's start picture and bars into the window and keeps the handler for its actions.
-pub fn install(ui: &AppWindow, on_action: impl Fn(&str, &str) + 'static) {
+/// Puts the plugin's start picture and bars into the window and keeps the handlers for its actions and for the events
+/// it sends to programs beside LIVI (`Livi.emit`: topic, name, value).
+pub fn install(
+    ui: &AppWindow,
+    on_action: impl Fn(&str, &str) + 'static,
+    on_emit: impl Fn(&str, &str, &str) + 'static,
+) {
     let Some(p) = plugin() else { return };
     ACTION.with_borrow_mut(|a| *a = Some(Rc::new(on_action)));
+    EMIT.with_borrow_mut(|e| *e = Some(Rc::new(on_emit)));
     if let Some(splash) = &p.splash {
         ui.set_intro_image(splash.clone());
         ui.set_intro_done(false);

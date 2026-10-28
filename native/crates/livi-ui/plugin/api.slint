@@ -260,6 +260,9 @@ export global Livi {
     // what a CAN reader keeps under the telemetry key `can`: raw values that may change many times a second, apart
     // from `other`
     in property <[LiviValue]> can;
+    // Companion channel: what programs beside LIVI publish for the plugin, a row per key: "<topic>.<key>", the keys
+    // of a nested object as "<topic>.<key>.<key>" (the object itself as JSON), values as text
+    in property <[LiviValue]> extensions;
     in property <[LiviNotice]> notices;
     // how many of them are critical
     in property <int> notices-critical;
@@ -277,4 +280,12 @@ export global Livi {
     }
     // LIVI looks the key up for value()
     pure callback find(values: [LiviValue], key: string) -> string;
+
+    // What a program published under a topic, as text, "" when there is none, e.g. Livi.extension("radio", "station")
+    // or Livi.extension("radio", "song.title")
+    public pure function extension(topic: string, key: string) -> string {
+        return self.find(self.extensions, topic + "." + key);
+    }
+    // Tells the programs that listen to the topic about something, e.g. Livi.emit("radio", "next", "")
+    callback emit(topic: string, name: string, value: string);
 }

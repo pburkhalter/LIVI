@@ -209,6 +209,8 @@ fn apply(ui: &AppWindow, update: Update) {
         Update::Volume(level) => overlay_ui::volume(ui, level),
         Update::PhoneName(name) => overlay_ui::phone(ui, &name),
         Update::Camera(found) => ui.set_camera_found(found),
+        // only the plugin reads it, and its state follows every update (sync_plugin)
+        Update::Extensions => {}
         Update::MainMask(mask) => ui.set_main_mask(dashboard_ui::mask_data(mask)),
     }
 }
@@ -512,6 +514,19 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
     sync_plugin(&ui);
 }
 
+/// An event a plugin component sent to the programs that listen to its topic (`Livi.emit`, companion channel)
+fn plugin_emit(topic: &str, name: &str, value: &str) {
+    CLIENT.with_borrow(|c| {
+        if let Some(c) = c {
+            c.act(Action::Emit {
+                topic: topic.into(),
+                name: name.into(),
+                value: value.into(),
+            });
+        }
+    });
+}
+
 fn snapshot_later(weak: Weak<AppWindow>, path: String) {
     let wait = std::env::var("LIVI_UI_SNAPSHOT_MS")
         .ok()
@@ -618,10 +633,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settings_ui::wire(&ui, &client, &lang);
     keys_ui::wire(&ui, &client);
     wire(&ui, &client);
-    plugins::install(&ui, {
-        let weak = weak.clone();
-        move |verb, argument| plugin_action(&weak, verb, argument)
-    });
+    plugins::install(
+        &ui,
+        {
+            let weak = weak.clone();
+            move |verb, argument| plugin_action(&weak, verb, argument)
+        },
+        plugin_emit,
+    );
     if let Some(path) = &fixture {
         let state: Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
         *client.state() = state.clone();

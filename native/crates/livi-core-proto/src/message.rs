@@ -8,13 +8,30 @@ use crate::state::{Front, Screen, State};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ToCore {
-    Hello { protocol: u32, client: String },
+    Hello {
+        protocol: u32,
+        client: String,
+        /// Topics of the companion channel whose events the client wants (FromCore::Event); none when left out
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        subscribe: Vec<String>,
+    },
     Resync,
-    Input { input: Input },
-    Action { id: u32, action: Action },
-    Path { path: String },
-    Spectrum { on: bool },
-    LinkSpeed { on: bool },
+    Input {
+        input: Input,
+    },
+    Action {
+        id: u32,
+        action: Action,
+    },
+    Path {
+        path: String,
+    },
+    Spectrum {
+        on: bool,
+    },
+    LinkSpeed {
+        on: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -44,6 +61,12 @@ pub enum FromCore {
     OpenPage {
         path: String,
     },
+    /// What a UI plugin sent with `Livi.emit` (Action::Emit), to the clients that subscribed the topic in their hello
+    Event {
+        topic: String,
+        name: String,
+        value: Value,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,6 +78,18 @@ pub enum Action {
     /// The user closed a notification (notices in the state)
     DismissNotice {
         id: u32,
+    },
+    /// Companion channel: the client's state under `topic` (state extensions), an object that replaces the one
+    /// before; null takes it away, as does the client going
+    SetExtension {
+        topic: String,
+        value: Value,
+    },
+    /// Companion channel: an event for the clients that subscribed `topic` (FromCore::Event), e.g. a plugin's button
+    Emit {
+        topic: String,
+        name: String,
+        value: Value,
     },
     Show {
         screen: Screen,
@@ -240,6 +275,57 @@ mod tests {
             .unwrap(),
             json!({ "kind": "removeMfi", "file": "certificate" })
         );
+    }
+
+    #[test]
+    fn a_hello_may_subscribe_topics() {
+        let old = json!({ "type": "hello", "protocol": 11, "client": "LIVI" });
+        let hello = ToCore::Hello {
+            protocol: 11,
+            client: "LIVI".into(),
+            subscribe: Vec::new(),
+        };
+        assert_eq!(
+            serde_json::from_value::<ToCore>(old.clone()).unwrap(),
+            hello
+        );
+        assert_eq!(serde_json::to_value(&hello).unwrap(), old);
+        let wire =
+            json!({ "type": "hello", "protocol": 11, "client": "helper", "subscribe": ["radio"] });
+        let ToCore::Hello { subscribe, .. } = serde_json::from_value(wire).unwrap() else {
+            panic!("not a hello")
+        };
+        assert_eq!(subscribe, ["radio"]);
+    }
+
+    #[test]
+    fn the_companion_channel_on_the_wire() {
+        let set =
+            json!({ "kind": "setExtension", "topic": "radio", "value": { "station": "SRF 3" } });
+        assert_eq!(
+            serde_json::from_value::<Action>(set).unwrap(),
+            Action::SetExtension {
+                topic: "radio".into(),
+                value: json!({ "station": "SRF 3" }),
+            }
+        );
+        let emit = Action::Emit {
+            topic: "radio".into(),
+            name: "next".into(),
+            value: json!(""),
+        };
+        assert_eq!(
+            serde_json::to_value(&emit).unwrap(),
+            json!({ "kind": "emit", "topic": "radio", "name": "next", "value": "" })
+        );
+        let event = FromCore::Event {
+            topic: "radio".into(),
+            name: "next".into(),
+            value: json!(""),
+        };
+        let wire = json!({ "type": "event", "topic": "radio", "name": "next", "value": "" });
+        assert_eq!(serde_json::to_value(&event).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<FromCore>(wire).unwrap(), event);
     }
 
     #[test]

@@ -316,6 +316,31 @@ fn can(t: &Json) -> Value {
     values(t["can"].as_object().into_iter().flatten())
 }
 
+/// What programs beside LIVI publish (companion channel), a row per key: "<topic>.<key>", the keys of a nested
+/// object as "<topic>.<key>.<key>" and the object itself as JSON text
+fn extensions(state: &Json) -> Value {
+    fn flatten(
+        prefix: &str,
+        fields: &serde_json::Map<String, Json>,
+        rows: &mut Vec<(String, Json)>,
+    ) {
+        for (k, v) in fields {
+            let key = format!("{prefix}.{k}");
+            if let Json::Object(inner) = v {
+                flatten(&key, inner, rows);
+            }
+            rows.push((key, v.clone()));
+        }
+    }
+    let mut rows = Vec::new();
+    for (topic, value) in state["extensions"].as_object().into_iter().flatten() {
+        if let Json::Object(fields) = value {
+            flatten(topic, fields, &mut rows);
+        }
+    }
+    values(rows.iter().map(|(k, v)| (k, v)))
+}
+
 /// The value of `key` among the `other` values (LiviValue rows), "" when there is none: `Livi.value(key)`
 pub fn find(values: &ModelRc<Value>, key: &str) -> Value {
     let field = |row: &Value, name: &str| match row {
@@ -380,6 +405,7 @@ pub fn build(
         ("climate", climate(&t["climate"])),
         ("other", other(t)),
         ("can", can(t)),
+        ("extensions", extensions(state)),
         ("notices", notices(state, &tm)),
         ("notices-critical", critical(state)),
     ];
@@ -497,6 +523,27 @@ mod tests {
         assert_eq!(find(&values, "updates"), s("3"));
         assert_eq!(find(&values, "doors"), s("closed"));
         assert_eq!(find(&values, "trunk"), s(""));
+    }
+
+    #[test]
+    fn what_programs_publish_is_found_by_topic_and_key() {
+        let state = json!({ "extensions": {
+            "voice": { "state": "listening", "level": 0.5, "keySet": false, "text": null,
+                       "keyEntry": { "url": "http://10.0.0.1/", "code": "123456" } },
+            "radio": { "station": "SRF 3" },
+        } });
+        let Value::Model(rows) = extensions(&state) else {
+            panic!("not a model")
+        };
+        assert_eq!(find(&rows, "voice.state"), s("listening"));
+        assert_eq!(find(&rows, "voice.level"), s("0.5"));
+        assert_eq!(find(&rows, "voice.keySet"), s("false"));
+        assert_eq!(find(&rows, "voice.text"), s(""));
+        assert_eq!(find(&rows, "voice.keyEntry.code"), s("123456"));
+        assert_ne!(find(&rows, "voice.keyEntry"), s(""));
+        assert_eq!(find(&rows, "radio.station"), s("SRF 3"));
+        assert_eq!(find(&rows, "radio.song"), s(""));
+        assert!(same(&extensions(&json!({})), &model(Vec::new())));
     }
 
     #[test]

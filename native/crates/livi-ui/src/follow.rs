@@ -29,6 +29,8 @@ pub enum Update {
     PhoneName(String),
     Camera(bool),
     MainMask(Option<Mask>),
+    /// What programs beside LIVI publish for the plugin changed (companion channel)
+    Extensions,
 }
 
 #[derive(Default)]
@@ -144,6 +146,9 @@ impl Follow {
         if hit("cameras") {
             let found = state["cameras"].as_array().is_some_and(|c| !c.is_empty());
             out.push(Update::Camera(found));
+        }
+        if hit("extensions") {
+            out.push(Update::Extensions);
         }
         if livi_ui_model::settings::STATE_READ
             .iter()
