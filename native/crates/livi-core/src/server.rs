@@ -404,6 +404,34 @@ async fn client(core: Arc<Core>, stream: UnixStream) -> io::Result<()> {
     let mut link_speed_viewer: Option<LinkSpeedViewer> = None;
 
     loop {
+        // first what has come already: a client may send its first messages together with the hello
+        while let Some(msg) = dec.next_message::<ToCore>() {
+            match msg {
+                Ok(ToCore::Resync) => patches = welcome(&core, &mut wr).await?,
+                Ok(ToCore::Action { id, action }) => {
+                    let error = core.act(me.id, action).await.err();
+                    send(&mut wr, &FromCore::Reply { id, error }).await?;
+                }
+                Ok(ToCore::Input { input }) => {
+                    let _ = core.asks.input.send(input);
+                }
+                Ok(ToCore::Spectrum { on: true }) => {
+                    viewer.get_or_insert_with(|| core.asks.spectrum.watch());
+                }
+                Ok(ToCore::Spectrum { on: false }) => viewer = None,
+                Ok(ToCore::LinkSpeed { on: true }) => {
+                    link_speed_viewer
+                        .get_or_insert_with(|| LinkSpeedViewer::new(&core.asks.link_speed_viewers));
+                }
+                Ok(ToCore::LinkSpeed { on: false }) => link_speed_viewer = None,
+                Ok(ToCore::Path { path }) => {
+                    core.ui_path.send_replace(path);
+                }
+                Ok(ToCore::Hello { .. }) => {}
+                Err(FrameError::Json(e)) => println!("[core] {client} sent a broken frame: {e}"),
+                Err(e @ FrameError::TooLarge(_)) => return Err(io::Error::other(e)),
+            }
+        }
         tokio::select! {
             read = rd.read(&mut buf) => {
                 let n = read?;
@@ -411,34 +439,6 @@ async fn client(core: Arc<Core>, stream: UnixStream) -> io::Result<()> {
                     break;
                 }
                 dec.push(&buf[..n]);
-                while let Some(msg) = dec.next_message::<ToCore>() {
-                    match msg {
-                        Ok(ToCore::Resync) => patches = welcome(&core, &mut wr).await?,
-                        Ok(ToCore::Action { id, action }) => {
-                            let error = core.act(me.id, action).await.err();
-                            send(&mut wr, &FromCore::Reply { id, error }).await?;
-                        }
-                        Ok(ToCore::Input { input }) => {
-                            let _ = core.asks.input.send(input);
-                        }
-                        Ok(ToCore::Spectrum { on: true }) => {
-                            viewer.get_or_insert_with(|| core.asks.spectrum.watch());
-                        }
-                        Ok(ToCore::Spectrum { on: false }) => viewer = None,
-                        Ok(ToCore::LinkSpeed { on: true }) => {
-                            link_speed_viewer.get_or_insert_with(|| {
-                                LinkSpeedViewer::new(&core.asks.link_speed_viewers)
-                            });
-                        }
-                        Ok(ToCore::LinkSpeed { on: false }) => link_speed_viewer = None,
-                        Ok(ToCore::Path { path }) => {
-                            core.ui_path.send_replace(path);
-                        }
-                        Ok(ToCore::Hello { .. }) => {}
-                        Err(FrameError::Json(e)) => println!("[core] {client} sent a broken frame: {e}"),
-                        Err(e @ FrameError::TooLarge(_)) => return Err(io::Error::other(e)),
-                    }
-                }
             }
             patch = patches.recv() => match patch {
                 Ok(frame) => wr.write_all(&frame).await?,
@@ -932,6 +932,42 @@ mod tests {
             })
         );
         assert!(core.hub.watch().borrow().extensions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn what_comes_with_the_hello_is_handled_at_once() {
+        let dir = TempDir::new();
+        let (core, path) = start(&dir);
+        let mut service = Peer::connect(&path).await;
+        let hello = ToCore::Hello {
+            protocol: PROTOCOL,
+            client: "service".into(),
+            subscribe: Vec::new(),
+        };
+        let publish = ToCore::Action {
+            id: 1,
+            action: Action::SetExtension {
+                topic: "voice".into(),
+                value: json!({ "state": "ready" }),
+            },
+        };
+        // one write, as a client that does not wait for the welcome sends them; nothing follows
+        let mut both = encode(&hello).unwrap();
+        both.extend(encode(&publish).unwrap());
+        service.stream.write_all(&both).await.unwrap();
+        assert!(matches!(
+            service.recv().await,
+            Some(FromCore::Welcome { .. })
+        ));
+        let got = [service.recv().await, service.recv().await];
+        assert!(
+            got.contains(&Some(FromCore::Reply { id: 1, error: None })),
+            "{got:?}"
+        );
+        assert_eq!(
+            core.hub.watch().borrow().extensions["voice"],
+            json!({ "state": "ready" })
+        );
     }
 
     #[tokio::test]
