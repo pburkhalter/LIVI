@@ -52,6 +52,8 @@ thread_local! {
     static SETTINGS_LENT: Cell<bool> = const { Cell::new(false) };
     // the plugin's settings page opens on a screen chosen before (handed back, or a path): not at the top
     static SETTINGS_KEEP: Cell<bool> = const { Cell::new(false) };
+    // the page shown before the core put the camera in front for reversing: shown again when the camera goes
+    static CAMERA_BACK: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// Lets the start picture fade out once the core's state is there and the window has drawn its content: the first
@@ -174,7 +176,23 @@ fn apply(ui: &AppWindow, update: Update) {
         }),
         Update::Front(front) => match (front, ui.get_page()) {
             (Front::Projection, Page::Projection) => {}
-            (Front::Projection, _) => choose(ui, Page::Projection),
+            (Front::Projection, _) => {
+                CAMERA_BACK.take();
+                choose(ui, Page::Projection);
+            }
+            // reversing with "automatic on reverse gear": the core puts the camera in front, the picture shows only
+            // where this window is transparent, so the camera page comes up; when the camera goes, the page from
+            // before comes back (the core keeps the screen asked for before while the car reverses)
+            (Front::Camera, Page::Camera) => {}
+            (Front::Camera, _) => {
+                CAMERA_BACK.set(Some(plugins::current_path(ui)));
+                choose(ui, Page::Camera);
+            }
+            (_, Page::Camera) => {
+                if let Some(back) = CAMERA_BACK.take() {
+                    open_path(ui, &back);
+                }
+            }
             (_, Page::Projection) => match plugins::start_path() {
                 Some(path) => open_path(ui, &path),
                 None => choose(ui, Page::Media),
