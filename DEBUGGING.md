@@ -71,6 +71,12 @@ LIVI_GST_DEBUG=1 ./LIVI*.AppImage
 | `LIVI_UI_SETTINGS=<path>` | With the settings page (LIVI's or a plugin's, `plugin/<id>`), open this settings path, e.g. `general/connections`. |
 | `LIVI_UI_SNAPSHOT=<file.png>` | Save a picture of the UI window 3 s after start, `LIVI_UI_SNAPSHOT_MS` sets another wait. |
 | `LIVI_UI_STATE=<file.json>` | Show this core state without a core, e.g. `native/crates/livi-ui/fixtures/dab.json`. |
+| `SLINT_SKIA_PARTIAL_RENDERING=1` | Slint's partial rendering: the UI window redraws only what changed instead of the whole window each frame. Needs the Skia renderer on OpenGL (build feature `skia` of `livi-ui`) and a driver with `EGL_EXT_buffer_age`; without it Slint quietly redraws everything. `log` also prints the share of the window each frame repaints, `visualize` outlines it on screen. Slint turns it off for a window with a rendering notifier; LIVI's main window has none (except on macOS, where it gains nothing). |
+| `SLINT_DEBUG_PERFORMANCE=refresh_lazy,console` | Print the UI's frame rate once a second (Slint's own counter). |
+
+The `SLINT_*` variables are Slint's own and are read by the UI. Set them like the
+other flags, before the LIVI command (core passes them on to the UI), or in a
+system service as `Environment=SLINT_SKIA_PARTIAL_RENDERING=1` in its unit.
 
 ### CarPlay, Bluetooth and Wi-Fi helper
 

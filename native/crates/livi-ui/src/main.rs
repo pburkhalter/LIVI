@@ -34,6 +34,7 @@ use livi_core_proto::message::Action;
 use livi_core_proto::state::{Front, Screen};
 use serde_json::Value;
 use slint::platform::WindowEvent;
+use slint::winit_030::WinitWindowAccessor;
 use slint::{Color, Model, ModelRc, Timer, TimerMode, VecModel, Weak};
 
 use crate::core_process::{CoreProcess, RELAUNCH};
@@ -71,6 +72,51 @@ fn settle_intro(ui: &AppWindow) {
             ui.set_intro_done(true);
         }
     });
+}
+
+// The main window does without a rendering notifier: with one, Slint's Skia renderer draws the whole window every
+// frame, it turns partial rendering (SLINT_SKIA_PARTIAL_RENDERING) off. What LIVI did in the notifier comes from the
+// window instead: the setup once the native window exists, the frames from winit's RedrawRequested. Only on macOS,
+// where Slint draws from the display link without that event, a notifier still counts the frames (no partial
+// rendering to lose there: CGL reports no buffer age).
+
+/// After every frame of the main window: counts it (debug overlay, LIVI_UI_TRACE) and lets the start picture go.
+fn frame_drawn(ui: &AppWindow) {
+    debug::frame_rendered();
+    settle_intro(ui);
+}
+
+/// winit asks the main window to redraw (keys_ui.rs passes the event on). Slint draws the frame right after the
+/// event, so a zero timer runs once it is drawn. On Wayland every frame comes this way; on X11 the very first one is
+/// drawn when the window is shown, before any event.
+pub(crate) fn redraw_requested(ui: &AppWindow) {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+    let weak = ui.as_weak();
+    Timer::single_shot(Duration::ZERO, move || {
+        if let Some(ui) = weak.upgrade() {
+            frame_drawn(&ui);
+        }
+    });
+}
+
+/// Once the main window has its native window: the video goes into it, the cursor hides and the zoom applies.
+fn window_ready(ui: &AppWindow) {
+    debug::trace("native window ready");
+    if !attach_video(ui.window(), "main") {
+        eprintln!("[ui] the window has no native handle for the video");
+    }
+    cursor_ui::start(ui);
+    if BASE_SCALE.get().is_none() {
+        BASE_SCALE.set(Some(ui.window().scale_factor()));
+        let weak = ui.as_weak();
+        Timer::single_shot(Duration::ZERO, move || {
+            if let Some(ui) = weak.upgrade() {
+                apply_zoom(&ui);
+            }
+        });
+    }
 }
 
 const BANDS: usize = 24;
@@ -789,31 +835,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    slint::spawn_local({
+        let weak = weak.clone();
+        async move {
+            let Some(ui) = weak.upgrade() else { return };
+            match ui.window().winit_window().await {
+                Ok(_) => window_ready(&ui),
+                Err(e) => eprintln!("[ui] no native window: {e}"),
+            }
+        }
+    })?;
+    #[cfg(target_os = "macos")]
     ui.window().set_rendering_notifier({
         let weak = weak.clone();
         move |state, _| {
-            if matches!(state, slint::RenderingState::AfterRendering) {
-                debug::frame_rendered();
-                if let Some(ui) = weak.upgrade() {
-                    settle_intro(&ui);
-                }
-            }
-            let (slint::RenderingState::RenderingSetup, Some(ui)) = (state, weak.upgrade()) else {
-                return;
-            };
-            debug::trace("rendering set up");
-            if !attach_video(ui.window(), "main") {
-                eprintln!("[ui] the window has no native handle for the video");
-            }
-            cursor_ui::start(&ui);
-            if BASE_SCALE.get().is_none() {
-                BASE_SCALE.set(Some(ui.window().scale_factor()));
-                let weak = weak.clone();
-                Timer::single_shot(Duration::ZERO, move || {
-                    if let Some(ui) = weak.upgrade() {
-                        apply_zoom(&ui);
-                    }
-                });
+            if let (slint::RenderingState::AfterRendering, Some(ui)) = (state, weak.upgrade()) {
+                frame_drawn(&ui);
             }
         }
     })?;
