@@ -7,9 +7,43 @@ import { Livi } from "@livi/api.slint";
 export { Livi }
 export { Settings } from "settings.slint";
 
+// A button the keys and a rotary knob can reach: it shows the focus while it has it (docs/plugins.md, "Keys")
+component KeyButton inherits Rectangle {
+    in property <string> target;
+    in property <string> label;
+    callback clicked;
+    width: 140px;
+    height: 56px;
+    border-radius: 8px;
+    background: touch.pressed ? #2a3440 : #1c242c;
+    border-width: Livi.focus.zone == "page" && Livi.focus.target == root.target ? 3px : 0px;
+    border-color: #4fc3f7;
+    Text {
+        text: root.label;
+        color: #ffffff;
+        font-size: 20px;
+    }
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
 // A page: a window LIVI embeds; it reads the state from Livi
 export component Hello inherits Window {
     background: #101418;
+
+    // what the keys move the focus over on this page, in order
+    init => { Livi.action("focus-targets", "/plugin/hello play-pause next"); }
+    // a button activated with a key does what a touch does
+    property <int> press-serial: Livi.press.serial;
+    changed press-serial => { root.pressed(Livi.press.target); }
+    function pressed(target: string) {
+        if target == "play-pause" {
+            Livi.action("media", "play-pause");
+        } else if target == "next" {
+            Livi.action("media", "next");
+        }
+    }
 
     VerticalLayout {
         alignment: center;
@@ -39,10 +73,32 @@ export component Hello inherits Window {
             font-size: 24px;
             horizontal-alignment: center;
         }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 16px;
+            KeyButton {
+                target: "play-pause";
+                label: Livi.media.playing ? "Pause" : "Play";
+                clicked => { root.pressed(self.target); }
+            }
+            KeyButton {
+                target: "next";
+                label: "Next";
+                clicked => { root.pressed(self.target); }
+            }
+        }
+        Text {
+            // a key LIVI has no use for itself, e.g. an extra button of a steering wheel adapter
+            text: Livi.key.code != "" ? "last other key: " + Livi.key.code : "";
+            color: #9aa4ae;
+            font-size: 18px;
+            horizontal-alignment: center;
+        }
     }
 }
 
-// A bar: one button per page in the tab order, the shown one highlighted
+// A bar: one button per page in the tab order, the shown one highlighted. It lists the same tabs as LIVI's
+// navigation, so it also shows where the keys' focus is there.
 export component Bar inherits Window {
     background: #000000;
     min-height: 72px;
@@ -55,6 +111,8 @@ export component Bar inherits Window {
             width: 120px;
             border-radius: 8px;
             background: page.active ? #2a3b4c : transparent;
+            border-width: Livi.focus.zone == "nav" && Livi.focus.target == page.path ? 2px : 0px;
+            border-color: #4fc3f7;
             Text {
                 text: page.title;
                 color: #ffffff;

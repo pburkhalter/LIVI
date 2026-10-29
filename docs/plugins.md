@@ -105,7 +105,9 @@ global `Livi` with these properties:
 - `can`: the raw values a CAN reader keeps under the telemetry key `can`, as text, apart from `other` because they may
   change many times a second;
 - `extensions`: what programs beside LIVI publish for the plugin (companion channel, below);
-  `Livi.extension(topic, key)` gives one value as text.
+  `Livi.extension(topic, key)` gives one value as text;
+- `focus`, `press` and `key`: where the focus of the keys and a rotary knob is, which target was activated with a
+  key, and the last key LIVI has no use for (Keys, below).
 
 LIVI sets each property only when it changed. A binding runs again only when a property it reads changed: one that
 shows the speed does not run when the song changes. A struct changes as a whole, though: a binding that reads one
@@ -123,6 +125,7 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
 | `Livi.action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
 | `Livi.action("page", "next")` | The plugin's next page in tab order (`prev`: the previous one), e.g. after a swipe; nothing at the first or last page. |
 | `Livi.action("camera-area", "<x> <y> <width> <height> [<radius> [<px> <py> <pwidth> <pheight>]]")` | From a `frame` component of the camera page: the card the camera's picture shows in (window pixels, e.g. from `absolute-position`), and where the whole picture goes, fitted and centred (`p…`, the card when left out; larger than the card for a picture with borders, also beyond the window). `""` puts it back on the whole screen. |
+| `Livi.action("focus-targets", "<scope> <id>[:slider][:current] ...")` | What the keys and a rotary knob move the focus over, for a page or the side bar (Keys, below). |
 
 ### Settings
 
@@ -146,6 +149,53 @@ A screen of another kind, a dialog and the wait for a key LIVI shows on its own 
 the page draws again, LIVI shows the plugin's page. `/settings` (e.g. from `Livi.action("open", "/settings")`) opens
 the plugin's page; `"hide": ["/settings"]` takes LIVI's tab away. The example plugin has a settings page that draws
 only lists.
+
+## Keys
+
+Besides touch, LIVI can be driven with keys: a keyboard, a steering wheel or a rotary knob, through the key bindings
+(Settings, Key Bindings): the arrows, `selectDown` (Enter), `back`, and the knob's `knobLeft`, `knobRight` (turning)
+and `knobDown` (pressing). LIVI keeps the focus in two zones, the navigation and the page on screen, and moves it
+itself; the plugin says what its components can take the focus on, draws it, and does what a target stands for.
+
+- **Targets:** `Livi.action("focus-targets", "<scope> <id> <id> ...")` declares the targets of a page in their order,
+  by the page's path as scope (`/plugin/<id>`, also `/camera` for a camera frame), or of the plugin's side bar with
+  the scope `nav`. An id is any text without spaces and colons. Flags after the id: `:slider` for a target that left
+  and right change instead of leaving it, `:current` in the side bar for the button of the page on screen (the focus
+  lands there coming back from the page). A new declaration replaces the scope's list, one without ids takes it away;
+  at most 256 per list. All pages of the plugin stay alive, so each declares its list in `init` (and again when it
+  changes, e.g. from a `changed` handler). A component LIVI shows only at times (a camera frame, an empty page)
+  declares an empty list when it has nothing to focus, so that no list of another one stays.
+- **Navigation:** with a side bar (`shell` `start` or `end`) that declared targets, the navigation is that bar;
+  otherwise it is LIVI's tabs, also when a plugin bar lists them (`Livi.pages`).
+- **`Livi.focus`:** `zone` is `""` (nothing focused: after a touch, or before the first key), `"nav"` or `"page"`;
+  `target` the id there (in the navigation without a declared bar the path of the tab, as in `pages`); `editing` while
+  a slider or a number takes the knob. The page draws its focus where `Livi.focus.zone == "page"` and the target is
+  one of its ids; a touch takes the focus away.
+- **`Livi.press`:** a declared target activated with a key (`step` 0), or a slider changed by a step (`step` -1 or
+  1). `serial` grows with each press; a component reacts in a `changed` handler on it and acts only on its own ids:
+
+```slint
+property <int> press-serial: Livi.press.serial;
+changed press-serial => { root.pressed(Livi.press.target); }
+```
+
+- **Moving:** the arrows and turning the knob move the focus within the zone; Enter or pressing the knob activates
+  it (a slider: starts and ends changing it with the knob); `back` goes from the page to the navigation, and on
+  LIVI's settings one screen back first; in the navigation, Enter opens what the button stands for and the focus goes
+  into the page that opens. The first key with nothing focused enters the page (on the projection without a phone:
+  the navigation).
+- **LIVI's settings on the plugin's page:** the targets are LIVI's, LIVI activates them itself; the page only draws
+  the focus. Their ids: `back`, `apply`, `row:<row>`, `tool:<row>:<i>`, `dialog:<row>`, `pick:<index>`,
+  `number-minus`, `number`, `number-plus`, `text`, `color-hex`, `color-reset`, `color-slider:<i>`, `level`,
+  `knob:<i>`.
+- **The phone's projection:** while the phone streams, the keys go to the phone as before (CarPlay's knob, Android
+  Auto's keys), whatever the plugin declared.
+- **Other keys, `Livi.key`:** a key LIVI has no binding for reaches the plugin by its code (`code`, e.g. `"Home"`,
+  `"F13"`, as in the key bindings), with `repeat` and a `serial` that grows with each press, on any page; keys bound
+  to LIVI's actions stay LIVI's. So a plugin can give extra keys of a car or an adapter a meaning of its own.
+
+The example plugin's page has two buttons for the keys, its bar shows the focus of LIVI's navigation and its settings
+page the focus on the settings' rows.
 
 ## Companion channel
 

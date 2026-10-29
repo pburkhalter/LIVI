@@ -41,6 +41,8 @@ pub struct Context {
     pub telemetry: bool,
     pub settings_depth: usize,
     pub repeat: bool,
+    /// a UI plugin is installed: the keys LIVI has no use for go to it
+    pub plugin: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +62,8 @@ pub enum Outcome {
     Adjust(i32),
     SettingsBack,
     Pager(i32),
+    /// a key LIVI has no binding for: the UI plugin may use it (`Livi.key`)
+    ToPlugin(String),
 }
 
 pub fn binding<'a>(config: &'a Value, name: &str) -> &'a str {
@@ -226,6 +230,11 @@ pub fn decide(code: &str, ctx: Context, config: &Value) -> Outcome {
         };
     }
 
+    let ours = moved || back || enter || select_down || knob_press;
+    if ctx.plugin && mapped.is_none() && !ours {
+        return Outcome::ToPlugin(code.to_string());
+    }
+
     Outcome::Ignore
 }
 
@@ -266,6 +275,7 @@ mod tests {
             telemetry: false,
             settings_depth: 0,
             repeat: false,
+            plugin: false,
         }
     }
 
@@ -444,5 +454,38 @@ mod tests {
         c.telemetry = true;
         assert_eq!(decide("PageDown", c, &config()), Outcome::Pager(1));
         assert_eq!(decide("PageUp", c, &config()), Outcome::Pager(-1));
+    }
+
+    #[test]
+    fn keys_livi_has_no_use_for_go_to_the_plugin() {
+        let mut c = ctx(Zone::None);
+        assert_eq!(decide("F13", c, &config()), Outcome::Ignore);
+        c.plugin = true;
+        assert_eq!(decide("F13", c, &config()), Outcome::ToPlugin("F13".into()));
+        assert_eq!(
+            decide("Home", ctx_with_plugin(Zone::Main), &config()),
+            Outcome::ToPlugin("Home".into())
+        );
+        // bound keys and the ones LIVI reads without a binding stay LIVI's
+        assert_eq!(decide("KeyP", c, &config()), Outcome::ToCore("KeyP".into()));
+        assert_eq!(decide("ArrowDown", c, &config()), Outcome::EnterMain);
+        assert_eq!(decide("F21", c, &config()), Outcome::Ignore);
+        assert_eq!(decide("Escape", ctx_with_plugin(Zone::Nav), &config()), Outcome::Ignore);
+        assert_eq!(
+            decide("Enter", ctx_with_plugin(Zone::Nav), &config()),
+            Outcome::NavOpen { enter_main: true }
+        );
+        // a text being typed keeps its keys
+        let mut typing = ctx_with_plugin(Zone::Main);
+        typing.focused = Focused::Text;
+        typing.editing = true;
+        assert_eq!(decide("F13", typing, &config()), Outcome::Pass);
+    }
+
+    fn ctx_with_plugin(zone: Zone) -> Context {
+        Context {
+            plugin: true,
+            ..ctx(zone)
+        }
     }
 }
