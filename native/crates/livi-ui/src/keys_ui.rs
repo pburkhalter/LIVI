@@ -162,10 +162,26 @@ fn target_id(t: Target, plugin: &[focus::Target]) -> String {
     }
 }
 
+/// The targets of the plugin's settings page: LIVI's settings, and on their top screen (no way back, no dialog over
+/// it) first the page's own, in the order it declared them for its path
+fn plugin_settings_targets(own: &[focus::Target], top: bool, settings: Vec<Target>) -> Vec<Target> {
+    if !top {
+        return settings;
+    }
+    own.iter()
+        .enumerate()
+        .map(|(i, t)| Target::Plugin(i, t.slider))
+        .chain(settings)
+        .collect()
+}
+
 fn targets(ui: &AppWindow) -> Vec<Target> {
-    // the plugin's settings page draws LIVI's settings: the targets of LIVI's own settings page
+    // the plugin's settings page draws LIVI's settings: the targets of LIVI's own settings page, with the page's own
+    // on the top screen
     if crate::plugins::settings_shown(ui) {
-        return settings_targets(&ui.global::<SettingsState>());
+        let s = ui.global::<SettingsState>();
+        let top = crate::settings_ui::depth() == 0 && !s.get_dialog_open();
+        return plugin_settings_targets(&plugin_targets(ui), top, settings_targets(&s));
     }
     match ui.get_page() {
         Page::Settings => settings_targets(&ui.global::<SettingsState>()),
@@ -716,5 +732,37 @@ mod tests {
     fn a_plugin_slider_is_a_slider() {
         assert_eq!(kind(Target::Plugin(0, true)), Focused::Slider);
         assert_eq!(kind(Target::Plugin(0, false)), Focused::Plain);
+    }
+
+    fn own(id: &str, slider: bool) -> focus::Target {
+        focus::Target {
+            id: id.into(),
+            slider,
+            current: false,
+        }
+    }
+
+    #[test]
+    fn the_settings_page_has_its_own_targets_first_on_the_top_screen() {
+        let mine = [own("assistant", false), own("dimmer", true)];
+        let livi = vec![
+            Target::Row(0, RowKind::Route),
+            Target::Row(1, RowKind::Toggle),
+        ];
+        let top = plugin_settings_targets(&mine, true, livi.clone());
+        assert_eq!(
+            top,
+            vec![
+                Target::Plugin(0, false),
+                Target::Plugin(1, true),
+                Target::Row(0, RowKind::Route),
+                Target::Row(1, RowKind::Toggle),
+            ]
+        );
+        // the focus enters on the page's first one
+        assert_eq!(first_index(&top), 0);
+        // deeper screens or a dialog over the top one, or nothing declared: LIVI's only
+        assert_eq!(plugin_settings_targets(&mine, false, livi.clone()), livi);
+        assert_eq!(plugin_settings_targets(&[], true, livi.clone()), livi);
     }
 }

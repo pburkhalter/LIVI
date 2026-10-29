@@ -1,7 +1,7 @@
 // The example's settings page: LIVI's settings lists, drawn by the plugin (docs/plugins.md, "Settings"). Other
 // screens (choices, numbers, colours ...) LIVI shows on its own page, because the manifest names only "list".
-// The keys and a rotary knob move over LIVI's settings by themselves; the page only shows where the focus is
-// (docs/plugins.md, "Keys").
+// The keys and a rotary knob move over LIVI's settings by themselves; the page shows where the focus is, and on the
+// top screen it has an entry of its own the keys reach first (docs/plugins.md, "Keys").
 
 import { Livi } from "@livi/api.slint";
 
@@ -9,6 +9,18 @@ export component Settings inherits Window {
     background: #101418;
     pure function focused(target: string) -> bool {
         return Livi.focus.zone == "page" && Livi.focus.target == target;
+    }
+    // the page's own entry on the top screen: declared for the page's path, the keys reach it before LIVI's rows
+    property <string> page: Livi.page;
+    changed page => { Livi.action("focus-targets", "/plugin/settings hello-page"); }
+    property <int> press-serial: Livi.press.serial;
+    changed press-serial => {
+        if Livi.press.target == "hello-page" {
+            root.open-hello();
+        }
+    }
+    function open-hello() {
+        Livi.action("open", "/plugin/hello");
     }
     VerticalLayout {
         padding: 24px;
@@ -29,6 +41,23 @@ export component Settings inherits Window {
                 color: #ffffff;
                 font-size: 28px;
                 vertical-alignment: center;
+            }
+        }
+        if !Livi.settings.can-back: Rectangle {
+            height: 56px;
+            background: hello.pressed ? #1c242c : transparent;
+            border-width: root.focused("hello-page") ? 2px : 0px;
+            border-color: #4fc3f7;
+            HorizontalLayout {
+                Text {
+                    text: "Hello page";
+                    color: #ffffff;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+            hello := TouchArea {
+                clicked => { root.open-hello(); }
             }
         }
         for row[i] in Livi.setting-rows: Rectangle {

@@ -190,7 +190,10 @@ changed press-serial => { root.pressed(Livi.press.target); }
 - **LIVI's settings on the plugin's page:** the targets are LIVI's, LIVI activates them itself; the page only draws
   the focus. Their ids: `back`, `apply`, `row:<row>`, `tool:<row>:<i>`, `dialog:<row>`, `pick:<index>`,
   `number-minus`, `number`, `number-plus`, `text`, `color-hex`, `color-reset`, `color-slider:<i>`, `level`,
-  `knob:<i>`.
+  `knob:<i>`. Entries of the page's own on the settings' top screen (no way back, `Livi.settings.can-back` false)
+  are declared for the page's path as on any page (e.g. `/plugin/settings`): they come first there, in their order,
+  then LIVI's, and a press on one reaches the page as `Livi.press`. On deeper screens and while a dialog is open only
+  LIVI's count; an empty declaration leaves none.
 - **The phone's projection:** while the phone streams, the keys go to the phone as before (CarPlay's knob, Android
   Auto's keys), whatever the plugin declared.
 - **Other keys, `Livi.key`:** a key LIVI has no binding for reaches the plugin by its code (`code`, e.g. `"Home"`,
@@ -198,7 +201,7 @@ changed press-serial => { root.pressed(Livi.press.target); }
   to LIVI's actions stay LIVI's. So a plugin can give extra keys of a car or an adapter a meaning of its own.
 
 The example plugin's page has two buttons for the keys, its bar shows the focus of LIVI's navigation and its settings
-page the focus on the settings' rows.
+page the focus on the settings' rows, with an entry of its own above them on the top screen.
 
 ## Companion channel
 
