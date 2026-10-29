@@ -32,8 +32,10 @@ component KeyButton inherits Rectangle {
 export component Hello inherits Window {
     background: #101418;
 
-    // what the keys move the focus over on this page, in order
-    init => { Livi.action("focus-targets", "/plugin/hello play-pause next"); }
+    // what the keys move the focus over on this page, in order; from a `changed` handler, not `init`: LIVI connects
+    // Livi.action only after it created the component, and sets the page right after that
+    property <string> page: Livi.page;
+    changed page => { Livi.action("focus-targets", "/plugin/hello play-pause next"); }
     // a button activated with a key does what a touch does
     property <int> press-serial: Livi.press.serial;
     changed press-serial => { root.pressed(Livi.press.target); }

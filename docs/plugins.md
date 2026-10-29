@@ -162,8 +162,11 @@ itself; the plugin says what its components can take the focus on, draws it, and
   the scope `nav`. An id is any text without spaces and colons. Flags after the id: `:slider` for a target that left
   and right change instead of leaving it, `:current` in the side bar for the button of the page on screen (the focus
   lands there coming back from the page). A new declaration replaces the scope's list, one without ids takes it away;
-  at most 256 per list. All pages of the plugin stay alive, so each declares its list in `init` (and again when it
-  changes, e.g. from a `changed` handler). A component LIVI shows only at times (a camera frame, an empty page)
+  at most 256 per list. All pages of the plugin stay alive, so each declares its list once it is created and again
+  when it changes. Not from `init` alone: `init` runs while LIVI creates the component, before it connects
+  `Livi.action`, so an action there goes nowhere. A `changed` handler on a property LIVI sets runs after that, e.g.
+  `property <string> page: Livi.page; changed page => { ... }` (LIVI sets the page right after it created the
+  component, and on every change of the page). A component LIVI shows only at times (a camera frame, an empty page)
   declares an empty list when it has nothing to focus, so that no list of another one stays.
 - **Navigation:** with a side bar (`shell` `start` or `end`) that declared targets, the navigation is that bar;
   otherwise it is LIVI's tabs, also when a plugin bar lists them (`Livi.pages`).
