@@ -52,7 +52,9 @@ pub enum Outcome {
     ToCore(String),
     CycleSession,
     NavStep(i32),
-    NavOpen { enter_main: bool },
+    NavOpen {
+        enter_main: bool,
+    },
     EnterMain,
     ToNav,
     MainStep(i32),
@@ -395,7 +397,10 @@ mod tests {
             decide("F20", ctx(Zone::Nav), &c),
             Outcome::NavOpen { enter_main: true }
         );
-        assert_eq!(decide("PageDown", ctx(Zone::Main), &c), Outcome::MainStep(1));
+        assert_eq!(
+            decide("PageDown", ctx(Zone::Main), &c),
+            Outcome::MainStep(1)
+        );
         assert_eq!(decide("PageUp", ctx(Zone::Main), &c), Outcome::MainStep(-1));
         assert_eq!(decide("F20", ctx(Zone::Main), &c), Outcome::Activate);
         assert_eq!(decide("PageDown", ctx(Zone::None), &c), Outcome::EnterMain);
@@ -470,7 +475,10 @@ mod tests {
         assert_eq!(decide("KeyP", c, &config()), Outcome::ToCore("KeyP".into()));
         assert_eq!(decide("ArrowDown", c, &config()), Outcome::EnterMain);
         assert_eq!(decide("F21", c, &config()), Outcome::Ignore);
-        assert_eq!(decide("Escape", ctx_with_plugin(Zone::Nav), &config()), Outcome::Ignore);
+        assert_eq!(
+            decide("Escape", ctx_with_plugin(Zone::Nav), &config()),
+            Outcome::Ignore
+        );
         assert_eq!(
             decide("Enter", ctx_with_plugin(Zone::Nav), &config()),
             Outcome::NavOpen { enter_main: true }

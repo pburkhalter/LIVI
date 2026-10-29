@@ -107,8 +107,12 @@ mod tests {
     #[test]
     fn a_page_declares_its_targets_in_order() {
         let mut t = Targets::new();
-        t.declare("/plugin/home weather media.play volume:slider").unwrap();
-        assert_eq!(ids(t.page("/plugin/home")), vec!["weather", "media.play", "volume"]);
+        t.declare("/plugin/home weather media.play volume:slider")
+            .unwrap();
+        assert_eq!(
+            ids(t.page("/plugin/home")),
+            vec!["weather", "media.play", "volume"]
+        );
         assert!(t.page("/plugin/home")[2].slider);
         assert!(!t.page("/plugin/home")[0].slider);
         assert!(t.page("/plugin/media").is_empty());

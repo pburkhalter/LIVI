@@ -694,12 +694,18 @@ mod tests {
         }];
         assert_eq!(target_id(Target::Back, &declared), "back");
         assert_eq!(target_id(Target::Apply, &declared), "apply");
-        assert_eq!(target_id(Target::Row(3, RowKind::Toggle), &declared), "row:3");
+        assert_eq!(
+            target_id(Target::Row(3, RowKind::Toggle), &declared),
+            "row:3"
+        );
         assert_eq!(target_id(Target::Tool(3, 1), &declared), "tool:3:1");
         assert_eq!(target_id(Target::DialogButton(0), &declared), "dialog:0");
         assert_eq!(target_id(Target::Pick(2), &declared), "pick:2");
         assert_eq!(target_id(Target::Number, &declared), "number");
-        assert_eq!(target_id(Target::ColorSlider(1), &declared), "color-slider:1");
+        assert_eq!(
+            target_id(Target::ColorSlider(1), &declared),
+            "color-slider:1"
+        );
         assert_eq!(target_id(Target::PageSlider, &declared), "level");
         assert_eq!(target_id(Target::CalSlider(1), &declared), "knob:1");
         assert_eq!(target_id(Target::Plugin(0, true), &declared), "volume");

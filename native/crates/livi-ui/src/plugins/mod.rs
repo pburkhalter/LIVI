@@ -154,8 +154,14 @@ fn key_value(code: &str, repeat: bool, serial: i32) -> Value {
 /// The properties `press` and `key` of the global Livi
 fn key_fields() -> [(&'static str, Value); 2] {
     [
-        ("press", PRESS.with_borrow(|(t, step, n)| press_value(t, *step, *n))),
-        ("key", KEY.with_borrow(|(code, repeat, n)| key_value(code, *repeat, *n))),
+        (
+            "press",
+            PRESS.with_borrow(|(t, step, n)| press_value(t, *step, *n)),
+        ),
+        (
+            "key",
+            KEY.with_borrow(|(code, repeat, n)| key_value(code, *repeat, *n)),
+        ),
     ]
 }
 
