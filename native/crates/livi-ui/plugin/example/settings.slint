@@ -1,10 +1,15 @@
 // The example's settings page: LIVI's settings lists, drawn by the plugin (docs/plugins.md, "Settings"). Other
 // screens (choices, numbers, colours ...) LIVI shows on its own page, because the manifest names only "list".
+// The keys and a rotary knob move over LIVI's settings by themselves; the page only shows where the focus is
+// (docs/plugins.md, "Keys").
 
 import { Livi } from "@livi/api.slint";
 
 export component Settings inherits Window {
     background: #101418;
+    pure function focused(target: string) -> bool {
+        return Livi.focus.zone == "page" && Livi.focus.target == target;
+    }
     VerticalLayout {
         padding: 24px;
         spacing: 8px;
@@ -14,6 +19,8 @@ export component Settings inherits Window {
                 width: 96px;
                 height: 48px;
                 background: back.pressed ? #2a3440 : #1c242c;
+                border-width: root.focused("back") ? 2px : 0px;
+                border-color: #4fc3f7;
                 Text { text: "Back"; color: #ffffff; }
                 back := TouchArea { clicked => { Livi.action("settings", "back"); } }
             }
@@ -27,6 +34,8 @@ export component Settings inherits Window {
         for row[i] in Livi.setting-rows: Rectangle {
             height: 56px;
             background: touch.pressed ? #1c242c : transparent;
+            border-width: root.focused("row:" + i) ? 2px : 0px;
+            border-color: #4fc3f7;
             HorizontalLayout {
                 Text {
                     text: row.label;

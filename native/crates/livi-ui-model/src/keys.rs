@@ -41,6 +41,8 @@ pub struct Context {
     pub telemetry: bool,
     pub settings_depth: usize,
     pub repeat: bool,
+    /// a UI plugin is installed: the keys LIVI has no use for go to it
+    pub plugin: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +52,9 @@ pub enum Outcome {
     ToCore(String),
     CycleSession,
     NavStep(i32),
-    NavOpen { enter_main: bool },
+    NavOpen {
+        enter_main: bool,
+    },
     EnterMain,
     ToNav,
     MainStep(i32),
@@ -60,6 +64,8 @@ pub enum Outcome {
     Adjust(i32),
     SettingsBack,
     Pager(i32),
+    /// a key LIVI has no binding for: the UI plugin may use it (`Livi.key`)
+    ToPlugin(String),
 }
 
 pub fn binding<'a>(config: &'a Value, name: &str) -> &'a str {
@@ -89,9 +95,16 @@ pub fn decide(code: &str, ctx: Context, config: &Value) -> Outcome {
     let right = is("right", "ArrowRight");
     let up = is("up", "ArrowUp");
     let down = is("down", "ArrowDown");
-    let back = (!b("back").is_empty() && code == b("back")) || code == "Escape";
+    let bound = |name: &str| !b(name).is_empty() && code == b(name);
+    let back = bound("back") || code == "Escape";
     let enter = code == "Enter" || code == "NumpadEnter";
-    let select_down = !b("selectDown").is_empty() && code == b("selectDown");
+    let select_down = bound("selectDown");
+    // a rotary knob: turning moves the focus as the arrows do (or changes what is being edited), pressing selects;
+    // knobUp is the knob let go, which LIVI's pages need as little as selectUp
+    let knob_left = bound("knobLeft");
+    let knob_right = bound("knobRight");
+    let knob_press = bound("knobDown");
+    let turned = knob_left || knob_right;
     let text_entry = ctx.focused == Focused::Text && ctx.editing;
     let number_entry = ctx.focused == Focused::Number && ctx.editing && ctx.zone == Zone::Main;
     let in_nav = ctx.zone == Zone::Nav;
@@ -106,10 +119,10 @@ pub fn decide(code: &str, ctx: Context, config: &Value) -> Outcome {
     }
 
     if ctx.telemetry && !in_nav && !form {
-        if left {
+        if left || knob_left {
             return Outcome::Pager(-1);
         }
-        if right {
+        if right || knob_right {
             return Outcome::Pager(1);
         }
     }
@@ -131,30 +144,33 @@ pub fn decide(code: &str, ctx: Context, config: &Value) -> Outcome {
     }
 
     if text_entry {
-        if code == "Escape" || enter {
+        if code == "Escape" || enter || knob_press {
             return Outcome::StopEditing;
         }
         return Outcome::Pass;
     }
 
     if number_entry {
-        if code == "Escape" || enter {
+        if code == "Escape" || enter || knob_press {
             return Outcome::StopEditing;
         }
         if up || down {
             return Outcome::Adjust(if up { 1 } else { -1 });
         }
+        if turned {
+            return Outcome::Adjust(if knob_right { 1 } else { -1 });
+        }
         return Outcome::Pass;
     }
 
     if in_nav {
-        if left || up {
+        if left || up || knob_left {
             return Outcome::NavStep(-1);
         }
-        if right || down {
+        if right || down || knob_right {
             return Outcome::NavStep(1);
         }
-        if select_down {
+        if select_down || knob_press {
             return Outcome::NavOpen {
                 enter_main: !ctx.projection,
             };
@@ -164,7 +180,8 @@ pub fn decide(code: &str, ctx: Context, config: &Value) -> Outcome {
         }
     }
 
-    if ctx.zone == Zone::None && (left || right || up || down || enter || select_down) {
+    let moved = left || right || up || down || turned;
+    if ctx.zone == Zone::None && (moved || enter || select_down || knob_press) {
         return if ctx.projection {
             Outcome::ToNav
         } else {
@@ -186,11 +203,11 @@ pub fn decide(code: &str, ctx: Context, config: &Value) -> Outcome {
         return Outcome::ToNav;
     }
 
-    if in_main && (enter || select_down) {
+    // a slider takes the knob while it is being edited: selecting it starts and ends that
+    if in_main && (enter || select_down || knob_press) {
         return match ctx.focused {
             Focused::Plain => Outcome::Activate,
-            Focused::Slider => Outcome::Ignore,
-            Focused::Number | Focused::Text => {
+            Focused::Slider | Focused::Number | Focused::Text => {
                 if ctx.editing {
                     Outcome::StopEditing
                 } else {
@@ -200,10 +217,10 @@ pub fn decide(code: &str, ctx: Context, config: &Value) -> Outcome {
         };
     }
 
-    if in_main && (left || up || right || down) {
-        let delta = if left || up { -1 } else { 1 };
+    if in_main && moved {
+        let delta = if left || up || knob_left { -1 } else { 1 };
         return match ctx.focused {
-            Focused::Slider if left || right => Outcome::Adjust(delta),
+            Focused::Slider if left || right || (turned && ctx.editing) => Outcome::Adjust(delta),
             Focused::Number if ctx.editing => {
                 if up || down {
                     Outcome::Adjust(-delta)
@@ -213,6 +230,11 @@ pub fn decide(code: &str, ctx: Context, config: &Value) -> Outcome {
             }
             _ => Outcome::MainStep(delta),
         };
+    }
+
+    let ours = moved || back || enter || select_down || knob_press;
+    if ctx.plugin && mapped.is_none() && !ours {
+        return Outcome::ToPlugin(code.to_string());
     }
 
     Outcome::Ignore
@@ -240,7 +262,8 @@ mod tests {
         json!({ "bindings": {
             "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight",
             "selectDown": "Enter", "back": "Backspace", "cycleSession": "KeyS",
-            "playPause": "KeyP", "voiceAssistant": "KeyV", "home": "KeyH"
+            "playPause": "KeyP", "voiceAssistant": "KeyV", "home": "KeyH",
+            "knobLeft": "PageUp", "knobRight": "PageDown", "knobDown": "F20", "knobUp": "F21"
         } })
     }
 
@@ -254,6 +277,7 @@ mod tests {
             telemetry: false,
             settings_depth: 0,
             repeat: false,
+            plugin: false,
         }
     }
 
@@ -362,5 +386,114 @@ mod tests {
     fn push_to_talk_releases() {
         assert_eq!(released("KeyV", &config()), Some("KeyV".into()));
         assert_eq!(released("KeyP", &config()), None);
+    }
+
+    #[test]
+    fn the_knob_moves_like_the_arrows_on_livis_pages() {
+        let c = config();
+        assert_eq!(decide("PageDown", ctx(Zone::Nav), &c), Outcome::NavStep(1));
+        assert_eq!(decide("PageUp", ctx(Zone::Nav), &c), Outcome::NavStep(-1));
+        assert_eq!(
+            decide("F20", ctx(Zone::Nav), &c),
+            Outcome::NavOpen { enter_main: true }
+        );
+        assert_eq!(
+            decide("PageDown", ctx(Zone::Main), &c),
+            Outcome::MainStep(1)
+        );
+        assert_eq!(decide("PageUp", ctx(Zone::Main), &c), Outcome::MainStep(-1));
+        assert_eq!(decide("F20", ctx(Zone::Main), &c), Outcome::Activate);
+        assert_eq!(decide("PageDown", ctx(Zone::None), &c), Outcome::EnterMain);
+        let mut idle = ctx(Zone::None);
+        idle.projection = true;
+        assert_eq!(decide("PageUp", idle, &c), Outcome::ToNav);
+    }
+
+    #[test]
+    fn the_knob_goes_to_the_phone_on_the_projection() {
+        let mut c = ctx(Zone::None);
+        c.projection = true;
+        c.streaming = true;
+        for code in ["PageDown", "PageUp", "F20", "F21"] {
+            assert_eq!(decide(code, c, &config()), Outcome::ToCore(code.into()));
+        }
+    }
+
+    #[test]
+    fn letting_the_knob_go_does_nothing_on_livis_pages() {
+        assert_eq!(decide("F21", ctx(Zone::Main), &config()), Outcome::Ignore);
+        assert_eq!(decide("F21", ctx(Zone::Nav), &config()), Outcome::Ignore);
+    }
+
+    #[test]
+    fn the_knob_changes_a_number_being_edited() {
+        let mut c = ctx(Zone::Main);
+        c.focused = Focused::Number;
+        assert_eq!(decide("PageDown", c, &config()), Outcome::MainStep(1));
+        assert_eq!(decide("F20", c, &config()), Outcome::StartEditing);
+        c.editing = true;
+        assert_eq!(decide("PageDown", c, &config()), Outcome::Adjust(1));
+        assert_eq!(decide("PageUp", c, &config()), Outcome::Adjust(-1));
+        assert_eq!(decide("F20", c, &config()), Outcome::StopEditing);
+    }
+
+    #[test]
+    fn a_slider_takes_the_knob_while_it_is_edited() {
+        let mut c = ctx(Zone::Main);
+        c.focused = Focused::Slider;
+        assert_eq!(decide("PageDown", c, &config()), Outcome::MainStep(1));
+        assert_eq!(decide("Enter", c, &config()), Outcome::StartEditing);
+        assert_eq!(decide("F20", c, &config()), Outcome::StartEditing);
+        c.editing = true;
+        assert_eq!(decide("PageDown", c, &config()), Outcome::Adjust(1));
+        assert_eq!(decide("PageUp", c, &config()), Outcome::Adjust(-1));
+        assert_eq!(decide("ArrowLeft", c, &config()), Outcome::Adjust(-1));
+        assert_eq!(decide("ArrowDown", c, &config()), Outcome::MainStep(1));
+        assert_eq!(decide("Enter", c, &config()), Outcome::StopEditing);
+        assert_eq!(decide("Backspace", c, &config()), Outcome::StopEditing);
+    }
+
+    #[test]
+    fn the_knob_turns_the_dashboard_pages() {
+        let mut c = ctx(Zone::None);
+        c.telemetry = true;
+        assert_eq!(decide("PageDown", c, &config()), Outcome::Pager(1));
+        assert_eq!(decide("PageUp", c, &config()), Outcome::Pager(-1));
+    }
+
+    #[test]
+    fn keys_livi_has_no_use_for_go_to_the_plugin() {
+        let mut c = ctx(Zone::None);
+        assert_eq!(decide("F13", c, &config()), Outcome::Ignore);
+        c.plugin = true;
+        assert_eq!(decide("F13", c, &config()), Outcome::ToPlugin("F13".into()));
+        assert_eq!(
+            decide("Home", ctx_with_plugin(Zone::Main), &config()),
+            Outcome::ToPlugin("Home".into())
+        );
+        // bound keys and the ones LIVI reads without a binding stay LIVI's
+        assert_eq!(decide("KeyP", c, &config()), Outcome::ToCore("KeyP".into()));
+        assert_eq!(decide("ArrowDown", c, &config()), Outcome::EnterMain);
+        assert_eq!(decide("F21", c, &config()), Outcome::Ignore);
+        assert_eq!(
+            decide("Escape", ctx_with_plugin(Zone::Nav), &config()),
+            Outcome::Ignore
+        );
+        assert_eq!(
+            decide("Enter", ctx_with_plugin(Zone::Nav), &config()),
+            Outcome::NavOpen { enter_main: true }
+        );
+        // a text being typed keeps its keys
+        let mut typing = ctx_with_plugin(Zone::Main);
+        typing.focused = Focused::Text;
+        typing.editing = true;
+        assert_eq!(decide("F13", typing, &config()), Outcome::Pass);
+    }
+
+    fn ctx_with_plugin(zone: Zone) -> Context {
+        Context {
+            plugin: true,
+            ..ctx(zone)
+        }
     }
 }

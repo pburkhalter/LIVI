@@ -4,6 +4,7 @@ use std::time::Instant;
 use livi_core_client::Client;
 use livi_core_proto::input::Input;
 use livi_core_proto::message::Action;
+use livi_ui_model::focus;
 use livi_ui_model::keys::{
     Context, Focused, HELD_GAP, Outcome, Zone, bound_to, decide, held_factor, released,
 };
@@ -43,12 +44,16 @@ enum Target {
     Source(bool),
     Favorite,
     Station(usize),
+    /// a target the UI plugin declared for the page on screen: its place in the list, whether it is a slider
+    Plugin(usize, bool),
 }
 
 thread_local! {
     static TRAIL: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
     static HELD: Cell<Option<(Instant, Instant, f32)>> = const { Cell::new(None) };
     static KEY_REPEAT: Cell<bool> = const { Cell::new(false) };
+    // a button of the plugin's side bar was pressed to open a page: the focus goes into the page once it is there
+    static ENTER_NEXT_PAGE: Cell<bool> = const { Cell::new(false) };
 }
 
 fn settings_targets(s: &SettingsState) -> Vec<Target> {
@@ -101,7 +106,67 @@ fn settings_targets(s: &SettingsState) -> Vec<Target> {
     out
 }
 
+/// What the plugin declared for the page on screen (docs/plugins.md, "Keys")
+fn plugin_targets(ui: &AppWindow) -> Vec<focus::Target> {
+    crate::plugins::page_targets(&crate::plugins::current_path(ui))
+}
+
+/// The targets of the plugin's side bar, where it takes the place of LIVI's navigation; empty otherwise, and then
+/// the navigation goes over the tabs
+fn plugin_nav(ui: &AppWindow) -> Vec<focus::Target> {
+    if ui.get_has_plugin_start() || ui.get_has_plugin_end() {
+        crate::plugins::nav_targets()
+    } else {
+        Vec::new()
+    }
+}
+
+fn nav_len(ui: &AppWindow) -> usize {
+    let bar = plugin_nav(ui);
+    if bar.is_empty() {
+        ui.get_tabs().row_count()
+    } else {
+        bar.len()
+    }
+}
+
+/// How the plugin knows a target (`Livi.focus.target`): its own ids for what it declared, names for those of LIVI's
+/// settings, which the plugin's settings page draws
+fn target_id(t: Target, plugin: &[focus::Target]) -> String {
+    match t {
+        Target::Back => "back".into(),
+        Target::Apply => "apply".into(),
+        Target::Row(i, _) => format!("row:{i}"),
+        Target::Tool(i, j) => format!("tool:{i}:{j}"),
+        Target::DialogButton(i) => format!("dialog:{i}"),
+        Target::Pick(i) => format!("pick:{i}"),
+        Target::NumberMinus => "number-minus".into(),
+        Target::Number => "number".into(),
+        Target::NumberPlus => "number-plus".into(),
+        Target::Text => "text".into(),
+        Target::ColorHex => "color-hex".into(),
+        Target::ColorReset => "color-reset".into(),
+        Target::ColorSlider(w) => format!("color-slider:{w}"),
+        Target::PageSlider => "level".into(),
+        Target::CalSlider(i) => format!("knob:{i}"),
+        Target::Artwork => "artwork".into(),
+        Target::Prev => "prev".into(),
+        Target::PlayPause => "play-pause".into(),
+        Target::Next => "next".into(),
+        Target::Progress => "progress".into(),
+        Target::Source(false) => "source:phone".into(),
+        Target::Source(true) => "source:dab".into(),
+        Target::Favorite => "favorite".into(),
+        Target::Station(i) => format!("station:{i}"),
+        Target::Plugin(i, _) => plugin.get(i).map(|p| p.id.clone()).unwrap_or_default(),
+    }
+}
+
 fn targets(ui: &AppWindow) -> Vec<Target> {
+    // the plugin's settings page draws LIVI's settings: the targets of LIVI's own settings page
+    if crate::plugins::settings_shown(ui) {
+        return settings_targets(&ui.global::<SettingsState>());
+    }
     match ui.get_page() {
         Page::Settings => settings_targets(&ui.global::<SettingsState>()),
         Page::Media => {
@@ -134,7 +199,12 @@ fn targets(ui: &AppWindow) -> Vec<Target> {
             }
             out
         }
-        _ => Vec::new(),
+        // a page of the plugin, or one of LIVI's it draws on (a frame, an empty page): what it declared
+        _ => plugin_targets(ui)
+            .iter()
+            .enumerate()
+            .map(|(i, t)| Target::Plugin(i, t.slider))
+            .collect(),
     }
 }
 
@@ -144,7 +214,8 @@ fn kind(t: Target) -> Focused {
         | Target::ColorSlider(_)
         | Target::PageSlider
         | Target::CalSlider(_)
-        | Target::Progress => Focused::Slider,
+        | Target::Progress
+        | Target::Plugin(_, true) => Focused::Slider,
         Target::Number => Focused::Number,
         Target::Text | Target::ColorHex => Focused::Text,
         _ => Focused::Plain,
@@ -180,10 +251,24 @@ fn enter_main(ui: &AppWindow) {
 
 fn to_nav(ui: &AppWindow) {
     let f = ui.global::<Focus>();
-    let at = crate::active_tab(ui).unwrap_or(0);
+    let bar = plugin_nav(ui);
+    // the plugin's bar: on the button the plugin marked as the page on screen, else where the focus was last
+    let at = if bar.is_empty() {
+        crate::active_tab(ui).unwrap_or(0)
+    } else {
+        let last = (f.get_nav_index().max(0) as usize).min(bar.len() - 1);
+        bar.iter().position(|t| t.current).unwrap_or(last)
+    };
     f.set_editing(false);
     f.set_nav_index(at as i32);
     f.set_zone(FocusZone::Nav);
+}
+
+/// Tells the plugin that a target of the page on screen was activated (step 0) or changed by a step
+fn press_plugin(ui: &AppWindow, index: usize, step: i32) {
+    if let Some(t) = plugin_targets(ui).get(index) {
+        crate::plugins::press(&t.id, step);
+    }
 }
 
 fn settle_after_settings_move(ui: &AppWindow, opened: bool, from: i32) {
@@ -267,6 +352,7 @@ fn activate(ui: &AppWindow, target: Target) {
                 d.invoke_pick(st.service_id);
             }
         }
+        Target::Plugin(i, _) => press_plugin(ui, i, 0),
         _ => {}
     }
 }
@@ -319,13 +405,25 @@ fn adjust(ui: &AppWindow, target: Target, delta: i32) {
                 ui.invoke_seek(at / total);
             }
         }
+        Target::Plugin(i, true) => press_plugin(ui, i, delta),
         _ => {}
     }
 }
 
 fn open_tab(ui: &AppWindow, enter: bool) {
     let f = ui.global::<Focus>();
-    let Some(tab) = ui.get_tabs().row_data(f.get_nav_index().max(0) as usize) else {
+    let index = f.get_nav_index().max(0) as usize;
+    let bar = plugin_nav(ui);
+    if !bar.is_empty() {
+        // a button of the plugin's bar: the plugin does what it does; a page it opens comes after this event, the
+        // focus goes into it then (page_shown)
+        if let Some(t) = bar.get(index) {
+            crate::plugins::press(&t.id, 0);
+            ENTER_NEXT_PAGE.set(enter);
+        }
+        return;
+    }
+    let Some(tab) = ui.get_tabs().row_data(index) else {
         return;
     };
     ui.set_plugin_page_id(tab.plugin.clone());
@@ -359,7 +457,7 @@ fn apply(ui: &AppWindow, client: &Client, code: &str, outcome: Outcome) -> Event
             }
         }
         Outcome::NavStep(d) => {
-            let n = ui.get_tabs().row_count() as i32;
+            let n = nav_len(ui) as i32;
             if f.get_zone() != FocusZone::Nav {
                 to_nav(ui);
             } else if n > 0 {
@@ -400,7 +498,10 @@ fn apply(ui: &AppWindow, client: &Client, code: &str, outcome: Outcome) -> Event
             settle_after_settings_move(ui, false, from);
         }
         Outcome::Pager(by) => client.act(Action::StepClusterLayout { by }),
+        Outcome::ToPlugin(code) => crate::plugins::unused_key(&code, KEY_REPEAT.get()),
     }
+    // the plugin draws the focus (Livi.focus) and hears of presses and keys: now, not with the next second
+    crate::sync_plugin(ui);
     EventResult::PreventDefault
 }
 
@@ -423,12 +524,13 @@ fn context(ui: &AppWindow, repeat: bool) -> Context {
         projection: page == Page::Projection,
         streaming: ui.get_phone() == PhoneState::Streaming,
         telemetry: page == Page::Telemetry,
-        settings_depth: if page == Page::Settings {
+        settings_depth: if page == Page::Settings || crate::plugins::settings_shown(ui) {
             crate::settings_ui::depth()
         } else {
             0
         },
         repeat,
+        plugin: crate::plugins::installed(),
     }
 }
 
@@ -462,6 +564,7 @@ pub fn wire(ui: &AppWindow, client: &Client) {
                     return EventResult::Propagate;
                 }
                 KEY_REPEAT.set(event.repeat);
+                ENTER_NEXT_PAGE.set(false);
                 let ctx = context(&ui, event.repeat);
                 let outcome = decide(&code, ctx, &config);
                 apply(&ui, &client, &code, outcome)
@@ -485,8 +588,10 @@ pub fn wire(ui: &AppWindow, client: &Client) {
             }
             | winit::event::WindowEvent::Touch(_) => {
                 let f = ui.global::<Focus>();
-                if !f.get_editing() {
+                ENTER_NEXT_PAGE.set(false);
+                if !f.get_editing() && f.get_zone() != FocusZone::None {
                     f.set_zone(FocusZone::None);
+                    crate::sync_plugin(&ui);
                 }
                 let later = weak.clone();
                 slint::Timer::single_shot(std::time::Duration::ZERO, move || {
@@ -517,4 +622,99 @@ pub fn wire(ui: &AppWindow, client: &Client) {
 
 pub fn text_done(ui: &AppWindow) {
     ui.global::<Focus>().set_editing(false);
+}
+
+/// Where the focus is, for the plugin (`Livi.focus`): the zone ("", "nav" or "page"), the id of the target there
+/// (in the navigation the path of the tab, unless the plugin's bar declared its own) and whether it is being edited
+pub fn focused(ui: &AppWindow) -> (&'static str, String, bool) {
+    let f = ui.global::<Focus>();
+    match f.get_zone() {
+        FocusZone::None => ("", String::new(), false),
+        FocusZone::Nav => ("nav", nav_id(ui, f.get_nav_index().max(0) as usize), false),
+        FocusZone::Main => match targets(ui).get(f.get_main_index().max(0) as usize) {
+            Some(&t) => ("page", target_id(t, &plugin_targets(ui)), f.get_editing()),
+            None => ("", String::new(), false),
+        },
+    }
+}
+
+/// The id of the navigation's target at `index`: the plugin bar's own, else the path of the tab
+fn nav_id(ui: &AppWindow, index: usize) -> String {
+    let bar = plugin_nav(ui);
+    if !bar.is_empty() {
+        return bar.get(index).map(|t| t.id.clone()).unwrap_or_default();
+    }
+    match ui.get_tabs().row_data(index) {
+        Some(tab) => crate::plugins::tab_path(tab.page, &tab.plugin),
+        None => String::new(),
+    }
+}
+
+/// A page came on screen: if a button of the plugin's bar opened it with a key, the focus goes into it
+pub fn page_shown(ui: &AppWindow) {
+    if ENTER_NEXT_PAGE.take() && ui.get_page() != Page::Projection {
+        TRAIL.with_borrow_mut(Vec::clear);
+        enter_main(ui);
+        crate::sync_plugin(ui);
+    }
+}
+
+/// The plugin declared targets anew: the focus stays within what there is
+pub fn targets_changed(ui: &AppWindow) {
+    let f = ui.global::<Focus>();
+    match f.get_zone() {
+        FocusZone::Main => {
+            let n = targets(ui).len() as i32;
+            if n == 0 {
+                f.set_zone(FocusZone::None);
+            } else if f.get_main_index() >= n {
+                f.set_main_index(n - 1);
+            }
+        }
+        FocusZone::Nav => {
+            let n = nav_len(ui) as i32;
+            if n > 0 && f.get_nav_index() >= n {
+                f.set_nav_index(n - 1);
+            }
+        }
+        FocusZone::None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn targets_have_the_ids_the_plugin_api_names() {
+        let declared = vec![focus::Target {
+            id: "volume".into(),
+            slider: true,
+            current: false,
+        }];
+        assert_eq!(target_id(Target::Back, &declared), "back");
+        assert_eq!(target_id(Target::Apply, &declared), "apply");
+        assert_eq!(
+            target_id(Target::Row(3, RowKind::Toggle), &declared),
+            "row:3"
+        );
+        assert_eq!(target_id(Target::Tool(3, 1), &declared), "tool:3:1");
+        assert_eq!(target_id(Target::DialogButton(0), &declared), "dialog:0");
+        assert_eq!(target_id(Target::Pick(2), &declared), "pick:2");
+        assert_eq!(target_id(Target::Number, &declared), "number");
+        assert_eq!(
+            target_id(Target::ColorSlider(1), &declared),
+            "color-slider:1"
+        );
+        assert_eq!(target_id(Target::PageSlider, &declared), "level");
+        assert_eq!(target_id(Target::CalSlider(1), &declared), "knob:1");
+        assert_eq!(target_id(Target::Plugin(0, true), &declared), "volume");
+        assert_eq!(target_id(Target::Plugin(5, false), &declared), "");
+    }
+
+    #[test]
+    fn a_plugin_slider_is_a_slider() {
+        assert_eq!(kind(Target::Plugin(0, true)), Focused::Slider);
+        assert_eq!(kind(Target::Plugin(0, false)), Focused::Plain);
+    }
 }

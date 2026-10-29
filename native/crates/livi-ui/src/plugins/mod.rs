@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use livi_ui_model::focus::{self, Targets};
 use serde_json::Value as Json;
 use slint::{ComponentFactory, ModelRc, VecModel};
 use slint_interpreter::{ComponentDefinition, ComponentHandle, ComponentInstance, Value};
@@ -32,6 +33,12 @@ thread_local! {
     static STATE: RefCell<Vec<(&'static str, Value)>> = const { RefCell::new(Vec::new()) };
     static ACTION: RefCell<Option<ActionHandler>> = const { RefCell::new(None) };
     static EMIT: RefCell<Option<EmitHandler>> = const { RefCell::new(None) };
+    // what the components can take the focus on, for keys and a rotary knob (action focus-targets)
+    static TARGETS: RefCell<Targets> = const { RefCell::new(Targets::new()) };
+    // the target last activated or changed with a key (Livi.press): id, step, serial
+    static PRESS: RefCell<(String, i32, i32)> = const { RefCell::new((String::new(), 0, 0)) };
+    // the key last pressed that LIVI has no use for (Livi.key): code, repeat, serial
+    static KEY: RefCell<(String, bool, i32)> = const { RefCell::new((String::new(), false, 0)) };
 }
 
 /// Folder of the plugin: `LIVI_UI_PLUGIN`, otherwise `ui-plugin` in LIVI's user data folder if it holds a plugin.json.
@@ -82,6 +89,90 @@ pub fn load() {
 
 fn plugin() -> Option<Rc<Plugin>> {
     PLUGIN.with_borrow(Clone::clone)
+}
+
+/// Whether a plugin is there: the keys LIVI has no use for go to it
+pub fn installed() -> bool {
+    PLUGIN.with_borrow(Option::is_some)
+}
+
+/// Path of a tab as the plugin knows it: "/plugin/<id>" for its pages, otherwise LIVI's route
+pub fn tab_path(page: Page, plugin_id: &str) -> String {
+    state::tab_path(page, plugin_id)
+}
+
+/// The plugin's components declare what they can take the focus on (`Livi.action("focus-targets", ...)`)
+pub fn declare_targets(argument: &str) -> Result<(), String> {
+    TARGETS.with_borrow_mut(|t| t.declare(argument))
+}
+
+/// The targets the plugin declared for a page, by its path
+pub fn page_targets(path: &str) -> Vec<focus::Target> {
+    TARGETS.with_borrow(|t| t.page(path).to_vec())
+}
+
+/// The targets of the plugin's side bar
+pub fn nav_targets() -> Vec<focus::Target> {
+    TARGETS.with_borrow(|t| t.nav().to_vec())
+}
+
+/// A target was activated (step 0) or changed by a step with a key: the plugin's components hear of it with the
+/// next state (`Livi.press`)
+pub fn press(id: &str, step: i32) {
+    PRESS.with_borrow_mut(|(target, last, serial)| {
+        *target = id.to_string();
+        *last = step;
+        *serial = serial.wrapping_add(1);
+    });
+}
+
+/// A key LIVI has no use for was pressed: the plugin hears of it with the next state (`Livi.key`)
+pub fn unused_key(code: &str, repeat: bool) {
+    KEY.with_borrow_mut(|(last, repeated, serial)| {
+        *last = code.to_string();
+        *repeated = repeat;
+        *serial = serial.wrapping_add(1);
+    });
+}
+
+fn press_value(target: &str, step: i32, serial: i32) -> Value {
+    state::record(vec![
+        ("target", state::s(target)),
+        ("step", Value::Number(f64::from(step))),
+        ("serial", Value::Number(f64::from(serial))),
+    ])
+}
+
+fn key_value(code: &str, repeat: bool, serial: i32) -> Value {
+    state::record(vec![
+        ("code", state::s(code)),
+        ("repeat", Value::Bool(repeat)),
+        ("serial", Value::Number(f64::from(serial))),
+    ])
+}
+
+/// The properties `press` and `key` of the global Livi
+fn key_fields() -> [(&'static str, Value); 2] {
+    [
+        (
+            "press",
+            PRESS.with_borrow(|(t, step, n)| press_value(t, *step, *n)),
+        ),
+        (
+            "key",
+            KEY.with_borrow(|(code, repeat, n)| key_value(code, *repeat, *n)),
+        ),
+    ]
+}
+
+/// What a component created now gets of `press` and `key`: the serial without the target or the key, so that a
+/// `changed` handler that sees the serial arrive does not take a press or key from before it as new
+fn without_past(name: &str, value: &Value) -> Value {
+    match name {
+        "press" => PRESS.with_borrow(|(_, _, n)| press_value("", 0, *n)),
+        "key" => KEY.with_borrow(|(_, _, n)| key_value("", false, *n)),
+        _ => value.clone(),
+    }
 }
 
 /// Path of the page the plugin wants at start, instead of LIVI's start page.
@@ -173,7 +264,7 @@ fn factory(component: ComponentDefinition) -> ComponentFactory {
             .ok()?;
         STATE.with_borrow(|state| {
             for (name, value) in state {
-                let _ = instance.set_global_property(GLOBAL, name, value.clone());
+                let _ = instance.set_global_property(GLOBAL, name, without_past(name, value));
             }
         });
         let _ = instance.set_global_callback(GLOBAL, "action", |args| {
@@ -321,4 +412,47 @@ pub fn sync(ui: &AppWindow, core_state: &Json) {
             None => false,
         })
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(v: &Value, name: &str) -> Value {
+        match v {
+            Value::Struct(s) => s.get_field(name).cloned().expect(name),
+            _ => panic!("not a struct"),
+        }
+    }
+
+    #[test]
+    fn a_component_created_later_takes_no_press_or_key_from_before_as_new() {
+        press("volume", 1);
+        press("volume", 0);
+        let [(_, now), _] = key_fields();
+        assert_eq!(field(&now, "target"), state::s("volume"));
+        assert_eq!(field(&now, "serial"), Value::Number(2.0));
+        let fresh = without_past("press", &now);
+        assert_eq!(field(&fresh, "target"), state::s(""));
+        assert_eq!(field(&fresh, "serial"), Value::Number(2.0));
+        unused_key("F13", true);
+        let [_, (_, key)] = key_fields();
+        assert_eq!(field(&key, "code"), state::s("F13"));
+        assert_eq!(field(&key, "repeat"), Value::Bool(true));
+        assert_eq!(field(&without_past("key", &key), "code"), state::s(""));
+        let clock = state::s("12:00");
+        assert_eq!(without_past("clock", &clock), clock);
+    }
+
+    #[test]
+    fn declared_targets_are_found_by_page_and_for_the_bar() {
+        declare_targets("/plugin/home a b:slider").unwrap();
+        declare_targets("nav home:current media").unwrap();
+        assert!(declare_targets("home x").is_err());
+        let page = page_targets("/plugin/home");
+        assert_eq!(page.len(), 2);
+        assert!(page[1].slider);
+        assert!(page_targets("/plugin/media").is_empty());
+        assert!(nav_targets()[0].current);
+    }
 }

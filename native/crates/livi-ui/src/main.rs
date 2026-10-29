@@ -360,6 +360,8 @@ fn reported(ui: &AppWindow, client: &Client, page: Page) {
         settings_ui::leave(client);
     }
     settle_projection_focus(ui);
+    // a button of the plugin's bar opened the page with a key: the focus goes into it
+    keys_ui::page_shown(ui);
 }
 
 fn settle_projection_focus(ui: &AppWindow) {
@@ -543,6 +545,10 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
                 println!("[ui] plugin action settings {argument} unknown");
             }
         }
+        ("focus-targets", argument) => match plugins::declare_targets(argument) {
+            Ok(()) => keys_ui::targets_changed(&ui),
+            Err(e) => println!("[ui] plugin action focus-targets {argument}: {e}"),
+        },
         ("page", step @ ("next" | "prev")) => {
             // among the plugin's own pages and without wrapping around: a swipe at either end does nothing
             let Some(i) = active_tab(&ui) else { return };

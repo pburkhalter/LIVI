@@ -450,9 +450,21 @@ pub fn build(
         ("notices", notices(state, &tm)),
         ("notices-critical", critical(state)),
         ("video", video(ui)),
+        ("focus", focus(ui)),
     ];
+    fields.extend(super::key_fields());
     fields.extend(super::settings::fields(ui, settings_shown));
     fields
+}
+
+/// Where the focus of keys and a rotary knob is (keys_ui.rs)
+fn focus(ui: &AppWindow) -> Value {
+    let (zone, target, editing) = crate::keys_ui::focused(ui);
+    record(vec![
+        ("zone", s(zone)),
+        ("target", s(target)),
+        ("editing", Value::Bool(editing)),
+    ])
 }
 
 #[cfg(test)]

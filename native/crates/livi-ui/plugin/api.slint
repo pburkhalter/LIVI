@@ -23,6 +23,11 @@
 //                                "color-slide-done:<i>:<level>", "color-reset", "knob:<i>:<level>",
 //                                "knob-done:<i>:<level>", "knob-reset:<i>", "dialog-press:<row>", "capture-cancel",
 //                                "back", "apply"
+//   Livi.action("focus-targets", "<scope> <id>[:slider][:current] ...")  what the keys and a rotary knob move the
+//                                focus over (docs/plugins.md, "Keys"): for the page at <scope> ("/plugin/<id>",
+//                                "/camera", ...) or for the side bar ("nav", where it takes the place of LIVI's
+//                                navigation), in order; the list replaces the scope's last one, an empty one takes
+//                                it away. See `focus`, `press` and `key` below.
 //
 // Every component LIVI shows from a plugin inherits Window: the interpreter builds only exported windows, and LIVI
 // embeds them into its own.
@@ -262,6 +267,34 @@ export struct LiviValue {
     value: string,
 }
 
+// Where the focus of the keys and a rotary knob is (docs/plugins.md, "Keys"). `zone`: "" nothing has it (after a
+// touch, or before the first key), "nav" the navigation, "page" the page on screen. `target`: in "page" the id the
+// plugin declared (action focus-targets), on the plugin's settings page one of LIVI's settings ("back", "apply",
+// "row:<row>", "tool:<row>:<i>", "dialog:<row>", "pick:<index>", "number-minus", "number", "number-plus", "text",
+// "color-hex", "color-reset", "color-slider:<i>", "level", "knob:<i>"); in "nav" the id from the side bar's list, or,
+// without one, the path of the tab (as in `pages`). `editing`: a slider or a number takes the knob and the arrows.
+export struct LiviFocus {
+    zone: string,
+    target: string,
+    editing: bool,
+}
+
+// A declared target the user activated with a key (`step` 0), or a slider changed by a step (-1 or 1). `serial` grows
+// with each, so a `changed` handler on it sees the same target pressed twice; act on your own ids only.
+export struct LiviPress {
+    target: string,
+    step: int,
+    serial: int,
+}
+
+// A key LIVI has no use for (no binding of LIVI's takes it), by its code, e.g. "Home" or "F13"; `serial` grows with
+// each press. Codes as in LIVI's key bindings.
+export struct LiviKey {
+    code: string,
+    repeat: bool,
+    serial: int,
+}
+
 export global Livi {
     // path of the page on screen, e.g. "/media" or "/plugin/home"
     in property <string> page;
@@ -297,6 +330,10 @@ export global Livi {
     in property <[LiviPick]> setting-picks;
     in property <[LiviKnob]> setting-knobs;
     in property <[LiviSettingRow]> setting-dialog-rows;
+    // keys and a rotary knob (docs/plugins.md, "Keys")
+    in property <LiviFocus> focus;
+    in property <LiviPress> press;
+    in property <LiviKey> key;
     callback action(verb: string, argument: string);
 
     // The value of a key in `other`, "" when there is none, e.g. Livi.value("doors")
