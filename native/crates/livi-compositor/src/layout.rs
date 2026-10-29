@@ -19,7 +19,12 @@ fn target(window: (i32, i32, i32, i32), area: Option<[f64; 4]>) -> (i32, i32, i3
         return window;
     };
     let side = |v: f64| (v.round() as i32).max(1);
-    (wx + ax.round() as i32, wy + ay.round() as i32, side(aw), side(ah))
+    (
+        wx + ax.round() as i32,
+        wy + ay.round() as i32,
+        side(aw),
+        side(ah),
+    )
 }
 
 pub fn apply_video_layout(state: &mut LiviState, idx: usize) {

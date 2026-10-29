@@ -306,7 +306,8 @@ fn handle_line(state: &mut LiviState, line: &str) {
                 return;
             }
             // width or height 0: the whole screen again
-            let area = (nums[2] > 0.0 && nums[3] > 0.0).then(|| [nums[0], nums[1], nums[2], nums[3]]);
+            let area =
+                (nums[2] > 0.0 && nums[3] > 0.0).then(|| [nums[0], nums[1], nums[2], nums[3]]);
             let tag = tag.to_string();
             state.cfg_for_tag(&tag).area = area;
             if let Some(v) = state.find_video_by_tag(&tag) {
