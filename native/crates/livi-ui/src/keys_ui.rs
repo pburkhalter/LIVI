@@ -631,6 +631,11 @@ pub fn wire(ui: &AppWindow, client: &Client) {
                 ui.invoke_wake_nav();
                 EventResult::Propagate
             }
+            // Slint keeps one event hook per window, so the frames are counted from here (main.rs, redraw_requested)
+            winit::event::WindowEvent::RedrawRequested => {
+                crate::redraw_requested(&ui);
+                EventResult::Propagate
+            }
             _ => EventResult::Propagate,
         }
     });
