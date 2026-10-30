@@ -21,6 +21,10 @@ const JPEG_DECODERS: [&str; 3] = ["jpegdec", "avdec_mjpeg", "vtdec"];
 const FLUID_FPS: f64 = 25.0;
 const AIM_HEIGHT: i32 = 720;
 const TOP_HEIGHT: i32 = 1080;
+// A DRM format ("NV12") turns on the direct way: the camera's buffers go to the compositor by dmabuf and the CPU never
+// reads them. For boards whose capture buffers are not cached, where reading them is what limits the frame rate. The
+// camera and the compositor must both take the format, so it is a choice and not a guess.
+const DIRECT_ENV: &str = "LIVI_CAMERA_DMABUF";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Kind {
@@ -150,7 +154,28 @@ fn chain(mode: Option<Mode>, jpeg: Option<&str>, h264: Option<&str>) -> String {
     format!("capsfilter caps=\"{caps}\"{decode} ! videoconvert ! capsfilter caps=video/x-raw")
 }
 
-fn intake(caps: Option<&gst::Caps>, say: &Say) -> String {
+fn direct_chain(mode: Option<Mode>, drm_format: &str) -> Option<String> {
+    let mode = mode.filter(|m| m.kind == Kind::Raw && !drm_format.is_empty())?;
+    let caps = mode.caps().replacen(
+        Kind::Raw.caps_name(),
+        &format!("video/x-raw(memory:DMABuf),format=DMA_DRM,drm-format={drm_format}"),
+        1,
+    );
+    Some(format!("capsfilter caps=\"{caps}\""))
+}
+
+fn intake(src: &gst::Element, caps: Option<&gst::Caps>, say: &Say) -> String {
+    if let Ok(format) = std::env::var(DIRECT_ENV)
+        && src.has_property("io-mode")
+        && let Some(chain) = direct_chain(
+            caps.map(modes).and_then(|m| pick(&m, false, false)),
+            &format,
+        )
+    {
+        src.set_property_from_str("io-mode", "dmabuf");
+        say(&format!("[camera] direct: {chain}"));
+        return chain;
+    }
     let jpeg = JPEG_DECODERS.iter().copied().find(|n| crate::usable(n));
     let h264 = crate::candidates("h264", false)
         .into_iter()
@@ -322,7 +347,7 @@ impl CameraPlayer {
         let sink = crate::url_player::video_sink(&say)?;
         let turn = direction(order.rotation, order.mirror);
         let turned = turn == "identity" || turn_in_sink(&sink, turn);
-        let head = intake(caps.as_ref(), &say);
+        let head = intake(&src, caps.as_ref(), &say);
         let shaping = if turned {
             head
         } else if gst::ElementFactory::find("videoflip").is_some() {
@@ -510,6 +535,20 @@ mod tests {
             chain(None, None, None),
             "capsfilter caps=\"video/x-raw\" ! videoconvert ! capsfilter caps=video/x-raw"
         );
+    }
+
+    #[test]
+    fn the_direct_way_keeps_the_mode_and_is_only_for_raw_cameras() {
+        let raw = mode(Kind::Raw, 1280, 720, 30.0);
+        assert_eq!(
+            direct_chain(Some(raw), "NV12").as_deref(),
+            Some(
+                "capsfilter caps=\"video/x-raw(memory:DMABuf),format=DMA_DRM,drm-format=NV12,width=1280,height=720,framerate=[25/1,1000/1]\""
+            )
+        );
+        assert!(direct_chain(Some(mode(Kind::Jpeg, 1280, 720, 30.0)), "NV12").is_none());
+        assert!(direct_chain(Some(raw), "").is_none());
+        assert!(direct_chain(None, "NV12").is_none());
     }
 
     #[test]
