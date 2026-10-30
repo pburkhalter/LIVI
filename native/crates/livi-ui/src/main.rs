@@ -559,6 +559,18 @@ fn sync_plugin(ui: &AppWindow) {
 }
 
 /// What a plugin component asked for with its `action` callback (plugin/api.slint).
+/// A key of a keyboard a plugin draws, as if it had been typed: the text field with the focus takes it and keeps the focus
+fn type_key(ui: &AppWindow, key: &str) {
+    let text = match key {
+        "backspace" => slint::platform::Key::Backspace.into(),
+        "return" => slint::platform::Key::Return.into(),
+        text => slint::SharedString::from(text),
+    };
+    let window = ui.window();
+    window.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    window.dispatch_event(WindowEvent::KeyReleased { text });
+}
+
 fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
     let Some(ui) = weak.upgrade() else { return };
     match (verb, argument) {
@@ -591,6 +603,7 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
                 println!("[ui] plugin action settings {argument} unknown");
             }
         }
+        ("key", argument) => type_key(&ui, argument),
         ("focus-targets", argument) => match plugins::declare_targets(argument) {
             Ok(()) => keys_ui::targets_changed(&ui),
             Err(e) => println!("[ui] plugin action focus-targets {argument}: {e}"),

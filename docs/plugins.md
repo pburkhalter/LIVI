@@ -125,6 +125,7 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
 | `Livi.action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
 | `Livi.action("page", "next")` | The plugin's next page in tab order (`prev`: the previous one), e.g. after a swipe; nothing at the first or last page. |
 | `Livi.action("camera-area", "<x> <y> <width> <height> [<radius> [<px> <py> <pwidth> <pheight>]]")` | From a `frame` component of the camera page: the card the camera's picture shows in (window pixels, e.g. from `absolute-position`), and where the whole picture goes, fitted and centred (`p…`, the card when left out; larger than the card for a picture with borders, also beyond the window). `""` puts it back on the whole screen. |
+| `Livi.action("key", "<text>")` | A key of a keyboard the plugin draws, typed into the text field with the focus: a letter or other text, or `backspace`, `return`. Slint's `TextInputInterface.text-input-focused` says when to show the keyboard. |
 | `Livi.action("focus-targets", "<scope> <id>[:slider][:current] ...")` | What the keys and a rotary knob move the focus over, for a page or the side bar (Keys, below). |
 
 ### Settings
