@@ -253,6 +253,32 @@ value many times a second (e.g. a level) makes the plugin redraw what reads it a
   size of your screen and `LIVI_UI_PAGE=plugin/<id>` to open a page.
 - `LIVI_UI_TRACE=1` prints how long the steps of the start take, up to the first frames.
 
+## Built in
+
+For a device with one fixed UI, a build can have the plugin built in instead of reading a folder at start:
+
+```sh
+LIVI_PLUGIN_DIR=/path/to/plugin cargo build --release -p livi-ui --no-default-features --features compiled-plugin
+```
+
+The plugin's components become elements of LIVI's window and run as compiled code; the build needs no change to the
+plugin's files and fails on an error in them. The Slint interpreter is not in such a build, `LIVI_UI_PLUGIN` has no
+effect, and there is no way back to LIVI without the plugin at run time. The interpreter stays the default: it starts
+a changed plugin without a build.
+
+What differs for a plugin:
+
+- **One global for all components.** With the interpreter each component has its own copy of every global, `Livi` as
+  well as the plugin's own ones; built in, all components share one. Something a component writes into a global is seen
+  by the others.
+- **A `changed` handler on a value of `Livi` runs when the value changes, not when the component appears.** With the
+  interpreter a new component gets the state right after it is created, so every handler runs once then. Built in, a
+  component created later (a bar coming back, a camera frame) sees the state from the start, and `init` reaches LIVI,
+  so what a component has to tell LIVI when it appears belongs into `init` *and* into `changed`: `init` goes nowhere
+  with the interpreter, and `changed` covers the state arriving after the component.
+- **`Window` in a component is a compatibility matter.** The components still inherit `Window` as above, and Slint warns
+  that a `Window` as a child element may change in a future version.
+
 ## Example
 
 [native/crates/livi-ui/plugin/example](../native/crates/livi-ui/plugin/example) has one page, a bar with a button

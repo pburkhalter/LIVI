@@ -1,0 +1,16 @@
+// The places of a plugin built into the window (see exports.slint): with the interpreter nothing is built in, so they
+// stay empty and the window never shows them.
+export component PluginBackground { }
+export component PluginStart { }
+export component PluginEnd { }
+export component PluginTop { }
+export component PluginBottom { }
+export component PluginOverlay { }
+export component PluginNoPhone { }
+export component PluginNoCamera { }
+export component PluginCameraFrame { }
+
+export component PluginPages {
+    in property <bool> shown;
+    in property <string> active;
+}

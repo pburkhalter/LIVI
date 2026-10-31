@@ -1,0 +1,6 @@
+// What the window takes from "@plugin" for a UI plugin (docs/plugins.md). build.rs picks this folder when the Slint
+// interpreter loads the plugin at start; with the feature compiled-plugin, build_plugin.rs writes one of its own with
+// the same files. This one has no plugin: the window embeds it into its ComponentContainers.
+export global PluginBuild {
+    out property <bool> built-in: false;
+}

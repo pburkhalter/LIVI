@@ -1,34 +1,42 @@
 //! UI plugins (docs/plugins.md): a folder with `plugin.json` and `.slint` files that adds pages, may replace the
-//! navigation with its own bars and brings a start picture. The Slint interpreter compiles it at start (plugin.rs);
-//! ComponentContainers in the window embed its components. They read the state from the global `Livi` (state.rs,
-//! plugin/api.slint) and report the user's wishes through its callback `action`.
+//! navigation with its own bars and brings a start picture. The Slint interpreter compiles it at start
+//! (interpreted.rs), or a build has one built in (compiled.rs, feature compiled-plugin). Its components read the state
+//! from the global `Livi` (state.rs, plugin/api.slint) and report the user's wishes through its callback `action`.
 
+#[cfg(all(feature = "compiled-plugin", feature = "interpreter"))]
+compile_error!("compiled-plugin replaces interpreter: build with --no-default-features");
+#[cfg(not(any(feature = "compiled-plugin", feature = "interpreter")))]
+compile_error!("LIVI needs one of the features interpreter and compiled-plugin");
+
+#[cfg(feature = "compiled-plugin")]
+#[path = "compiled.rs"]
+mod backend;
+#[cfg(not(feature = "compiled-plugin"))]
+#[path = "interpreted.rs"]
+mod backend;
 mod plugin;
 mod settings;
 mod state;
+#[cfg(feature = "compiled-plugin")]
+mod value;
 
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 use livi_ui_model::focus::{self, Targets};
 use serde_json::Value as Json;
-use slint::{ComponentFactory, ModelRc, VecModel};
-use slint_interpreter::{ComponentDefinition, ComponentHandle, ComponentInstance, Value};
+use slint::{ModelRc, VecModel};
 
 use crate::{AppWindow, Page, PhoneState, PluginView, TabData};
+use backend::Value;
 use plugin::Plugin;
 
 type ActionHandler = Rc<dyn Fn(&str, &str)>;
 type EmitHandler = Rc<dyn Fn(&str, &str, &str)>;
 
-/// The global in plugin/api.slint that holds the state and the callback `action`
-const GLOBAL: &str = "Livi";
-
 thread_local! {
     static PLUGIN: RefCell<Option<Rc<Plugin>>> = const { RefCell::new(None) };
-    // components on screen, to update their state
-    static LIVE: RefCell<Vec<slint::Weak<ComponentInstance>>> = const { RefCell::new(Vec::new()) };
     // the properties of the global Livi as last handed out
     static STATE: RefCell<Vec<(&'static str, Value)>> = const { RefCell::new(Vec::new()) };
     static ACTION: RefCell<Option<ActionHandler>> = const { RefCell::new(None) };
@@ -41,49 +49,15 @@ thread_local! {
     static KEY: RefCell<(String, bool, i32)> = const { RefCell::new((String::new(), false, 0)) };
 }
 
-/// Folder of the plugin: `LIVI_UI_PLUGIN`, otherwise `ui-plugin` in LIVI's user data folder if it holds a plugin.json.
-fn folder() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("LIVI_UI_PLUGIN").filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(dir));
-    }
-    let dir = user_data()?.join("ui-plugin");
-    dir.join("plugin.json").is_file().then_some(dir)
-}
-
-#[cfg(target_os = "macos")]
-fn user_data() -> Option<PathBuf> {
-    Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/LIVI"))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn user_data() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| Some(PathBuf::from(std::env::var_os("HOME")?).join(".config")))?;
-    Some(base.join("LIVI"))
-}
-
 /// `LIVI --check-plugin <folder>`: compiles a plugin without starting LIVI and reports what is wrong with it.
 pub fn check(dir: &Path) -> bool {
-    match plugin::compile(dir) {
-        Ok(p) => {
-            println!("[ui] plugin {} is fine ({} ms)", p.name, p.compiled_ms);
-            true
-        }
-        Err(e) => {
-            eprintln!("[ui] plugin {}: {e}", dir.display());
-            false
-        }
-    }
+    backend::check(dir)
 }
 
-/// Reads and compiles the plugin; without one, or if it does not compile, LIVI runs as it is.
+/// Gets the plugin ready; without one, or if it does not compile, LIVI runs as it is.
 pub fn load() {
-    let Some(dir) = folder() else { return };
-    match plugin::compile(&dir) {
-        Ok(p) => PLUGIN.with_borrow_mut(|slot| *slot = Some(Rc::new(p))),
-        Err(e) => eprintln!("[ui] plugin {}: {e}", dir.display()),
+    if let Some(p) = backend::load() {
+        PLUGIN.with_borrow_mut(|slot| *slot = Some(Rc::new(p)));
     }
 }
 
@@ -163,16 +137,6 @@ fn key_fields() -> [(&'static str, Value); 2] {
             KEY.with_borrow(|(code, repeat, n)| key_value(code, *repeat, *n)),
         ),
     ]
-}
-
-/// What a component created now gets of `press` and `key`: the serial without the target or the key, so that a
-/// `changed` handler that sees the serial arrive does not take a press or key from before it as new
-fn without_past(name: &str, value: &Value) -> Value {
-    match name {
-        "press" => PRESS.with_borrow(|(_, _, n)| press_value("", 0, *n)),
-        "key" => KEY.with_borrow(|(_, _, n)| key_value("", false, *n)),
-        _ => value.clone(),
-    }
 }
 
 /// Path of the page the plugin wants at start, instead of LIVI's start page.
@@ -256,51 +220,20 @@ pub fn current_path(ui: &AppWindow) -> String {
     state::tab_path(ui.get_page(), &ui.get_plugin_page_id())
 }
 
-fn factory(component: ComponentDefinition) -> ComponentFactory {
-    ComponentFactory::new(move |ctx| {
-        let instance = component
-            .create_embedded(ctx)
-            .map_err(|e| eprintln!("[ui] plugin component {}: {e}", component.name()))
-            .ok()?;
-        STATE.with_borrow(|state| {
-            for (name, value) in state {
-                let _ = instance.set_global_property(GLOBAL, name, without_past(name, value));
-            }
-        });
-        let _ = instance.set_global_callback(GLOBAL, "action", |args| {
-            let arg = |i: usize| match args.get(i) {
-                Some(Value::String(s)) => s.to_string(),
-                _ => String::new(),
-            };
-            let (verb, argument) = (arg(0), arg(1));
-            // after the event: the action may replace the component that sent it
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(handle) = ACTION.with_borrow(Clone::clone) {
-                    handle(&verb, &argument);
-                }
-            });
-            Value::Void
-        });
-        let _ = instance.set_global_callback(GLOBAL, "emit", |args| {
-            let arg = |i: usize| match args.get(i) {
-                Some(Value::String(s)) => s.to_string(),
-                _ => String::new(),
-            };
-            if let Some(handle) = EMIT.with_borrow(Clone::clone) {
-                handle(&arg(0), &arg(1), &arg(2));
-            }
-            Value::Void
-        });
-        let _ = instance.set_global_callback(GLOBAL, "find", |args| {
-            match (args.first(), args.get(1)) {
-                (Some(Value::Model(values)), Some(Value::String(key))) => state::find(values, key),
-                _ => Value::String(Default::default()),
-            }
-        });
-        LIVE.with_borrow_mut(|live| live.push(instance.as_weak()));
-        crate::debug::trace(&format!("plugin component {} created", component.name()));
-        Some(instance)
-    })
+/// `Livi.action`, after the event: the action may replace the component that sent it
+fn action(verb: String, argument: String) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(handle) = ACTION.with_borrow(Clone::clone) {
+            handle(&verb, &argument);
+        }
+    });
+}
+
+/// `Livi.emit`
+fn emit(topic: &str, name: &str, value: &str) {
+    if let Some(handle) = EMIT.with_borrow(Clone::clone) {
+        handle(topic, name, value);
+    }
 }
 
 /// Puts the plugin's start picture and bars into the window and keeps the handlers for its actions and for the events
@@ -313,12 +246,13 @@ pub fn install(
     let Some(p) = plugin() else { return };
     ACTION.with_borrow_mut(|a| *a = Some(Rc::new(on_action)));
     EMIT.with_borrow_mut(|e| *e = Some(Rc::new(on_emit)));
+    backend::connect(ui);
     if let Some(splash) = &p.splash {
         ui.set_intro_image(splash.clone());
         ui.set_intro_done(false);
     }
     for (slot, component) in &p.shell {
-        let f = factory(component.clone());
+        let f = backend::factory(component.clone());
         match *slot {
             "background" => {
                 ui.set_plugin_background(f);
@@ -348,7 +282,7 @@ pub fn install(
         }
     }
     for (page, component) in &p.empty {
-        let f = factory(component.clone());
+        let f = backend::factory(component.clone());
         match *page {
             "projection" => {
                 ui.set_plugin_no_phone(f);
@@ -362,18 +296,20 @@ pub fn install(
         }
     }
     if let Some(component) = p.frame.get("camera") {
-        ui.set_plugin_camera_frame(factory(component.clone()));
+        ui.set_plugin_camera_frame(backend::factory(component.clone()));
         ui.set_has_plugin_camera_frame(true);
     }
-    let views: Vec<PluginView> = p
-        .pages
-        .iter()
-        .map(|page| PluginView {
-            id: page.id.as_str().into(),
-            factory: factory(page.component.clone()),
-        })
-        .collect();
-    ui.set_plugin_pages(ModelRc::new(VecModel::from(views)));
+    if backend::EMBEDS {
+        let views: Vec<PluginView> = p
+            .pages
+            .iter()
+            .map(|page| PluginView {
+                id: page.id.as_str().into(),
+                factory: backend::factory(page.component.clone()),
+            })
+            .collect();
+        ui.set_plugin_pages(ModelRc::new(VecModel::from(views)));
+    }
     println!("[ui] plugin {} installed", p.name);
 }
 
@@ -398,51 +334,14 @@ pub fn sync(ui: &AppWindow, core_state: &Json) {
         *last = fields;
         changed
     });
-    if changed.is_empty() {
-        return;
+    if !changed.is_empty() {
+        backend::publish(ui, &changed);
     }
-    LIVE.with_borrow_mut(|live| {
-        live.retain(|w| match w.upgrade() {
-            Some(instance) => {
-                for (name, value) in &changed {
-                    let _ = instance.set_global_property(GLOBAL, name, value.clone());
-                }
-                true
-            }
-            None => false,
-        })
-    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn field(v: &Value, name: &str) -> Value {
-        match v {
-            Value::Struct(s) => s.get_field(name).cloned().expect(name),
-            _ => panic!("not a struct"),
-        }
-    }
-
-    #[test]
-    fn a_component_created_later_takes_no_press_or_key_from_before_as_new() {
-        press("volume", 1);
-        press("volume", 0);
-        let [(_, now), _] = key_fields();
-        assert_eq!(field(&now, "target"), state::s("volume"));
-        assert_eq!(field(&now, "serial"), Value::Number(2.0));
-        let fresh = without_past("press", &now);
-        assert_eq!(field(&fresh, "target"), state::s(""));
-        assert_eq!(field(&fresh, "serial"), Value::Number(2.0));
-        unused_key("F13", true);
-        let [_, (_, key)] = key_fields();
-        assert_eq!(field(&key, "code"), state::s("F13"));
-        assert_eq!(field(&key, "repeat"), Value::Bool(true));
-        assert_eq!(field(&without_past("key", &key), "code"), state::s(""));
-        let clock = state::s("12:00");
-        assert_eq!(without_past("clock", &clock), clock);
-    }
 
     #[test]
     fn declared_targets_are_found_by_page_and_for_the_bar() {

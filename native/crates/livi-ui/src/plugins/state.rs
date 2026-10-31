@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use serde_json::Value as Json;
 use slint::{ComponentHandle as _, Image, Model, ModelRc, SharedString, VecModel};
-use slint_interpreter::{Struct, Value};
 
+use super::backend::{Struct, Value};
 use super::plugin::Plugin;
 use crate::settings_ui::tr;
 use crate::{AppWindow, Page, Theme};
@@ -404,6 +404,7 @@ fn extensions(state: &Json) -> Value {
 }
 
 /// The value of `key` among the `other` values (LiviValue rows), "" when there is none: `Livi.value(key)`
+#[cfg_attr(feature = "compiled-plugin", allow(dead_code))]
 pub fn find(values: &ModelRc<Value>, key: &str) -> Value {
     let field = |row: &Value, name: &str| match row {
         Value::Struct(s) => s.get_field(name).cloned(),

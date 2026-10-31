@@ -32,7 +32,7 @@ slint = { version = "1.18.1", default-features = false, features = [
 ] }
 
 # UI plugins (src/plugins/): "internal" for create_embedded, so the version is pinned to the one of slint
-slint-interpreter = { version = "=1.18.1", default-features = false, features = [
+slint-interpreter = { version = "=1.18.1", default-features = false, optional = true, features = [
     "compat-1-2",
     "internal",
     "backend-winit",
@@ -45,10 +45,17 @@ slint-interpreter = { version = "=1.18.1", default-features = false, features = 
 livi-video-view.workspace = true
 
 [features]
+default = ["interpreter"]
+# UI plugins are folders LIVI reads at start, compiled by the Slint interpreter (docs/plugins.md)
+interpreter = ["dep:slint-interpreter"]
+# One UI plugin is built in: the folder in LIVI_PLUGIN_DIR at build time becomes part of the window, without the
+# interpreter (docs/plugins.md, "Built in"). Instead of `interpreter`: --no-default-features --features compiled-plugin
+compiled-plugin = ["dep:serde_json"]
 # Skia instead of FemtoVG for drawing; Slint picks Skia when both are built in (SLINT_BACKEND=winit-femtovg goes back).
 # Measured on a PowerVR GE8300 (Allwinner A133) at 2400x900: about a quarter less GPU time a frame. Makes the binary
 # about 12 MB larger, and skia-bindings downloads Skia's prebuilt libraries while building.
 skia = ["slint/renderer-skia-opengl"]
 
 [build-dependencies]
+serde_json = { workspace = true, optional = true }
 slint-build = "1.18.1"

@@ -5,8 +5,8 @@
 //! page comes back once the screen is one it draws.
 
 use slint::{Brush, Color, ComponentHandle as _, Model};
-use slint_interpreter::Value;
 
+use super::backend::Value;
 use super::state::{model, record, s};
 use crate::{AppWindow, RowData, RowKind, ScreenKind, SettingsState};
 

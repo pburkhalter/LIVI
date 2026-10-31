@@ -1,20 +1,15 @@
-//! A plugin on disk: its manifest (`plugin.json`) and its `.slint` files, compiled with the Slint interpreter.
+//! A plugin as LIVI knows it: what its manifest (`plugin.json`) says, with its components. Where the components come
+//! from is up to the backend: the Slint interpreter at start (interpreted.rs) or the build (compiled.rs).
 
 use std::collections::HashMap;
-use std::future::Future;
-use std::path::{Path, PathBuf};
-use std::pin::pin;
-use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use serde_json::Value as Json;
 use slint::Image;
-use slint_interpreter::{Compiler, ComponentDefinition};
+
+use super::backend::Component;
 
 pub const API: i32 = 1;
-const API_SOURCE: &str = include_str!("../../plugin/api.slint");
-// Virtual folder for "@livi/api.slint"; the file loader answers for it
-const API_DIR: &str = "/livi-plugin-api";
 
 /// The places around the pages a plugin can fill
 pub const SLOTS: [&str; 6] = ["background", "start", "end", "top", "bottom", "overlay"];
@@ -28,7 +23,7 @@ pub struct PluginPage {
     pub id: String,
     pub title: String,
     pub icon: Image,
-    pub component: ComponentDefinition,
+    pub component: Component,
     /// among the tabs (and so in the order for swiping); a page only opened from the plugin's own buttons is not
     pub tab: bool,
     /// the kinds of LIVI's settings screens the page draws (settings.rs); empty: not a settings page
@@ -44,11 +39,11 @@ pub struct Plugin {
     pub fullscreen: Vec<String>,
     /// LIVI's pages the plugin replaces: not among the tabs, still reachable by path, e.g. "/media"
     pub hide: Vec<String>,
-    pub shell: HashMap<&'static str, ComponentDefinition>,
+    pub shell: HashMap<&'static str, Component>,
     /// what the plugin shows on LIVI's pages while they have nothing to show, by page: "projection", "camera"
-    pub empty: HashMap<&'static str, ComponentDefinition>,
+    pub empty: HashMap<&'static str, Component>,
     /// what the plugin draws around LIVI's picture while it shows, by page: "camera"
-    pub frame: HashMap<&'static str, ComponentDefinition>,
+    pub frame: HashMap<&'static str, Component>,
     pub pages: Vec<PluginPage>,
 }
 
@@ -58,71 +53,32 @@ impl Plugin {
     }
 }
 
-/// The compiler's futures only wait for our own file loader, which answers at once: polling them is enough.
-fn block_on<F: Future>(fut: F) -> F::Output {
-    let mut fut = pin!(fut);
-    let mut cx = Context::from_waker(Waker::noop());
-    loop {
-        if let Poll::Ready(out) = fut.as_mut().poll(&mut cx) {
-            return out;
-        }
-    }
-}
-
-fn text(v: &Json, key: &str) -> Option<String> {
+pub fn text(v: &Json, key: &str) -> Option<String> {
     v[key]
         .as_str()
         .filter(|s| !s.is_empty())
         .map(str::to_string)
 }
 
-/// Reads the manifest in `dir` and compiles the plugin; the error says what is wrong with it.
-pub fn compile(dir: &Path) -> Result<Plugin, String> {
-    let started = Instant::now();
-    let manifest: Json = serde_json::from_str(
-        &std::fs::read_to_string(dir.join("plugin.json"))
-            .map_err(|e| format!("plugin.json: {e}"))?,
-    )
-    .map_err(|e| format!("plugin.json: {e}"))?;
+/// Reads a manifest; the error says what is wrong with it.
+pub fn manifest(text: &str) -> Result<Json, String> {
+    let manifest: Json = serde_json::from_str(text).map_err(|e| format!("plugin.json: {e}"))?;
     let api = manifest["api"].as_i64().unwrap_or(0);
     if api != i64::from(API) {
         return Err(format!("written for plugin API {api}, LIVI has {API}"));
     }
-    let file = text(&manifest, "file").ok_or("plugin.json names no \"file\"")?;
-    let name = text(&manifest, "name").unwrap_or_else(|| file.clone());
+    Ok(manifest)
+}
 
-    let mut compiler = Compiler::default();
-    compiler.set_library_paths(HashMap::from([(
-        "livi".to_string(),
-        PathBuf::from(API_DIR),
-    )]));
-    compiler.set_file_loader(|path: &Path| {
-        let ours = path == Path::new(API_DIR).join("api.slint");
-        Box::pin(async move { ours.then(|| Ok(API_SOURCE.to_string())) })
-    });
-    let result = block_on(compiler.build_from_path(dir.join(&file)));
-    for d in result.diagnostics() {
-        eprintln!("[ui] plugin {name}: {d}");
-    }
-    if result.has_errors() {
-        return Err("does not compile".into());
-    }
-    // LIVI hands the state over through the global Livi; the interpreter only reaches a global the main file exports
-    if !result
-        .components()
-        .next()
-        .is_some_and(|c| c.globals().any(|g| g == super::GLOBAL))
-    {
-        return Err(format!(
-            "{file} does not export the global Livi; add: export {{ Livi }} from \"@livi/api.slint\";"
-        ));
-    }
-    let component = |name: &str| {
-        result
-            .component(name)
-            .ok_or_else(|| format!("{file} exports no window component {name}"))
-    };
-
+/// The plugin of a manifest, with the components `component` gives for their names and the pictures `image` gives for
+/// their files
+pub fn assemble(
+    manifest: &Json,
+    name: String,
+    started: Instant,
+    component: impl Fn(&str) -> Result<Component, String>,
+    image: impl Fn(&str) -> Option<Image>,
+) -> Result<Plugin, String> {
     let mut shell = HashMap::new();
     for slot in SLOTS {
         if let Some(c) = manifest["shell"][slot].as_str() {
@@ -146,9 +102,7 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
         let id = text(p, "id").ok_or("a page without \"id\"")?;
         let component =
             component(&text(p, "component").ok_or(format!("page {id} names no \"component\""))?)?;
-        let icon = text(p, "icon")
-            .and_then(|i| Image::load_from_path(&dir.join(i)).ok())
-            .unwrap_or_default();
+        let icon = text(p, "icon").and_then(|i| image(&i)).unwrap_or_default();
         pages.push(PluginPage {
             title: text(p, "title").unwrap_or_else(|| id.clone()),
             tab: p["tab"].as_bool().unwrap_or(true),
@@ -163,8 +117,8 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
             component,
         });
     }
-    let start = text(&manifest, "start").filter(|s| pages.iter().any(|p| p.id == *s));
-    let splash = text(&manifest, "splash").and_then(|f| Image::load_from_path(&dir.join(f)).ok());
+    let start = text(manifest, "start").filter(|s| pages.iter().any(|p| p.id == *s));
+    let splash = text(manifest, "splash").and_then(|f| image(&f));
     let paths = |key: &str| -> Vec<String> {
         manifest[key]
             .as_array()
@@ -192,100 +146,4 @@ pub fn compile(dir: &Path) -> Result<Plugin, String> {
         frame,
         pages,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn example() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin/example")
-    }
-
-    #[test]
-    fn the_example_compiles_with_its_pages_and_bars() {
-        let p = compile(&example()).expect("example plugin");
-        assert_eq!(p.name, "Example");
-        assert_eq!(p.start.as_deref(), Some("hello"));
-        assert!(p.page("hello").is_some());
-        assert!(p.shell.contains_key("bottom"));
-        assert_eq!(p.fullscreen, vec!["/camera".to_string()]);
-        assert_eq!(p.hide, vec!["/telemetry".to_string()]);
-        let settings = p.page("settings").expect("settings page");
-        assert_eq!(settings.settings, vec!["list".to_string()]);
-        assert!(!settings.tab);
-    }
-
-    #[test]
-    fn a_manifest_for_another_api_is_refused() {
-        let dir = std::env::temp_dir().join(format!("livi-plugin-api-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("plugin.json"),
-            r#"{ "api": 99, "file": "x.slint" }"#,
-        )
-        .unwrap();
-        let err = compile(&dir).err().expect("refused");
-        assert!(err.contains("plugin API 99"), "{err}");
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_page_needs_a_component_the_file_exports() {
-        let dir = std::env::temp_dir().join(format!("livi-plugin-page-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("plugin.json"),
-            r#"{ "api": 1, "file": "x.slint", "pages": [{ "id": "a", "component": "Missing" }] }"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("x.slint"),
-            "export { Livi } from \"@livi/api.slint\";\nexport component Other inherits Window { in property <int> n; }",
-        )
-        .unwrap();
-        let err = compile(&dir).err().expect("refused");
-        assert!(err.contains("Missing"), "{err}");
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_page_can_stay_out_of_the_tabs() {
-        let dir = std::env::temp_dir().join(format!("livi-plugin-tab-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("plugin.json"),
-            r#"{ "api": 1, "file": "x.slint", "pages": [
-                { "id": "a", "component": "Page" }, { "id": "b", "component": "Page", "tab": false } ] }"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("x.slint"),
-            "export { Livi } from \"@livi/api.slint\";\nexport component Page inherits Window { }",
-        )
-        .unwrap();
-        let p = compile(&dir).expect("compiles");
-        assert!(p.page("a").is_some_and(|a| a.tab));
-        assert!(p.page("b").is_some_and(|b| !b.tab));
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_plugin_must_export_the_global_with_the_state() {
-        let dir = std::env::temp_dir().join(format!("livi-plugin-global-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("plugin.json"),
-            r#"{ "api": 1, "file": "x.slint" }"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("x.slint"),
-            "import { Livi } from \"@livi/api.slint\";\nexport component Page inherits Window { Text { text: Livi.clock; } }",
-        )
-        .unwrap();
-        let err = compile(&dir).err().expect("refused");
-        assert!(err.contains("export { Livi }"), "{err}");
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
 }
