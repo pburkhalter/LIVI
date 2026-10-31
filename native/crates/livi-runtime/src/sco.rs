@@ -179,16 +179,35 @@ fn bridge(link: &livi_hfp::sco::Link, mic: &UnixListener, sink: &ScoSink) {
     }
 }
 
+/// The address as BlueZ writes it, from the bytes of a socket address (least significant first).
+fn mac(peer: &[u8; 6]) -> String {
+    peer.iter()
+        .rev()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+/// `allowed` tells by address whether a device may open a voice link. On a board that is itself a telephone for
+/// another device (hands-free gateway), that device opens voice links too, and they are not calls of a phone.
 #[cfg(target_os = "linux")]
-pub fn serve(events: crate::livi_sock::Broadcaster, sink: ScoSink) {
-    std::thread::spawn(move || linux::run(events, sink));
+pub fn serve(
+    events: crate::livi_sock::Broadcaster,
+    sink: ScoSink,
+    allowed: impl Fn(&str) -> bool + Send + 'static,
+) {
+    std::thread::spawn(move || linux::run(events, sink, allowed));
 }
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::{ScoSink, mic_socket};
+    use super::{ScoSink, mac, mic_socket};
 
-    pub fn run(events: crate::livi_sock::Broadcaster, sink: ScoSink) {
+    pub fn run(
+        events: crate::livi_sock::Broadcaster,
+        sink: ScoSink,
+        allowed: impl Fn(&str) -> bool,
+    ) {
         let mic = match mic_socket() {
             Ok(l) => l,
             Err(e) => {
@@ -206,8 +225,12 @@ mod linux {
         println!("[sco] listening (SCO + {})", super::MIC_SOCK);
 
         loop {
-            let link = match livi_hfp::sco::accept(&listen) {
+            let link = match livi_hfp::sco::accept(&listen, &|peer| allowed(&mac(peer))) {
                 Ok(link) => link,
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    println!("[sco] refused: no hands-free link with that device");
+                    continue;
+                }
                 Err(e) => {
                     eprintln!("[sco] accept failed: {e}");
                     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -216,5 +239,18 @@ mod linux {
             };
             super::call(&events, &link, &mic, &sink);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mac;
+
+    #[test]
+    fn the_address_reads_as_in_bluez() {
+        assert_eq!(
+            mac(&[0x0c, 0xca, 0x21, 0xb2, 0x56, 0xa0]),
+            "A0:56:B2:21:CA:0C"
+        );
     }
 }

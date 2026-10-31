@@ -458,10 +458,12 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 
         let hfp = livi_runtime::hfp::Hfp::default();
         hfp.set_events(aa_events.clone());
-        if let Err(e) = bt::start_hfp(&conn, &adapter, hfp).await {
+        if let Err(e) = bt::start_hfp(&conn, &adapter, hfp.clone()).await {
             eprintln!("[hfp] profile registration failed: {e}");
         }
-        livi_runtime::sco::serve(aa_events.clone(), sco_sink.clone());
+        livi_runtime::sco::serve(aa_events.clone(), sco_sink.clone(), move |mac| {
+            hfp.linked(mac)
+        });
 
         if wireless.android_auto {
             let aa_port = env_or("LIVI_PORT", livi_aa::consts::TCP_PORT);
