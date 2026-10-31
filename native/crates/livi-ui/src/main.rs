@@ -552,6 +552,29 @@ pub(crate) fn active_tab(ui: &AppWindow) -> Option<usize> {
         .position(|t| t.page == page && (page != Page::Plugin || t.plugin == id))
 }
 
+/// Bench: moves the recorded state of LIVI_UI_STATE like a car on the road, every LIVI_UI_BENCH_TICK milliseconds
+fn bench_ticks(ui: &AppWindow) -> Option<Timer> {
+    let ms = std::env::var("LIVI_UI_BENCH_TICK").ok()?.parse().ok()?;
+    let timer = Timer::default();
+    let weak = ui.as_weak();
+    let mut n = 0u32;
+    timer.start(TimerMode::Repeated, Duration::from_millis(ms), move || {
+        let Some(ui) = weak.upgrade() else { return };
+        n = n.wrapping_add(1);
+        CLIENT.with_borrow(|c| {
+            if let Some(c) = c {
+                let mut state = c.state();
+                let t = &mut state["telemetry"];
+                t["speedKph"] = serde_json::json!(60 + n % 40);
+                t["rpm"] = serde_json::json!(1500 + (n % 100) * 20);
+                t["can"]["bench"] = serde_json::json!(n);
+            }
+        });
+        sync_plugin(&ui);
+    });
+    Some(timer)
+}
+
 fn sync_plugin(ui: &AppWindow) {
     CLIENT.with_borrow(|c| {
         if let Some(c) = c {
@@ -839,13 +862,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = &fixture {
         let state: Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
         *client.state() = state.clone();
-        Follow::starting_at(plugins::start_path())
-            .changed(None, &state)
-            .into_iter()
-            .for_each(|u| apply(&ui, u));
-        sync_plugin(&ui);
-        STATE_READY.set(true);
+        let deliver = {
+            let weak = weak.clone();
+            move || {
+                let Some(ui) = weak.upgrade() else { return };
+                Follow::starting_at(plugins::start_path())
+                    .changed(None, &state)
+                    .into_iter()
+                    .for_each(|u| apply(&ui, u));
+                sync_plugin(&ui);
+                STATE_READY.set(true);
+            }
+        };
+        // bench: the state comes after the window, as it does from the core
+        if std::env::var_os("LIVI_UI_BENCH_LATE").is_some() {
+            Timer::single_shot(Duration::from_millis(500), deliver);
+        } else {
+            deliver();
+        }
     }
+    let _bench = bench_ticks(&ui);
 
     let clock_timer = Timer::default();
     clock_timer.start(TimerMode::Repeated, Duration::from_secs(1), {
