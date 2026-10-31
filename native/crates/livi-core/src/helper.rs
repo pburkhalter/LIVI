@@ -222,7 +222,9 @@ impl HelperSupervisor {
 fn spawn(spec: &Spec) -> io::Result<Child> {
     let mut cmd = if spec.use_sudo {
         let mut c = Command::new("sudo");
-        c.arg("-n").arg("-E").arg(&spec.bin);
+        // no -E: the rule keeps what the helper needs (99-LIVI-helper.sudoers.template). SETENV would let the user
+        // set LD_PRELOAD for a program that runs as root
+        c.arg("-n").arg(&spec.bin);
         c
     } else {
         Command::new(&spec.bin)
