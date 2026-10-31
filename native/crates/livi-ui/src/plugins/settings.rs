@@ -276,8 +276,8 @@ mod tests {
         assert_eq!(parse("number:-2.5"), Some(Wish::Number(-2.5)));
         assert_eq!(parse("back"), Some(Wish::Back));
         assert_eq!(
-            parse("text:Audi A5: Sportback"),
-            Some(Wish::Text("Audi A5: Sportback".into()))
+            parse("text:Example: two words"),
+            Some(Wish::Text("Example: two words".into()))
         );
         assert_eq!(parse("text:"), Some(Wish::Text(String::new())));
         assert_eq!(parse("color-slide:2:0.5"), Some(Wish::ColorSlide(2, 0.5)));

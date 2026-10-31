@@ -626,7 +626,7 @@ mod tests {
     fn notices_come_newest_first_with_their_urgency() {
         let now = crate::clock::local_now();
         let state = json!({ "notices": [
-            { "id": 7, "app": "t100-updates", "summary": "3 updates", "body": "", "urgency": 2, "time": 0 },
+            { "id": 7, "app": "system-updates", "summary": "3 updates", "body": "", "urgency": 2, "time": 0 },
             { "id": 9, "app": "radio", "summary": "on air", "body": "x", "urgency": 0, "time": 0 },
         ] });
         let Value::Model(rows) = notices(&state, &now) else {
