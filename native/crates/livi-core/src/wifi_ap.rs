@@ -127,18 +127,29 @@ async fn reconcile(p: &Privileged, cfg: &Config) {
         p.write_marker(MARKER, &u.rule);
     }
     let sc = systemctl();
-    let enable = if cfg.wifi_dedicated_interface {
-        "enable"
-    } else {
-        "disable"
-    };
-    sudo(&[&sc, enable, SERVICE]).await;
+    // only on a change: systemctl enable reloads the manager, which stalls PID 1 for seconds on a small board
+    if is_enabled().await != cfg.wifi_dedicated_interface {
+        let enable = if cfg.wifi_dedicated_interface {
+            "enable"
+        } else {
+            "disable"
+        };
+        sudo(&[&sc, enable, SERVICE]).await;
+    }
     let start = if runs_older_helper().await {
         "restart"
     } else {
         "start"
     };
     sudo(&[&sc, start, SERVICE]).await;
+}
+
+async fn is_enabled() -> bool {
+    Command::new(systemctl())
+        .args(["is-enabled", "--quiet", SERVICE])
+        .status()
+        .await
+        .is_ok_and(|s| s.success())
 }
 
 async fn runs_older_helper() -> bool {
