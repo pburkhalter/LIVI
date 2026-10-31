@@ -94,6 +94,12 @@ pub enum Action {
     SetCameraArea {
         area: Option<[i32; 4]>,
     },
+    /// Shows a program beside LIVI (app_id livi-embed:<name>) in a rectangle of the main window: x, y, width, height in
+    /// the window's pixels (state embeds); None hides it again
+    SetEmbedArea {
+        name: String,
+        area: Option<[i32; 4]>,
+    },
     /// Companion channel: the client's state under `topic` (state extensions), an object that replaces the one
     /// before; null takes it away, as does the client going
     SetExtension {

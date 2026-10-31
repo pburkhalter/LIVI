@@ -6,6 +6,7 @@
 mod plugin;
 mod settings;
 mod state;
+pub use state::embed_card;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};

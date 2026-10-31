@@ -76,6 +76,7 @@ impl Rig {
             links: Default::default(),
             notices: Vec::new(),
             video: Default::default(),
+            embeds: Default::default(),
             config: defaults(),
         }));
         let (tx, cmds) = mpsc::unbounded_channel();

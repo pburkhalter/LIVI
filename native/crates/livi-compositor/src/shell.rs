@@ -116,6 +116,26 @@ fn classify_on_initial_commit(state: &mut LiviState, idx: usize) {
             (attrs.app_id.clone(), attrs.title.clone())
         });
 
+    if let Some(name) = embed_name(app_id.as_deref()).map(str::to_string) {
+        let t = &mut state.toplevels[idx];
+        t.kind = Kind::Video;
+        t.embed = true;
+        t.tag = name.clone();
+        t.screen_idx = 0;
+        t.visible = false;
+        drop_stale_planes(state, idx, &name);
+        stack_video(state, idx);
+        log::info!("app_id={app_id:?} title={title:?} -> app '{name}' in the window");
+        // what the UI asked for before the program came
+        if let Some(cfg) = state.video_cfgs.iter().find(|c| c.tag == name).cloned() {
+            state.toplevels[idx].area = cfg.area;
+            state.toplevels[idx].visible = cfg.has_visible && cfg.visible;
+        }
+        crate::layout::apply_video_layout(state, idx);
+        crate::host::damage_all(state);
+        return;
+    }
+
     let is_video = app_id.as_deref() == Some("livi-video");
     if is_video {
         state.toplevels[idx].kind = Kind::Video;
@@ -186,6 +206,17 @@ fn main_ui_surface(state: &LiviState) -> Option<WlSurface> {
         .iter()
         .find(|t| t.kind == Kind::Ui && t.screen_idx == 0)
         .map(|t| t.toplevel.wl_surface().clone())
+}
+
+/// The name in an app_id livi-embed:<name>, a program that shows in LIVI's window under that name, without a claim. The
+/// names of LIVI's own pictures stay LIVI's: such a program would take their place.
+fn embed_name(app_id: Option<&str>) -> Option<&str> {
+    app_id?.strip_prefix("livi-embed:").filter(|name| {
+        !name.is_empty()
+            && name.len() <= 64
+            && !matches!(*name, "main" | "video" | "camera")
+            && !name.starts_with("cluster-")
+    })
 }
 
 fn video_rank(tag: &str) -> u8 {
@@ -277,6 +308,7 @@ impl XdgShellHandler for LiviState {
         self.toplevels.push(TopLevel {
             toplevel: surface,
             kind: Kind::Pending,
+            embed: false,
             screen_idx: 0,
             tag: String::new(),
             awaiting_claim: false,
@@ -510,6 +542,27 @@ smithay::delegate_output!(LiviState);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_app_id_names_an_app_in_the_window() {
+        assert_eq!(embed_name(Some("livi-embed:map")), Some("map"));
+        assert_eq!(embed_name(Some("livi-video")), None);
+        assert_eq!(embed_name(None), None);
+        assert_eq!(embed_name(Some("livi-embed:")), None);
+    }
+
+    #[test]
+    fn an_app_cannot_take_the_place_of_a_picture_of_livi() {
+        for tag in ["main", "video", "camera", "cluster-main"] {
+            assert_eq!(embed_name(Some(&format!("livi-embed:{tag}"))), None);
+        }
+    }
+
+    #[test]
+    fn an_app_lies_below_the_pictures_of_livi() {
+        assert!(video_rank("map") < video_rank("main"));
+        assert!(video_rank("map") < video_rank("camera"));
+    }
 
     #[test]
     fn video_lies_above_the_projection_and_the_clusters_below() {

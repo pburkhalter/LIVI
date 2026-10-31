@@ -125,6 +125,7 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
 | `Livi.action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
 | `Livi.action("page", "next")` | The plugin's next page in tab order (`prev`: the previous one), e.g. after a swipe; nothing at the first or last page. |
 | `Livi.action("camera-area", "<x> <y> <width> <height> [<radius> [<px> <py> <pwidth> <pheight>]]")` | From a `frame` component of the camera page: the card the camera's picture shows in (window pixels, e.g. from `absolute-position`), and where the whole picture goes, fitted and centred (`p…`, the card when left out; larger than the card for a picture with borders, also beyond the window). `""` puts it back on the whole screen. |
+| `Livi.action("embed-area", "<name> <x> <y> <width> <height> [<radius>]")` | Shows a program beside LIVI in a rectangle of the window; `"<name>"` alone hides it (Apps in a card). |
 | `Livi.action("key", "<text>")` | A key of a keyboard the plugin draws, typed into the text field with the focus: a letter or other text, or `backspace`, `return`. Slint's `TextInputInterface.text-input-focused` says when to show the keyboard. |
 | `Livi.action("focus-targets", "<scope> <id>[:slider][:current] ...")` | What the keys and a rotary knob move the focus over, for a page or the side bar (Keys, below). |
 
@@ -244,6 +245,29 @@ value many times a second (e.g. a level) makes the plugin redraw what reads it a
   program that starts again publishes its state anew.
 - The core checks nothing but the user id of a client. A program that should not reach the rest of LIVI's actions
   needs a gate of its own in between.
+
+## Apps in a card
+
+A program beside LIVI (a map, say) can show in LIVI's window like a video, under the plugin's bars and pages, without
+LIVI knowing what it is:
+
+- The program is a Wayland client of LIVI's compositor with the app_id `livi-embed:<name>`; `<name>` has 1 to 64
+  letters, digits, `-` or `_`, and is not `main`, `video`, `camera` or `cluster-…`, the names of LIVI's own pictures.
+  A program with one of those names stays an ordinary dialog. `LIVI_WAYLAND_SOCKET` gives the compositor's socket a
+  fixed name, so that the program finds it; started without it, the compositor picks a free one as before.
+- A plugin shows it with `Livi.action("embed-area", "<name> <x> <y> <w> <h> [<radius>]")`, in the window's pixels, and
+  hides it with `Livi.action("embed-area", "<name>")`. All pages of a plugin stay alive, so it is up to the page to
+  hide the app when another page comes: a `changed` handler on `Livi.page` does. The action works before the program
+  has started; it shows when it comes.
+- LIVI reports the rectangle in `Livi.video`, like the camera's, so the same `background` leaves it out. The program
+  lies below the window: it shows where the window is transparent. The size reaches it as an xdg configure.
+- Touches in the rectangle go to the program where the window is fully transparent (alpha 0), as with the phone's
+  picture. What the plugin draws over the rectangle keeps its touches. Keys stay with LIVI; a plugin sends them on with
+  `Livi.emit`.
+- A hidden program gets no frame callbacks, so a program that waits for them stops drawing. The callbacks wait for
+  it to show again. It also sees nothing else of being hidden: a plugin that wants a program to stop tells it over the
+  companion channel.
+- It lies below the phone's and the camera's pictures, and nothing about it reaches them.
 
 ## Tools
 

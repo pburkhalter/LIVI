@@ -911,6 +911,7 @@ mod tests {
             links: Default::default(),
             notices: Vec::new(),
             video: Default::default(),
+            embeds: Default::default(),
             config,
         };
         let (_state_tx, state_rx) = watch::channel(state);

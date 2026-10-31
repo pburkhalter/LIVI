@@ -442,6 +442,50 @@ fn changed_screens(last: Option<&Config>, now: &Config) -> Vec<ScreenWant> {
         .collect()
 }
 
+type Embeds = std::collections::BTreeMap<String, [i32; 4]>;
+
+/// What changed among the apps in the window: name, the rectangle it moves to, and whether it shows
+fn embed_changes(before: Option<&Embeds>, now: &Embeds) -> Vec<(String, Option<[i32; 4]>, bool)> {
+    let moved = now
+        .iter()
+        .filter(|(name, area)| before.and_then(|b| b.get(*name)) != Some(*area))
+        .map(|(name, area)| (name.clone(), Some(*area), true));
+    let gone = before
+        .into_iter()
+        .flat_map(|b| b.keys())
+        .filter(|name| !now.contains_key(*name))
+        .map(|name| (name.clone(), None, false));
+    moved.chain(gone).collect()
+}
+
+#[cfg(test)]
+mod embed_tests {
+    use super::{Embeds, embed_changes};
+
+    fn embeds(list: &[(&str, [i32; 4])]) -> Embeds {
+        list.iter().map(|(n, a)| (n.to_string(), *a)).collect()
+    }
+
+    #[test]
+    fn an_app_shows_where_it_was_put_and_hides_when_taken_away() {
+        let one = embeds(&[("map", [1, 2, 3, 4])]);
+        assert_eq!(
+            embed_changes(None, &one),
+            vec![("map".to_string(), Some([1, 2, 3, 4]), true)]
+        );
+        assert_eq!(embed_changes(Some(&one), &one), vec![]);
+        let moved = embeds(&[("map", [5, 6, 7, 8])]);
+        assert_eq!(
+            embed_changes(Some(&one), &moved),
+            vec![("map".to_string(), Some([5, 6, 7, 8]), true)]
+        );
+        assert_eq!(
+            embed_changes(Some(&one), &Embeds::new()),
+            vec![("map".to_string(), None, false)]
+        );
+    }
+}
+
 async fn follow_state(
     mut state: watch::Receiver<State>,
     ctrl: CompositorControl,
@@ -485,6 +529,12 @@ async fn follow_state(
         }
         if last.as_ref().is_none_or(|l| l.front.main != now.front.main) {
             plane.set_visible(now.front.main == Front::Projection);
+        }
+        for (name, area, shown) in embed_changes(last.as_ref().map(|l| &l.embeds), &now.embeds) {
+            if let Some(area) = area {
+                ctrl.videoarea(&name, Some(area.map(f64::from)));
+            }
+            ctrl.videoshow(&name, shown);
         }
         if last.as_ref().is_none_or(|l| l.front != now.front) {
             let f = &now.front;

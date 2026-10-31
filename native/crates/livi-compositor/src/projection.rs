@@ -155,7 +155,7 @@ fn alpha_at(
     renderer.map_texture(&mapping).ok()?.get(3).copied()
 }
 
-fn ui_transparent_at(state: &mut LiviState, x: f64, y: f64) -> bool {
+pub fn ui_transparent_at(state: &mut LiviState, x: f64, y: f64) -> bool {
     let Some((surface, origin)) = crate::input::surface_at(state, x, y) else {
         return false;
     };

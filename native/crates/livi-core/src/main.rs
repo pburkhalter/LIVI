@@ -198,6 +198,7 @@ async fn run() -> Result<Exit, String> {
         links: Default::default(),
         notices: Vec::new(),
         video: livi_core_proto::state::VideoMode::of(&config),
+        embeds: Default::default(),
         config,
     });
     let (asks_tx, asks, dongle_asks, update_asks) = projection::ui_channels(wants);
