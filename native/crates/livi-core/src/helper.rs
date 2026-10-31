@@ -97,6 +97,10 @@ fn settings_env(cfg: &Config) -> Vec<(String, String)> {
             flag(cfg.wireless_cp_enabled, ""),
         ),
         ("DEBUG".to_string(), flag(debug, "")),
+        (
+            "LIVI_BT_PAIRING_SECONDS".to_string(),
+            cfg.bt_pairing_seconds.to_string(),
+        ),
         ("LIVI_CP_NAME".to_string(), car_name),
         (
             "LIVI_CP_FUELS".to_string(),

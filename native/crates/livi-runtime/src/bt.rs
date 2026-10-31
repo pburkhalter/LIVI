@@ -348,6 +348,22 @@ pub async fn start(
     Ok((conn, rx, held))
 }
 
+/// Ends discovery and pairing after `seconds`; paired devices still connect. 0 leaves both open.
+pub fn close_pairing_after(conn: &Connection, adapter: &str, seconds: u64) {
+    if seconds == 0 {
+        return;
+    }
+    let (conn, path) = (conn.clone(), format!("/org/bluez/{adapter}"));
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+        for prop in ["Discoverable", "Pairable"] {
+            if let Err(e) = set_prop(&conn, &path, prop, Value::from(false)).await {
+                eprintln!("[bt] {prop} stays on: {e}");
+            }
+        }
+    });
+}
+
 async fn start_carplay(
     conn: &Connection,
     adapter: &str,

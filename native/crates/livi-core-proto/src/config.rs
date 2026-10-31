@@ -18,6 +18,9 @@ pub struct Config {
 
     pub wifi_password: String,
     pub bt_adapter: String,
+    /// seconds after the start in which a new device can pair, 0: always; paired devices connect regardless
+    #[serde(default)]
+    pub bt_pairing_seconds: u32,
     pub wifi_interface: String,
     pub wifi_dedicated_interface: bool,
     pub wifi_type: WifiBand,
@@ -469,6 +472,7 @@ pub fn defaults() -> Config {
         wireless_cp_enabled: false,
         wifi_password: "12345678".into(),
         bt_adapter: "hci0".into(),
+        bt_pairing_seconds: 0,
         wifi_interface: "wlan0".into(),
         wifi_dedicated_interface: false,
         wifi_type: WifiBand::Ghz5,
