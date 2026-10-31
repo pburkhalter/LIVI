@@ -107,6 +107,15 @@ fn card() -> Node {
             bottom("videoCardBottom", "Card Bottom"),
             left("videoCardLeft", "Card Left"),
             right("videoCardRight", "Card Right"),
+            Node::checkbox(
+                Label::new("settings.projectionWide", "Phone as a wider card"),
+                "projectionWide",
+            )
+            .icon("fullscreen"),
+            top("videoWideTop", "Wider Card Top"),
+            bottom("videoWideBottom", "Wider Card Bottom"),
+            left("videoWideLeft", "Wider Card Left"),
+            right("videoWideRight", "Wider Card Right"),
             number(
                 "settings.videoCardRadius",
                 "Corner radius",

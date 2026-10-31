@@ -299,18 +299,27 @@ fn main_view_areas(cfg: &Config) -> (Vec<Insets>, usize) {
         left: cfg.projection_view_area_left.into(),
         right: cfg.projection_view_area_right.into(),
     };
-    match cfg.video_card() {
-        Some([top, bottom, left, right]) => {
-            let card = Insets {
-                top: top.into(),
-                bottom: bottom.into(),
-                left: left.into(),
-                right: right.into(),
-            };
-            (vec![full, card], usize::from(cfg.projection_card))
+    let area = |[top, bottom, left, right]: [u32; 4]| Insets {
+        top: top.into(),
+        bottom: bottom.into(),
+        left: left.into(),
+        right: right.into(),
+    };
+    let mut areas = vec![full];
+    let mut index = 0;
+    if let Some(card) = cfg.video_card() {
+        areas.push(area(card));
+        if cfg.projection_card {
+            index = areas.len() - 1;
         }
-        None => (vec![full], 0),
     }
+    if let Some(wide) = cfg.video_wide() {
+        areas.push(area(wide));
+        if cfg.projection_card && cfg.projection_wide {
+            index = areas.len() - 1;
+        }
+    }
+    (areas, index)
 }
 
 fn icons(cfg: &Config) -> Vec<Icon> {
@@ -654,6 +663,7 @@ impl ConfigSource {
             // card or full screen as it is now, not only as set
             let mut cfg = s.config.clone();
             cfg.projection_card = s.video.projection_card;
+            cfg.projection_wide = s.video.projection_wide;
             (cfg, s.cluster.theme.clone(), s.system.dongle.is_some())
         };
         let reachable = |name: &str| dongle_up || name != livi_link_host::link::CHOICE;
@@ -812,6 +822,16 @@ mod tests {
         (cfg.video_card_top, cfg.video_card_bottom) = (16, 156);
         (cfg.video_card_left, cfg.video_card_right) = (300, 24);
         assert_eq!(areas(&cfg), (vec![(0, 0, 7, 0), (16, 156, 300, 24)], 1));
+        cfg.projection_card = false;
+        assert_eq!(areas(&cfg).1, 0);
+        // a wider card: a third area, the one now only with both switches
+        (cfg.video_wide_bottom, cfg.video_wide_left) = (104, 252);
+        let all = vec![(0, 0, 7, 0), (16, 156, 300, 24), (0, 104, 252, 0)];
+        assert_eq!(areas(&cfg), (all.clone(), 0));
+        cfg.projection_card = true;
+        assert_eq!(areas(&cfg), (all.clone(), 1));
+        cfg.projection_wide = true;
+        assert_eq!(areas(&cfg), (all, 2));
         cfg.projection_card = false;
         assert_eq!(areas(&cfg).1, 0);
     }

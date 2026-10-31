@@ -40,6 +40,10 @@ pub enum Update {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VideoCard {
     pub projection: bool,
+    /// the wider card shows
+    pub wide: bool,
+    /// a wider card is set
+    pub wide_set: bool,
     pub android: bool,
     pub top: u32,
     pub bottom: u32,
@@ -57,24 +61,39 @@ impl VideoCard {
                 .unwrap_or(0)
         };
         let android = state["sessions"]["active"].as_str() == Some("androidauto");
-        // the same card the core gives the phone (Config::video_card)
-        let card = [
-            n("videoCardTop"),
-            n("videoCardBottom"),
-            n("videoCardLeft"),
-            n("videoCardRight"),
-        ];
-        let [top, bottom, left, right] = if livi_core_proto::config::video_card_fits(
-            card,
-            n("projectionWidth"),
-            n("projectionHeight"),
-        ) {
-            card
-        } else {
-            [0; 4]
+        let fits = |card: [u32; 4]| {
+            livi_core_proto::config::video_card_fits(
+                card,
+                n("projectionWidth"),
+                n("projectionHeight"),
+            )
         };
+        let projection = state["video"]["projectionCard"].as_bool().unwrap_or(false) && !android;
+        // the same cards the core gives the phone (Config::video_card, Config::video_wide)
+        let wide_card = [
+            n("videoWideTop"),
+            n("videoWideBottom"),
+            n("videoWideLeft"),
+            n("videoWideRight"),
+        ];
+        let wide_set = wide_card.iter().any(|&v| v > 0) && fits(wide_card);
+        let wide =
+            wide_set && projection && state["video"]["projectionWide"].as_bool() == Some(true);
+        let card = if wide {
+            wide_card
+        } else {
+            [
+                n("videoCardTop"),
+                n("videoCardBottom"),
+                n("videoCardLeft"),
+                n("videoCardRight"),
+            ]
+        };
+        let [top, bottom, left, right] = if fits(card) { card } else { [0; 4] };
         Self {
-            projection: state["video"]["projectionCard"].as_bool().unwrap_or(false) && !android,
+            projection,
+            wide,
+            wide_set,
             android,
             top,
             bottom,
@@ -245,6 +264,34 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn the_wider_card_takes_the_place_of_the_card() {
+        let state = |wide: bool, left: u32| {
+            json!({
+                "sessions": { "active": "carplay" },
+                "video": { "projectionCard": true, "projectionWide": wide },
+                "config": { "videoCardTop": 16, "videoCardBottom": 124, "videoCardLeft": 252,
+                            "videoCardRight": 20, "videoCardRadius": 22, "videoWideBottom": 104,
+                            "videoWideLeft": left, "projectionWidth": 1920, "projectionHeight": 720 },
+            })
+        };
+        let wide = VideoCard::read(&state(true, 252));
+        assert!(wide.wide && wide.wide_set);
+        assert_eq!(
+            (wide.top, wide.bottom, wide.left, wide.right, wide.radius),
+            (0, 104, 252, 0, 22)
+        );
+        let card = VideoCard::read(&state(false, 252));
+        assert!(!card.wide && card.wide_set);
+        assert_eq!((card.top, card.left), (16, 252));
+        // none set, or one that does not fit: the card
+        for left in [0, 1900] {
+            let card = VideoCard::read(&state(true, left));
+            assert!(left == 0 || !card.wide_set);
+            assert_eq!(card.right, if left == 0 { 0 } else { 20 });
+        }
+    }
 
     #[test]
     fn the_card_comes_from_the_video_mode_and_the_settings() {

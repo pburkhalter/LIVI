@@ -277,6 +277,8 @@ fn apply(ui: &AppWindow, update: Update) {
             let n = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
             ui.set_video_card(VideoCardData {
                 projection: card.projection,
+                wide: card.wide,
+                wide_set: card.wide_set,
                 android: card.android,
                 top: n(card.top),
                 bottom: n(card.bottom),
@@ -624,6 +626,16 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
                 choose(&ui, t.page);
             }
         }
+        ("video-view", view) => match video_view(view) {
+            Some((card, wide)) => CLIENT.with_borrow(|c| {
+                if let Some(c) = c {
+                    c.act(Action::SetConfig {
+                        patch: serde_json::json!({ "projectionCard": card, "projectionWide": wide }),
+                    });
+                }
+            }),
+            None => println!("[ui] plugin action video-view {view} unknown"),
+        },
         ("camera-area", argument) => match camera_area(argument) {
             Some(area) => {
                 let (card, picture) = area.unzip();
@@ -645,6 +657,16 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
         _ => println!("[ui] plugin action {verb} {argument} unknown"),
     }
     sync_plugin(&ui);
+}
+
+/// How the phone's picture shows, as the settings keep it: (projectionCard, projectionWide)
+fn video_view(view: &str) -> Option<(bool, bool)> {
+    match view {
+        "card" => Some((true, false)),
+        "wide" => Some((true, true)),
+        "full" => Some((false, false)),
+        _ => None,
+    }
 }
 
 /// What a plugin's camera frame says, in the window's pixels: "x y width height [radius [px py pwidth pheight]]", the
@@ -732,10 +754,17 @@ fn wire(ui: &AppWindow, client: &Client) {
     });
     ui.on_video_card_chosen({
         let c = client.clone();
+        let weak = ui.as_weak();
+        // the button steps through the card, the wider card if there is one and full screen
         move |card| {
+            let wide = weak.upgrade().is_some_and(|ui| {
+                let now = ui.get_video_card();
+                now.wide_set && now.projection && !now.wide
+            });
             c.act(Action::SetVideoCard {
                 page: "projection".into(),
-                card,
+                card: card || wide,
+                wide,
             });
         }
     });
@@ -927,7 +956,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::camera_area;
+    use super::{camera_area, video_view};
+
+    #[test]
+    fn a_video_view_is_two_settings() {
+        assert_eq!(video_view("card"), Some((true, false)));
+        assert_eq!(video_view("wide"), Some((true, true)));
+        assert_eq!(video_view("full"), Some((false, false)));
+        assert_eq!(video_view("x"), None);
+    }
 
     #[test]
     fn a_camera_area_comes_apart_or_is_refused() {

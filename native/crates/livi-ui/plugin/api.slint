@@ -15,7 +15,8 @@
 //   Livi.action("camera-area", "<x> <y> <w> <h> [<radius> [<px> <py> <pw> <ph>]]")  from the camera page's frame
 //                                ("frame" in the manifest): the card for the camera's picture and where the whole
 //                                picture goes (window pixels, fitted; the card when left out), "" full screen
-// LIVI draws the button that switches the phone's picture between card and full screen itself.
+//   Livi.action("video-view", v) how the phone's picture shows, kept in the settings: "card", "wide" or "full"
+// LIVI draws the button that steps the phone's picture through card, wider card and full screen itself.
 //   Livi.action("settings", w)   on the plugin's settings page (LiviSettings below): "open:<node>", "toggle:<row>",
 //                                "press:<row>", "capture:<row>", "slide:<node>:<level>", "slide-done:<node>:<level>",
 //                                "pick:<index>", "number:<value>", "level:<level>", "level-done:<level>",
@@ -256,6 +257,10 @@ export struct LiviNotice {
 // picture lies below the window: a `background` leaves out the card, e.g. as a Path with fill-rule evenodd.
 export struct LiviVideo {
     shown: bool,
+    // how the phone's picture shows as set: "card", "wide" (the wider card) or "full"
+    view: string,
+    // a wider card is set, "wide" can be chosen
+    wide-set: bool,
     top: length,
     bottom: length,
     left: length,

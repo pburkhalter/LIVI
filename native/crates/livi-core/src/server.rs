@@ -122,11 +122,14 @@ impl Core {
 
     /// Shows the phone's picture as a card or full screen for a while (Action::SetVideoCard); the phone moves into the
     /// other of the areas it knows (carplay.rs main_view_areas)
-    pub fn set_video_card(&self, page: &str, card: bool) -> Result<(), String> {
+    pub fn set_video_card(&self, page: &str, card: bool, wide: bool) -> Result<(), String> {
         if page != "projection" {
             return Err(format!("no picture {page} as a card"));
         }
-        self.hub.update(|s| s.video.projection_card = card);
+        self.hub.update(|s| {
+            s.video.projection_card = card;
+            s.video.projection_wide = wide;
+        });
         Ok(())
     }
 
@@ -192,7 +195,7 @@ impl Core {
                 self.quit.notify_one();
                 Ok(())
             }
-            Action::SetVideoCard { page, card } => self.set_video_card(&page, card),
+            Action::SetVideoCard { page, card, wide } => self.set_video_card(&page, card, wide),
             Action::SetCameraArea { area } => {
                 self.hub.update(|s| s.video.camera_area = area);
                 Ok(())
@@ -1079,10 +1082,10 @@ mod tests {
             .unwrap();
         assert!(video().projection_card);
         // switched for a while: the setting stays; the phone moves without a new connection
-        core.set_video_card("projection", false).unwrap();
+        core.set_video_card("projection", false, false).unwrap();
         assert!(!video().projection_card);
         assert!(core.hub.config().projection_card);
-        assert!(core.set_video_card("camera", true).is_err());
+        assert!(core.set_video_card("camera", true, false).is_err());
         // another setting leaves the switch alone; a changed card setting takes over
         core.set_config(&serde_json::json!({ "darkMode": true }))
             .await
@@ -1095,6 +1098,17 @@ mod tests {
             .await
             .unwrap();
         assert!(video().projection_card);
+        // the wider card as well: switched for a while, and as a setting
+        core.set_video_card("projection", true, true).unwrap();
+        assert!(video().projection_card && video().projection_wide);
+        assert!(!core.hub.config().projection_wide);
+        core.set_config(&serde_json::json!({ "projectionWide": true, "projectionCard": false }))
+            .await
+            .unwrap();
+        assert!(!video().projection_card && video().projection_wide);
+        core.set_config(&serde_json::json!({ "projectionWide": false, "projectionCard": true }))
+            .await
+            .unwrap();
         // nothing of it makes the phone connect anew (a moved card waits for the settings to be applied)
         core.set_config(&serde_json::json!({ "videoCardLeft": 252 }))
             .await
