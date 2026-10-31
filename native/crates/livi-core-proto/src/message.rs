@@ -84,6 +84,9 @@ pub enum Action {
     SetVideoCard {
         page: String,
         card: bool,
+        /// With `card`, the wider card (Config::video_wide)
+        #[serde(default)]
+        wide: bool,
     },
     /// Puts the camera's whole picture into a rectangle of the main window (state video): x, y, width, height in the
     /// window's pixels, as a UI plugin lays out its camera page (it may reach beyond the window, so that black

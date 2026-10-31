@@ -265,24 +265,46 @@ fn notices(state: &Json, now: &libc::tm) -> Value {
 /// card, or the area the plugin's camera frame chose (action camera-area)
 fn video(ui: &AppWindow) -> Value {
     let px = |v: f32| Value::Number(f64::from(v));
+    let card = ui.get_video_card();
+    let view = if card.wide {
+        "wide"
+    } else if card.projection {
+        "card"
+    } else {
+        "full"
+    };
+    let chosen = vec![
+        ("view", Value::String(view.into())),
+        ("wide-set", Value::Bool(card.wide_set)),
+    ];
     if ui.get_camera_framed() {
-        return record(vec![
-            ("shown", Value::Bool(true)),
-            ("top", px(ui.get_camera_y())),
-            ("bottom", px(ui.get_camera_bottom())),
-            ("left", px(ui.get_camera_x())),
-            ("right", px(ui.get_camera_right())),
-            ("radius", px(ui.get_camera_radius())),
-        ]);
+        return record(
+            chosen
+                .into_iter()
+                .chain([
+                    ("shown", Value::Bool(true)),
+                    ("top", px(ui.get_camera_y())),
+                    ("bottom", px(ui.get_camera_bottom())),
+                    ("left", px(ui.get_camera_x())),
+                    ("right", px(ui.get_camera_right())),
+                    ("radius", px(ui.get_camera_radius())),
+                ])
+                .collect(),
+        );
     }
-    record(vec![
-        ("shown", Value::Bool(ui.get_video_card_shown())),
-        ("top", px(ui.get_card_top())),
-        ("bottom", px(ui.get_card_bottom())),
-        ("left", px(ui.get_card_left())),
-        ("right", px(ui.get_card_right())),
-        ("radius", px(ui.get_card_radius())),
-    ])
+    record(
+        chosen
+            .into_iter()
+            .chain([
+                ("shown", Value::Bool(ui.get_video_card_shown())),
+                ("top", px(ui.get_card_top())),
+                ("bottom", px(ui.get_card_bottom())),
+                ("left", px(ui.get_card_left())),
+                ("right", px(ui.get_card_right())),
+                ("radius", px(ui.get_card_radius())),
+            ])
+            .collect(),
+    )
 }
 
 /// How many notices are critical (a binding cannot count in a list)

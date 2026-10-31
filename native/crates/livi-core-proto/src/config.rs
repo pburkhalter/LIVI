@@ -69,6 +69,14 @@ pub struct Config {
     pub video_card_left: u32,
     pub video_card_right: u32,
     pub video_card_radius: u32,
+    /// With projection_card, the phone's picture in a second, wider card (video_wide_*), e.g. up to the
+    /// window's edges on three sides. Also switched for a while with Action::SetVideoCard.
+    pub projection_wide: bool,
+    /// The wider card, like video_card_*; all 0: none. Its corners are video_card_radius.
+    pub video_wide_top: u32,
+    pub video_wide_bottom: u32,
+    pub video_wide_left: u32,
+    pub video_wide_right: u32,
 
     pub cluster_width: u32,
     pub cluster_height: u32,
@@ -411,12 +419,25 @@ impl Config {
     /// The card for the phone's picture (video_card_*): distances from the picture's edges, top, bottom, left, right;
     /// None while none is set or it does not fit the picture
     pub fn video_card(&self) -> Option<[u32; 4]> {
-        let card = [
+        self.fitting([
             self.video_card_top,
             self.video_card_bottom,
             self.video_card_left,
             self.video_card_right,
-        ];
+        ])
+    }
+
+    /// The wider card (video_wide_*), as `video_card`
+    pub fn video_wide(&self) -> Option<[u32; 4]> {
+        self.fitting([
+            self.video_wide_top,
+            self.video_wide_bottom,
+            self.video_wide_left,
+            self.video_wide_right,
+        ])
+    }
+
+    fn fitting(&self, card: [u32; 4]) -> Option<[u32; 4]> {
         (card.iter().any(|&v| v > 0)
             && video_card_fits(card, self.projection_width, self.projection_height))
         .then_some(card)
@@ -492,6 +513,11 @@ pub fn defaults() -> Config {
         video_card_left: 0,
         video_card_right: 0,
         video_card_radius: 0,
+        projection_wide: false,
+        video_wide_top: 0,
+        video_wide_bottom: 0,
+        video_wide_left: 0,
+        video_wide_right: 0,
         cluster_width: 1280,
         cluster_height: 720,
         cluster_fps: 60,

@@ -19,6 +19,9 @@ export { Theme, Focus, FocusZone, Page, PhoneState, TabData, TouchPhase, Setting
 // view area; all 0 without a card); Android Auto stays full screen
 export struct VideoCardData {
     projection: bool,
+    // the wider card shows, and whether one is set (settings projectionWide, videoWide...)
+    wide: bool,
+    wide-set: bool,
     android: bool,
     top: int,
     bottom: int,

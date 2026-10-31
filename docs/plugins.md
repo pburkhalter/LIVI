@@ -267,14 +267,18 @@ bars instead of full screen, like its own pages. The settings (Video, Main Video
 |---|---|
 | `projectionCard` | the phone's picture as a card; otherwise full screen |
 | `videoCardTop`, `videoCardBottom`, `videoCardLeft`, `videoCardRight`, `videoCardRadius` | the card, in pixels of the phone's picture (`projectionWidth` x `projectionHeight`, like the view area); all 0: no card. A card that leaves less than 64 pixels of the picture either way counts as none |
+| `projectionWide`, `videoWideTop`, `videoWideBottom`, `videoWideLeft`, `videoWideRight` | a second, wider card, e.g. up to the window's edges on three sides, with the same corner radius; `projectionWide` shows it instead of the card |
 
-- CarPlay knows two view areas from the start, full screen and the card, and draws only in the one it is told. The
+- CarPlay knows its view areas from the start, full screen, the card and the wider card if one is set, and draws only in the one it is told. The
   picture keeps its size; CarPlay leaves the rest. Android Auto stays full screen, without the button.
 - LIVI keeps the bars and the plugin's background, and leaves the card transparent: the plugin's `background` draws
   around it with `Livi.video` (e.g. a `Path` with `fill-rule: evenodd`). Touches in the card go to the phone, touches
   on the bars stay in LIVI, also where a bar is transparent.
-- LIVI draws a button on the picture that switches between card and full screen until LIVI starts again or the
-  setting changes (`Action::SetVideoCard`). Full screen hides the bars; the button leads back.
+- LIVI draws a button on the picture that steps through card, wider card and full screen until LIVI starts again or
+  the setting changes (`Action::SetVideoCard`). Full screen hides the bars; the button leads back.
+- `Livi.action("video-view", v)` changes the settings themselves: `card`, `wide` or `full`. `Livi.video.view` says which
+  one is set, `Livi.video.wide-set` whether a wider card exists. A background draws around the wider card like around
+  the card; with `right` 0 it may leave out the corners on that side.
 - Switching moves CarPlay into the other area during the session (`updateViewArea` on the event channel, animated),
   without a new connection. Should the phone refuse it, the session ends and the phone connects anew with the area
   it should be in. A moved card reaches the phone when the settings are applied, like the view area.
