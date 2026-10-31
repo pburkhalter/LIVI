@@ -1066,6 +1066,10 @@ async fn navigation_follows_the_phone_in_front_and_clears_at_the_end() {
         rig.navigation().maneuver_text.as_deref(),
         Some("Links abbiegen")
     );
+    assert_eq!(
+        rig.navigation().destination_distance_text.as_deref(),
+        Some("5,0 km")
+    );
 
     rig.meta(
         1,
