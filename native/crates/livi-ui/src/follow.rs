@@ -50,6 +50,8 @@ pub struct VideoCard {
     pub left: u32,
     pub right: u32,
     pub radius: u32,
+    /// no button on the picture to switch the view
+    pub button_hidden: bool,
 }
 
 impl VideoCard {
@@ -100,6 +102,7 @@ impl VideoCard {
             left,
             right,
             radius: n("videoCardRadius"),
+            button_hidden: state["config"]["videoButtonHidden"].as_bool().unwrap_or(false),
         }
     }
 }
@@ -291,6 +294,13 @@ mod tests {
             assert!(left == 0 || !card.wide_set);
             assert_eq!(card.right, if left == 0 { 0 } else { 20 });
         }
+    }
+
+    #[test]
+    fn the_button_on_the_picture_can_be_left_out() {
+        let card = VideoCard::read(&json!({ "config": { "videoButtonHidden": true } }));
+        assert!(card.button_hidden);
+        assert!(!VideoCard::read(&json!({})).button_hidden);
     }
 
     #[test]

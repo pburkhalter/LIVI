@@ -479,6 +479,7 @@ pub enum UiCommand {
     ForgetDevice(String),
     CameraFound(bool),
     OpenApp(String),
+    PhoneHome,
 }
 
 fn kept_cluster(cfg: &Config, theme: Theme) -> Cluster {
@@ -699,6 +700,7 @@ impl Projection {
                     UiCommand::ForgetDevice(id) => self.forget_device(&id),
                     UiCommand::CameraFound(found) => self.camera_found(found),
                     UiCommand::OpenApp(target) => self.open_app(&target),
+                    UiCommand::PhoneHome => self.to_active(Do::Home),
                 },
                 Some(input) = asks.input.recv() => self.input(input),
                 Some(done) = asks.goodbye.recv() => self.goodbye(done),

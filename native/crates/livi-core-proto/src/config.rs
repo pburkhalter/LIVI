@@ -80,6 +80,18 @@ pub struct Config {
     pub video_wide_bottom: u32,
     pub video_wide_left: u32,
     pub video_wide_right: u32,
+    /// How far the view area the phone is told reaches beyond the card, either card, in pixels of its
+    /// picture; it ends at the picture's edges. What the phone draws at the rim of its area, a bar, a
+    /// margin, round corners, then lies outside the card, where the window covers it. The card stays
+    /// what shows and what takes touches.
+    pub video_card_bleed_top: u32,
+    pub video_card_bleed_bottom: u32,
+    pub video_card_bleed_left: u32,
+    pub video_card_bleed_right: u32,
+    /// No button on the phone's picture to switch the view: the plugin has its own, or it stays as set.
+    pub video_button_hidden: bool,
+    /// Coming to the front, the phone stays where it was; otherwise it goes to its home screen.
+    pub projection_keeps_app: bool,
 
     pub cluster_width: u32,
     pub cluster_height: u32,
@@ -440,6 +452,16 @@ impl Config {
         ])
     }
 
+    /// The view area the phone is told for a card, reaching beyond it by video_card_bleed_*
+    pub fn video_card_bled(&self, [top, bottom, left, right]: [u32; 4]) -> [u32; 4] {
+        [
+            top.saturating_sub(self.video_card_bleed_top),
+            bottom.saturating_sub(self.video_card_bleed_bottom),
+            left.saturating_sub(self.video_card_bleed_left),
+            right.saturating_sub(self.video_card_bleed_right),
+        ]
+    }
+
     fn fitting(&self, card: [u32; 4]) -> Option<[u32; 4]> {
         (card.iter().any(|&v| v > 0)
             && video_card_fits(card, self.projection_width, self.projection_height))
@@ -522,6 +544,12 @@ pub fn defaults() -> Config {
         video_wide_bottom: 0,
         video_wide_left: 0,
         video_wide_right: 0,
+        video_card_bleed_top: 0,
+        video_card_bleed_bottom: 0,
+        video_card_bleed_left: 0,
+        video_card_bleed_right: 0,
+        video_button_hidden: false,
+        projection_keeps_app: false,
         cluster_width: 1280,
         cluster_height: 720,
         cluster_fps: 60,

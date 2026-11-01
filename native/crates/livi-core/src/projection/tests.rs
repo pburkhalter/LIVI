@@ -287,6 +287,32 @@ async fn a_session_without_video_keeps_the_ui_in_front() {
 }
 
 #[tokio::test]
+async fn the_home_key_of_the_phone_can_be_asked_for() {
+    let mut rig = Rig::new();
+    rig.want(Front::Projection);
+    rig.connect(1, true);
+    rig.drain();
+    rig.p.to_active(Do::Home);
+    assert_eq!(rig.drain(), [stack(1, home())]);
+}
+
+#[tokio::test]
+async fn the_phone_goes_home_or_stays_where_it_was_as_it_comes_to_the_front() {
+    let mut rig = Rig::new();
+    rig.want(Front::Projection);
+    rig.connect(1, true);
+    rig.want(Front::Camera);
+    rig.drain();
+    rig.want(Front::Projection);
+    assert!(rig.drain().contains(&stack(1, home())));
+    rig.want(Front::Camera);
+    rig.drain();
+    rig.p.config_seen.projection_keeps_app = true;
+    rig.want(Front::Projection);
+    assert!(!rig.drain().contains(&stack(1, home())));
+}
+
+#[tokio::test]
 async fn the_first_phone_projects_where_the_ui_asks() {
     let mut rig = Rig::new();
     rig.want(Front::Projection);

@@ -285,6 +285,7 @@ fn apply(ui: &AppWindow, update: Update) {
                 left: n(card.left),
                 right: n(card.right),
                 radius: n(card.radius),
+                button_hidden: card.button_hidden,
             });
         }
         // only the plugin reads it, and its state follows every update (sync_plugin)
@@ -586,6 +587,11 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
             })
         }
         ("open", path) => open_path(&ui, path),
+        ("phone-home", _) => CLIENT.with_borrow(|c| {
+            if let Some(c) = c {
+                c.act(Action::PhoneHome);
+            }
+        }),
         ("media", "play-pause") => ui.invoke_play_pause(),
         ("media", "next") => ui.invoke_next(),
         ("media", "prev") => ui.invoke_prev(),

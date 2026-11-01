@@ -36,7 +36,7 @@ impl Projection {
             self.aa.send(AaCmd::ClusterActive(cluster_on));
         }
         if self.wants.main == Front::Projection && before != Front::Projection {
-            if self.attention.is_none() {
+            if self.attention.is_none() && !self.config_seen.projection_keeps_app {
                 self.to_active(Do::Home);
             }
             self.keyframe();
