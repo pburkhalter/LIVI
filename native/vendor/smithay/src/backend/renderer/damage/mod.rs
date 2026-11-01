@@ -103,7 +103,7 @@ use smallvec::{smallvec, SmallVec};
 use tracing::{info_span, instrument, trace};
 
 use crate::{
-    backend::renderer::{element::RenderElementPresentationState, Frame},
+    backend::renderer::{element::RenderElementPresentationState, Frame, FullDamage},
     output::{Output, OutputModeSource, OutputNoMode},
     utils::{Buffer as BufferCoords, Physical, Rectangle, Scale, Size, Transform},
 };
@@ -194,6 +194,7 @@ pub struct OutputDamageTracker {
     opaque_regions_index: Vec<Range<usize>>,
     element_opaque_regions: Vec<Rectangle<i32, Physical>>,
     element_visible_area_workhouse: Vec<Rectangle<i32, Physical>>,
+    full_damage: FullDamage,
     span: tracing::Span,
 }
 
@@ -238,6 +239,11 @@ impl<E: std::error::Error> std::fmt::Debug for Error<E> {
     }
 }
 
+/// Whether the rectangles leave no pixel of the output out
+fn covers(damage: &[Rectangle<i32, Physical>], output: Rectangle<i32, Physical>) -> bool {
+    Rectangle::subtract_rects_many(std::iter::once(output), damage.iter().copied()).is_empty()
+}
+
 impl OutputDamageTracker {
     /// Initialize a static [`OutputDamageTracker`]
     pub fn new(
@@ -259,6 +265,7 @@ impl OutputDamageTracker {
             opaque_regions_index: Default::default(),
             element_opaque_regions: Default::default(),
             element_visible_area_workhouse: Default::default(),
+            full_damage: Default::default(),
             span: info_span!("renderer_damage"),
         }
     }
@@ -279,6 +286,7 @@ impl OutputDamageTracker {
             element_opaque_regions: Default::default(),
             element_visible_area_workhouse: Default::default(),
             last_state: Default::default(),
+            full_damage: Default::default(),
             span: info_span!("renderer_damage", output = output.name()),
         }
     }
@@ -292,6 +300,7 @@ impl OutputDamageTracker {
         Self {
             mode: output_mode_source.into(),
             span: info_span!("render_damage"),
+            full_damage: Default::default(),
             damage_shaper: Default::default(),
             damage: Default::default(),
             element_damage: Default::default(),
@@ -301,6 +310,16 @@ impl OutputDamageTracker {
             element_visible_area_workhouse: Default::default(),
             last_state: Default::default(),
         }
+    }
+
+    /// What [`render_output`](OutputDamageTracker::render_output) does first when the damage covers the whole output
+    pub fn set_full_damage(&mut self, how: FullDamage) {
+        self.full_damage = how;
+    }
+
+    /// What is set with [`set_full_damage`](OutputDamageTracker::set_full_damage)
+    pub fn full_damage(&self) -> FullDamage {
+        self.full_damage
     }
 
     /// Get the [`OutputModeSource`] of the [`OutputDamageTracker`]
@@ -367,6 +386,10 @@ impl OutputDamageTracker {
             let mut element_damage = std::mem::take(&mut self.element_damage);
             let mut element_opaque_regions = std::mem::take(&mut self.element_opaque_regions);
             let mut frame = renderer.render(framebuffer, output_size, output_transform)?;
+
+            if self.full_damage != FullDamage::Keep && covers(&self.damage, output_geo) {
+                frame.begin_full_damage(self.full_damage)?;
+            }
 
             element_damage.clear();
             element_damage.extend_from_slice(&self.damage);

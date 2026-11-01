@@ -2793,8 +2793,15 @@ where
             return;
         }
 
+        let full_damage = self.damage_tracker.full_damage();
         self.damage_tracker = OutputDamageTracker::from_mode_source(output_mode_source.clone());
+        self.damage_tracker.set_full_damage(full_damage);
         self.output_mode_source = output_mode_source;
+    }
+
+    /// What rendering does first when a frame draws the whole primary plane anew
+    pub fn set_full_damage(&mut self, how: crate::backend::renderer::FullDamage) {
+        self.damage_tracker.set_full_damage(how);
     }
 
     #[allow(clippy::too_many_arguments)]

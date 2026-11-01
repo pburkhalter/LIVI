@@ -262,6 +262,21 @@ pub trait TextureMapping: Texture {
     }
 }
 
+/// What a frame does first when it draws all of its target anew.
+///
+/// A tile-based GPU loads a target from memory unless it is told that the old contents are not needed.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum FullDamage {
+    /// Nothing, the target's old contents stay until they are drawn over
+    #[default]
+    Keep,
+    /// The old contents are discarded (`glInvalidateFramebuffer`)
+    Discard,
+    /// The target is cleared to this color (`glClear`). Nothing of it shows, since all of the target is drawn anew;
+    /// with a conspicuous color this tests that assumption
+    Clear(Color32F),
+}
+
 /// Helper trait for [`Renderer`], which defines a rendering api for a currently in-progress frame during [`Renderer::render`].
 ///
 /// Dropping the [`Frame`] or explicitly calling [`Frame::finish`] will free any unused resources. If you need explicit control
@@ -283,6 +298,13 @@ pub trait Frame {
     /// This operation is only valid in between a `begin` and `finish`-call.
     /// If called outside this operation may error-out, do nothing or modify future rendering results in any way.
     fn clear(&mut self, color: Color32F, at: &[Rectangle<i32, Physical>]) -> Result<(), Self::Error>;
+
+    /// Called first thing in a frame that draws all of the current target anew, see [`FullDamage`].
+    ///
+    /// Renderers without a use for it do nothing.
+    fn begin_full_damage(&mut self, _how: FullDamage) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     /// Draw a solid color to the current target at the specified destination with the specified color.
     fn draw_solid(

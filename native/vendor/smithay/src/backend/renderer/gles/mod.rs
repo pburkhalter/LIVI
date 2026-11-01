@@ -36,8 +36,8 @@ pub use uniform::*;
 use self::version::GlVersion;
 
 use super::{
-    sync::SyncPoint, Bind, Blit, BlitFrame, Color32F, ContextId, DebugFlags, ExportMem, Frame, ImportDma,
-    ImportMem, Offscreen, Renderer, RendererSuper, Texture, TextureFilter, TextureMapping,
+    sync::SyncPoint, Bind, Blit, BlitFrame, Color32F, ContextId, DebugFlags, ExportMem, Frame, FullDamage,
+    ImportDma, ImportMem, Offscreen, Renderer, RendererSuper, Texture, TextureFilter, TextureMapping,
 };
 use crate::{
     backend::{
@@ -2230,6 +2230,28 @@ impl Frame for GlesFrame<'_, '_> {
             self.renderer.gl.BlendFunc(ffi::ONE, ffi::ONE_MINUS_SRC_ALPHA);
         }
         res
+    }
+
+    fn begin_full_damage(&mut self, how: FullDamage) -> Result<(), GlesError> {
+        let gl = &self.renderer.gl;
+        match how {
+            FullDamage::Keep => {}
+            // OpenGL ES 3.0; an older context keeps what it has
+            FullDamage::Discard if self.renderer.gl_version >= version::GLES_3_0 => unsafe {
+                let mut bound = 0;
+                gl.GetIntegerv(ffi::FRAMEBUFFER_BINDING, &mut bound);
+                let attachment = if bound == 0 { ffi::COLOR } else { ffi::COLOR_ATTACHMENT0 };
+                gl.InvalidateFramebuffer(ffi::FRAMEBUFFER, 1, &attachment);
+            },
+            FullDamage::Discard => {}
+            FullDamage::Clear(color) => unsafe {
+                gl.Disable(ffi::SCISSOR_TEST);
+                gl.ClearColor(color.r(), color.g(), color.b(), color.a());
+                gl.Clear(ffi::COLOR_BUFFER_BIT);
+                gl.Enable(ffi::SCISSOR_TEST);
+            },
+        }
+        Ok(())
     }
 
     #[instrument(level = "trace", skip(self), parent = &self.span)]
