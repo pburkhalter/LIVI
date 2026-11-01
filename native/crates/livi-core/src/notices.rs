@@ -380,7 +380,7 @@ mod tests {
         let counters = Counters::new(1);
         let a = id(
             &mut list,
-            notice("updates", "x-t100.updates", "3"),
+            notice("updates", "x-plugin.updates", "3"),
             0,
             &counters,
         );
@@ -390,7 +390,7 @@ mod tests {
         // the same again, later: same place, same serial, the new time
         let again = Notice {
             time: 5,
-            ..notice("updates", "x-t100.updates", "3")
+            ..notice("updates", "x-plugin.updates", "3")
         };
         assert_eq!(id(&mut list, again, a, &counters), a);
         assert_eq!(serials(&list), [(1, 1), (2, 2)]);
@@ -398,7 +398,7 @@ mod tests {
         // something new: last, with the next serial
         let worse = Notice {
             urgency: 2,
-            ..notice("updates", "x-t100.updates", "3")
+            ..notice("updates", "x-plugin.updates", "3")
         };
         id(&mut list, worse, a, &counters);
         assert_eq!(serials(&list), [(2, 2), (1, 3)]);

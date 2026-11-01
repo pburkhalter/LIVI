@@ -3,4 +3,6 @@
 # Lets __USERNAME__ run livi-helperd as root without a password prompt. The helper
 # carries Bluetooth, Wi-Fi, the access point and the dongle. Remove this file to revoke.
 Cmnd_Alias LIVI_HELPER = /home/__USERNAME__/.config/LIVI/driver/livi-helperd
-__USERNAME__ ALL=(root) NOPASSWD: SETENV: LIVI_HELPER
+# The helper's settings come by environment. env_keep names them: SETENV would also let the caller set LD_PRELOAD.
+Defaults!LIVI_HELPER env_keep += "DEBUG HOME LIVI_*"
+__USERNAME__ ALL=(root) NOPASSWD: LIVI_HELPER

@@ -97,6 +97,10 @@ fn settings_env(cfg: &Config) -> Vec<(String, String)> {
             flag(cfg.wireless_cp_enabled, ""),
         ),
         ("DEBUG".to_string(), flag(debug, "")),
+        (
+            "LIVI_BT_PAIRING_SECONDS".to_string(),
+            cfg.bt_pairing_seconds.to_string(),
+        ),
         ("LIVI_CP_NAME".to_string(), car_name),
         (
             "LIVI_CP_FUELS".to_string(),
@@ -222,7 +226,9 @@ impl HelperSupervisor {
 fn spawn(spec: &Spec) -> io::Result<Child> {
     let mut cmd = if spec.use_sudo {
         let mut c = Command::new("sudo");
-        c.arg("-n").arg("-E").arg(&spec.bin);
+        // no -E: the rule keeps what the helper needs (99-LIVI-helper.sudoers.template). SETENV would let the user
+        // set LD_PRELOAD for a program that runs as root
+        c.arg("-n").arg(&spec.bin);
         c
     } else {
         Command::new(&spec.bin)
