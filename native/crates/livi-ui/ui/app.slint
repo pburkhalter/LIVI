@@ -28,11 +28,8 @@ export struct VideoCardData {
     left: int,
     right: int,
     radius: int,
-    // full screen: what a black strip covers on the left, in pixels of the picture (setting videoFullLeft)
-    full-left: int,
-    // the button beside a card, in pixels of the window (settings videoButtonLeft, videoButtonTop); both 0: on the card
-    button-left: int,
-    button-top: int,
+    // no button on the picture to switch the view (setting videoButtonHidden)
+    button-hidden: bool,
 }
 
 // A page of the UI plugin, as the window shows it
@@ -146,10 +143,6 @@ export component AppWindow inherits Window {
     out property <length> card-radius: root.video-card.radius * 1px * root.picture-scale;
     out property <bool> video-card-shown: root.video-shown && root.card-set && root.page == Page.projection
         && root.video-card.projection;
-    out property <bool> video-full-shown: root.video-shown && root.card-set && root.page == Page.projection
-        && !root.video-card.projection;
-    out property <length> full-left: root.video-full-shown
-        ? root.picture-x + root.video-card.full-left * 1px * root.picture-scale : 0px;
     property <bool> nav-hidden: root.page == Page.projection && root.phone == PhoneState.streaming
         && !root.video-card-shown;
     property <bool> nav-asleep;
@@ -158,15 +151,11 @@ export component AppWindow inherits Window {
     property <bool> bars-shown: !root.nav-hidden && !root.plugin-bars-hidden;
     // where the button is, for touches the phone must not get (touch_ui.rs)
     out property <bool> video-button-shown: root.page == Page.projection && root.phone == PhoneState.streaming
-        && root.card-set;
+        && root.card-set && !root.video-card.button-hidden;
     out property <length> video-button-size: 72px;
-    property <bool> video-button-beside: root.video-card.button-left + root.video-card.button-top > 0;
-    out property <length> video-button-x: !root.video-card-shown ? 20px
-        : root.video-button-beside ? root.video-card.button-left * 1px
-        : root.width - root.card-right - 20px - self.video-button-size;
-    out property <length> video-button-y: !root.video-card-shown ? 20px
-        : root.video-button-beside ? root.video-card.button-top * 1px
-        : root.card-top + 20px;
+    out property <length> video-button-x: root.video-card-shown
+        ? root.width - root.card-right - 20px - self.video-button-size : 20px;
+    out property <length> video-button-y: root.video-card-shown ? root.card-top + 20px : 20px;
 
     public function wake-nav() {
         root.nav-asleep = false;
@@ -248,7 +237,7 @@ export component AppWindow inherits Window {
         mask: root.main-mask;
         area-top: root.video-card-shown ? root.card-top : 0px;
         area-bottom: root.video-card-shown ? root.card-bottom : 0px;
-        area-left: root.video-card-shown ? root.card-left : root.full-left;
+        area-left: root.video-card-shown ? root.card-left : 0px;
         area-right: root.video-card-shown ? root.card-right : 0px;
         touch(phase, x, y) => { root.touch(phase, x, y); }
     }
@@ -388,15 +377,6 @@ export component AppWindow inherits Window {
 
     // above the pages and bars, also on full screen pages and over the projection; touches go through it except
     // where the plugin has a TouchArea
-    // under the plugin's overlay: what it shows in the strip stays
-    if root.video-full-shown && root.full-left > 0px: Rectangle {
-        x: 0px;
-        y: 0px;
-        width: root.full-left;
-        height: root.height;
-        background: #000000;
-    }
-
     if root.has-plugin-overlay: ComponentContainer {
         width: root.width;
         height: root.height;

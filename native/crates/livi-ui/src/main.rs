@@ -285,9 +285,7 @@ fn apply(ui: &AppWindow, update: Update) {
                 left: n(card.left),
                 right: n(card.right),
                 radius: n(card.radius),
-                full_left: n(card.full_left),
-                button_left: n(card.button_left),
-                button_top: n(card.button_top),
+                button_hidden: card.button_hidden,
             });
         }
         // only the plugin reads it, and its state follows every update (sync_plugin)
