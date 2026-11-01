@@ -28,6 +28,11 @@ export struct VideoCardData {
     left: int,
     right: int,
     radius: int,
+    // full screen: what a black strip covers on the left, in pixels of the picture (setting videoFullLeft)
+    full-left: int,
+    // the button beside a card, in pixels of the window (settings videoButtonLeft, videoButtonTop); both 0: on the card
+    button-left: int,
+    button-top: int,
 }
 
 // A page of the UI plugin, as the window shows it
@@ -141,6 +146,10 @@ export component AppWindow inherits Window {
     out property <length> card-radius: root.video-card.radius * 1px * root.picture-scale;
     out property <bool> video-card-shown: root.video-shown && root.card-set && root.page == Page.projection
         && root.video-card.projection;
+    out property <bool> video-full-shown: root.video-shown && root.card-set && root.page == Page.projection
+        && !root.video-card.projection;
+    out property <length> full-left: root.video-full-shown
+        ? root.picture-x + root.video-card.full-left * 1px * root.picture-scale : 0px;
     property <bool> nav-hidden: root.page == Page.projection && root.phone == PhoneState.streaming
         && !root.video-card-shown;
     property <bool> nav-asleep;
@@ -151,9 +160,13 @@ export component AppWindow inherits Window {
     out property <bool> video-button-shown: root.page == Page.projection && root.phone == PhoneState.streaming
         && root.card-set;
     out property <length> video-button-size: 72px;
-    out property <length> video-button-x: root.video-card-shown
-        ? root.width - root.card-right - 20px - self.video-button-size : 20px;
-    out property <length> video-button-y: root.video-card-shown ? root.card-top + 20px : 20px;
+    property <bool> video-button-beside: root.video-card.button-left + root.video-card.button-top > 0;
+    out property <length> video-button-x: !root.video-card-shown ? 20px
+        : root.video-button-beside ? root.video-card.button-left * 1px
+        : root.width - root.card-right - 20px - self.video-button-size;
+    out property <length> video-button-y: !root.video-card-shown ? 20px
+        : root.video-button-beside ? root.video-card.button-top * 1px
+        : root.card-top + 20px;
 
     public function wake-nav() {
         root.nav-asleep = false;
@@ -233,10 +246,10 @@ export component AppWindow inherits Window {
         stream-width: root.stream-width;
         stream-height: root.stream-height;
         mask: root.main-mask;
-        area-top: root.card-top;
-        area-bottom: root.card-bottom;
-        area-left: root.card-left;
-        area-right: root.card-right;
+        area-top: root.video-card-shown ? root.card-top : 0px;
+        area-bottom: root.video-card-shown ? root.card-bottom : 0px;
+        area-left: root.video-card-shown ? root.card-left : root.full-left;
+        area-right: root.video-card-shown ? root.card-right : 0px;
         touch(phase, x, y) => { root.touch(phase, x, y); }
     }
 
@@ -379,6 +392,14 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
         component-factory: root.plugin-overlay;
+    }
+
+    if root.video-full-shown && root.full-left > 0px: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.full-left;
+        height: root.height;
+        background: #000000;
     }
 
     if root.video-button-shown: Rectangle {

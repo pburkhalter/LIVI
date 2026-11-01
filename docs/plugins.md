@@ -293,6 +293,8 @@ bars instead of full screen, like its own pages. The settings (Video, Main Video
 | `videoCardTop`, `videoCardBottom`, `videoCardLeft`, `videoCardRight`, `videoCardRadius` | the card, in pixels of the phone's picture (`projectionWidth` x `projectionHeight`, like the view area); all 0: no card. A card that leaves less than 64 pixels of the picture either way counts as none |
 | `projectionWide`, `videoWideTop`, `videoWideBottom`, `videoWideLeft`, `videoWideRight` | a second, wider card, e.g. up to the window's edges on three sides, with the same corner radius; `projectionWide` shows it instead of the card |
 | `videoCardBleedTop`, `videoCardBleedBottom`, `videoCardBleedLeft`, `videoCardBleedRight` | how far the view area told to the phone reaches beyond either card, in pixels of its picture; it ends at the picture's edges. What CarPlay draws at the rim of its area, its bar on the side, a margin, round corners, then lies outside the card, under what the plugin draws around it. The card stays what shows and what takes touches; default 0 |
+| `videoFullLeft` | in full screen, the part of the phone's picture at the left that a black strip covers, in pixels of its picture, e.g. a bar of the phone; touches there do not reach the phone; default 0 |
+| `videoButtonLeft`, `videoButtonTop` | where the button that switches between the cards and full screen sits beside a card, in pixels of the window, e.g. in a dark column of the plugin; both 0: on the card, top right |
 
 - CarPlay knows its view areas from the start, full screen, the card and the wider card if one is set, and draws only in the one it is told. The
   picture keeps its size; CarPlay leaves the rest. Android Auto stays full screen, without the button.
