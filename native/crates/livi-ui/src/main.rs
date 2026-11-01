@@ -285,7 +285,9 @@ fn apply(ui: &AppWindow, update: Update) {
                 left: n(card.left),
                 right: n(card.right),
                 radius: n(card.radius),
-                button_hidden: card.button_hidden,
+                button_left: n(card.button_left),
+                button_bottom: n(card.button_bottom),
+                cards_only: card.cards_only,
             });
         }
         // only the plugin reads it, and its state follows every update (sync_plugin)
@@ -790,13 +792,14 @@ fn wire(ui: &AppWindow, client: &Client) {
         let weak = ui.as_weak();
         // the button steps through the card, the wider card if there is one and full screen
         move |card| {
-            let wide = weak.upgrade().is_some_and(|ui| {
-                let now = ui.get_video_card();
-                now.wide_set && now.projection && !now.wide
-            });
+            let now = weak.upgrade().map(|ui| ui.get_video_card());
+            let wide = now
+                .as_ref()
+                .is_some_and(|now| now.wide_set && now.projection && !now.wide);
+            let cards_only = now.is_some_and(|now| now.cards_only);
             c.act(Action::SetVideoCard {
                 page: "projection".into(),
-                card: card || wide,
+                card: card || wide || cards_only,
                 wide,
             });
         }

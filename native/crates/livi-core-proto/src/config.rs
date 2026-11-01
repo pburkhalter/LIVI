@@ -88,8 +88,12 @@ pub struct Config {
     pub video_card_bleed_bottom: u32,
     pub video_card_bleed_left: u32,
     pub video_card_bleed_right: u32,
-    /// No button on the phone's picture to switch the view: the plugin has its own, or it stays as set.
-    pub video_button_hidden: bool,
+    /// Where the button that switches the view sits on a card, in pixels of the window from the card's
+    /// left and bottom edge; both 0: at the top right.
+    pub video_button_left: u32,
+    pub video_button_bottom: u32,
+    /// The button steps between the cards only, full screen is not one of its steps.
+    pub video_cards_only: bool,
 
     pub cluster_width: u32,
     pub cluster_height: u32,
@@ -546,7 +550,9 @@ pub fn defaults() -> Config {
         video_card_bleed_bottom: 0,
         video_card_bleed_left: 0,
         video_card_bleed_right: 0,
-        video_button_hidden: false,
+        video_button_left: 0,
+        video_button_bottom: 0,
+        video_cards_only: false,
         cluster_width: 1280,
         cluster_height: 720,
         cluster_fps: 60,
