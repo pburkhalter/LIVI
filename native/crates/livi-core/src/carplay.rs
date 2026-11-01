@@ -308,13 +308,13 @@ fn main_view_areas(cfg: &Config) -> (Vec<Insets>, usize) {
     let mut areas = vec![full];
     let mut index = 0;
     if let Some(card) = cfg.video_card() {
-        areas.push(area(card));
+        areas.push(area(cfg.video_card_bled(card)));
         if cfg.projection_card {
             index = areas.len() - 1;
         }
     }
     if let Some(wide) = cfg.video_wide() {
-        areas.push(area(wide));
+        areas.push(area(cfg.video_card_bled(wide)));
         if cfg.projection_card && cfg.projection_wide {
             index = areas.len() - 1;
         }
@@ -834,6 +834,13 @@ mod tests {
         assert_eq!(areas(&cfg), (all, 2));
         cfg.projection_card = false;
         assert_eq!(areas(&cfg).1, 0);
+        // the phone's area reaches beyond either card and ends at the picture's edges; the cards stay
+        (cfg.video_card_bleed_top, cfg.video_card_bleed_bottom) = (10, 10);
+        (cfg.video_card_bleed_left, cfg.video_card_bleed_right) = (90, 10);
+        let bled = vec![(0, 0, 7, 0), (6, 146, 210, 14), (0, 94, 162, 0)];
+        assert_eq!(areas(&cfg).0, bled);
+        assert_eq!(cfg.video_card(), Some([16, 156, 300, 24]));
+        assert_eq!(cfg.video_wide(), Some([0, 104, 252, 0]));
     }
 
     #[test]
