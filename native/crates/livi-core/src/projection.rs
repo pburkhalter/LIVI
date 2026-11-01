@@ -428,6 +428,8 @@ pub struct Projection {
     cp: CpHandle,
     aa: AaHandle,
     aa_crop: watch::Receiver<Option<Crop>>,
+    // the session and the app last asked for over requestUI (input.rs, open_app)
+    asked_app: Option<(SessionId, String)>,
     phone_io: mpsc::UnboundedSender<Io>,
     phone_back: Option<mpsc::UnboundedReceiver<Back>>,
     telemetry: mpsc::UnboundedSender<Value>,
@@ -598,6 +600,7 @@ impl Projection {
             cp,
             aa,
             aa_crop,
+            asked_app: None,
             phone_io,
             phone_back: Some(phone_back),
             telemetry,
