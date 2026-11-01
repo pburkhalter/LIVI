@@ -1,0 +1,76 @@
+name: mac-test
+run-name: 'mac-test ${{ github.sha }}'
+
+on:
+  push:
+    branches: ['ci/mac-test']
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: brew list --versions pkg-config >/dev/null || brew install pkg-config >/dev/null
+
+      - name: GStreamer version
+        id: gstver
+        run: echo "version=$(tr -d '[:space:]' < assets/gstreamer/macos-arm64/version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache GStreamer
+        id: gstcache
+        uses: actions/cache@v5
+        with:
+          path: |
+            gst-runtime.pkg
+            gst-devel.pkg
+          key: gst-pkg-macos-universal-${{ steps.gstver.outputs.version }}
+
+      - name: Download GStreamer
+        if: steps.gstcache.outputs.cache-hit != 'true'
+        run: |
+          v='${{ steps.gstver.outputs.version }}'
+          base="https://gstreamer.freedesktop.org/data/pkg/osx/$v"
+          curl -fL -o gst-runtime.pkg "$base/gstreamer-1.0-$v-universal.pkg"
+          curl -fL -o gst-devel.pkg "$base/gstreamer-1.0-devel-$v-universal.pkg"
+
+      - name: Install GStreamer
+        run: |
+          sudo installer -pkg gst-runtime.pkg -target /
+          sudo installer -pkg gst-devel.pkg -target /
+
+      - name: Rust
+        run: rustup toolchain install
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            native/target
+          key: cargo-mac-test-${{ hashFiles('native/Cargo.lock') }}
+          restore-keys: cargo-mac-test-
+
+      - name: Build and package
+        working-directory: native
+        env:
+          PKG_CONFIG_PATH: /Library/Frameworks/GStreamer.framework/Versions/1.0/lib/pkgconfig
+        run: |
+          rm -rf ../dist
+          cargo xtask package-mac --arch arm64
+
+      - name: Upload
+        uses: actions/upload-artifact@v6
+        with:
+          name: LIVI-mac-test
+          path: dist/*.dmg
+          retention-days: 7
