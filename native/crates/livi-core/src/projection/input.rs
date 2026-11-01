@@ -101,7 +101,7 @@ impl Projection {
         }
     }
 
-    pub(super) fn open_app(&mut self, target: &str) {
+    pub(super) fn open_app(&self, target: &str) {
         let Some(link) = self.active().map(|e| e.link) else {
             return;
         };
@@ -112,11 +112,7 @@ impl Projection {
                 } else {
                     format!("{target}:")
                 };
-                let again = asks_again(self.asked_app.as_ref(), id, &url);
-                self.asked_app = Some((id, url_app(&url).to_string()));
-                if !again {
-                    self.cp.stack(id, StackCmd::RequestUi(url));
-                }
+                self.cp.stack(id, StackCmd::RequestUi(url));
             }
             Link::Aa(id) => {
                 if let Some(cmd) = aa_open(target) {
@@ -228,45 +224,5 @@ impl Projection {
                 aa.session(id, SessionCmd::Command(Command::SelectUp));
             });
         }
-    }
-}
-
-/// The app a CarPlay URL opens; navigation by whichever scheme is one app, the phone has one in front
-fn url_app(url: &str) -> &str {
-    let scheme = url.split(':').next().unwrap_or(url);
-    if scheme == "comgooglemaps" || url.contains("maps.apple.com") {
-        "maps"
-    } else {
-        scheme
-    }
-}
-
-/// Whether a URL only asks for the app that was asked for last in this session. The phone keeps showing it while
-/// LIVI shows something else, and takes such a request as a step back to its home screen. A URL with a query, a
-/// route say, goes through: the app acts on it.
-fn asks_again(last: Option<&(SessionId, String)>, id: SessionId, url: &str) -> bool {
-    !url.contains('?') && last.is_some_and(|(session, app)| *session == id && app == url_app(url))
-}
-
-#[cfg(test)]
-mod request_tests {
-    use super::*;
-
-    #[test]
-    fn the_same_app_is_not_asked_for_twice() {
-        let last = (1, "maps".to_string());
-        assert!(asks_again(Some(&last), 1, "maps:"));
-        assert!(asks_again(Some(&last), 1, "comgooglemaps://"));
-        assert!(!asks_again(Some(&last), 1, "mobilephone:"));
-        assert!(!asks_again(None, 1, "maps:"));
-    }
-
-    #[test]
-    fn a_new_session_and_a_route_go_through() {
-        let last = (1, "maps".to_string());
-        assert!(!asks_again(Some(&last), 2, "maps:"));
-        assert!(!asks_again(Some(&last), 1, "comgooglemaps://?daddr=Bern"));
-        assert_eq!(url_app("http://maps.apple.com/?daddr=Bern"), "maps");
-        assert_eq!(url_app("music:"), "music");
     }
 }

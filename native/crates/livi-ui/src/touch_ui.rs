@@ -43,8 +43,7 @@ fn for_phone(ui: &AppWindow, x: f64, y: f64) -> bool {
             f(ui.get_video_button_y()),
             f(ui.get_video_button_size()),
         );
-        let above = f(ui.get_video_button_above());
-        if (bx..=bx + size).contains(&x) && (by - above..=by + size).contains(&y) {
+        if (bx..=bx + size).contains(&x) && (by..=by + size).contains(&y) {
             return false;
         }
     }
