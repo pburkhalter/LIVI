@@ -92,6 +92,9 @@ pub struct Config {
     /// left and bottom edge; both 0: at the top right.
     pub video_button_left: u32,
     pub video_button_bottom: u32,
+    /// Room above the button for a button of the plugin, in pixels of the window: touches there do not
+    /// reach the phone.
+    pub video_button_above: u32,
     /// The button steps between the cards only, full screen is not one of its steps.
     pub video_cards_only: bool,
 
@@ -552,6 +555,7 @@ pub fn defaults() -> Config {
         video_card_bleed_right: 0,
         video_button_left: 0,
         video_button_bottom: 0,
+        video_button_above: 0,
         video_cards_only: false,
         cluster_width: 1280,
         cluster_height: 720,

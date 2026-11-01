@@ -287,6 +287,7 @@ fn apply(ui: &AppWindow, update: Update) {
                 radius: n(card.radius),
                 button_left: n(card.button_left),
                 button_bottom: n(card.button_bottom),
+                button_above: n(card.button_above),
                 cards_only: card.cards_only,
             });
         }
