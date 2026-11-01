@@ -50,11 +50,8 @@ pub struct VideoCard {
     pub left: u32,
     pub right: u32,
     pub radius: u32,
-    /// what covers the phone's picture on the left in full screen
-    pub full_left: u32,
-    /// where the button sits beside a card, in pixels of the window; both 0: on the card
-    pub button_left: u32,
-    pub button_top: u32,
+    /// no button on the picture to switch the view
+    pub button_hidden: bool,
 }
 
 impl VideoCard {
@@ -105,9 +102,7 @@ impl VideoCard {
             left,
             right,
             radius: n("videoCardRadius"),
-            full_left: n("videoFullLeft"),
-            button_left: n("videoButtonLeft"),
-            button_top: n("videoButtonTop"),
+            button_hidden: state["config"]["videoButtonHidden"].as_bool().unwrap_or(false),
         }
     }
 }
@@ -302,17 +297,10 @@ mod tests {
     }
 
     #[test]
-    fn the_cover_of_full_screen_and_the_button_come_from_the_settings() {
-        let card = VideoCard::read(&json!({
-            "video": { "projectionCard": false },
-            "config": { "videoCardTop": 16, "videoFullLeft": 90, "videoButtonLeft": 58,
-                        "videoButtonTop": 646, "projectionWidth": 1920, "projectionHeight": 720 },
-        }));
-        assert_eq!(
-            (card.full_left, card.button_left, card.button_top),
-            (90, 58, 646)
-        );
-        assert_eq!(VideoCard::read(&json!({})).full_left, 0);
+    fn the_button_on_the_picture_can_be_left_out() {
+        let card = VideoCard::read(&json!({ "config": { "videoButtonHidden": true } }));
+        assert!(card.button_hidden);
+        assert!(!VideoCard::read(&json!({})).button_hidden);
     }
 
     #[test]

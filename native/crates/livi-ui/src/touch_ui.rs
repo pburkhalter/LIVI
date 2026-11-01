@@ -48,7 +48,7 @@ fn for_phone(ui: &AppWindow, x: f64, y: f64) -> bool {
         }
     }
     if !ui.get_video_card_shown() {
-        return x >= f(ui.get_full_left());
+        return true;
     }
     let size = ui.window().size().to_logical(ui.window().scale_factor());
     (f(ui.get_card_left())..=f(size.width) - f(ui.get_card_right())).contains(&x)
