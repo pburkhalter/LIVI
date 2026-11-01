@@ -989,7 +989,7 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
         Ok(frame) => {
             if probe {
                 let primary = match &frame.primary_element {
-                    PrimaryPlaneElement::Swapchain(e) => format!("swapchain age={} slot={:p}", e.slot.age(), &*e.slot),
+                    PrimaryPlaneElement::Swapchain(_) => "swapchain".to_string(),
                     PrimaryPlaneElement::Element(_) => "direct".to_string(),
                 };
                 log::info!(
