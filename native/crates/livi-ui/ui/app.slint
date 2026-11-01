@@ -388,18 +388,19 @@ export component AppWindow inherits Window {
 
     // above the pages and bars, also on full screen pages and over the projection; touches go through it except
     // where the plugin has a TouchArea
-    if root.has-plugin-overlay: ComponentContainer {
-        width: root.width;
-        height: root.height;
-        component-factory: root.plugin-overlay;
-    }
-
+    // under the plugin's overlay: what it shows in the strip stays
     if root.video-full-shown && root.full-left > 0px: Rectangle {
         x: 0px;
         y: 0px;
         width: root.full-left;
         height: root.height;
         background: #000000;
+    }
+
+    if root.has-plugin-overlay: ComponentContainer {
+        width: root.width;
+        height: root.height;
+        component-factory: root.plugin-overlay;
     }
 
     if root.video-button-shown: Rectangle {
