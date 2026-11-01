@@ -200,6 +200,18 @@ impl Core {
                 self.hub.update(|s| s.video.camera_area = area);
                 Ok(())
             }
+            Action::SetEmbedArea { name, area } => {
+                if !livi_core_proto::state::embed_name_allowed(&name) {
+                    return Err(format!("no app can show under the name {name}"));
+                }
+                self.hub.update(|s| {
+                    match area {
+                        Some(area) => s.embeds.insert(name, area),
+                        None => s.embeds.remove(&name),
+                    };
+                });
+                Ok(())
+            }
             Action::DismissNotice { id } => {
                 crate::notices::dismiss(self, id).await;
                 Ok(())
@@ -577,6 +589,7 @@ mod tests {
             links: Default::default(),
             notices: Vec::new(),
             video: Default::default(),
+            embeds: Default::default(),
             config: defaults(),
         });
         let file = ConfigFile::new(dir.0.join("config.json"), dir.0.join("backup.json"));

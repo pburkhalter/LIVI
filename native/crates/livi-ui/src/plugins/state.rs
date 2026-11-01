@@ -261,8 +261,22 @@ fn notices(state: &Json, now: &libc::tm) -> Value {
     model(out)
 }
 
+thread_local! {
+    /// The app in the window, as the plugin placed it (action embed-area): its name, x, y, width, height and radius
+    static EMBED: std::cell::RefCell<Option<(String, [f32; 5])>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Where the plugin put an app in the window, or that it hid it, for `Livi.video`
+pub fn embed_card(name: &str, area: Option<[f32; 5]>) {
+    EMBED.with_borrow_mut(|embed| match area {
+        Some(area) => *embed = Some((name.to_string(), area)),
+        None if embed.as_ref().is_some_and(|(shown, _)| shown == name) => *embed = None,
+        None => {}
+    });
+}
+
 /// The card the phone's or the camera's picture shows in, for a background drawn around it (app.slint): the phone's
-/// card, or the area the plugin's camera frame chose (action camera-area)
+/// card, the area the plugin's camera frame chose (action camera-area), or where it put an app (action embed-area)
 fn video(ui: &AppWindow) -> Value {
     let px = |v: f32| Value::Number(f64::from(v));
     let card = ui.get_video_card();
@@ -288,6 +302,23 @@ fn video(ui: &AppWindow) -> Value {
                     ("left", px(ui.get_camera_x())),
                     ("right", px(ui.get_camera_right())),
                     ("radius", px(ui.get_camera_radius())),
+                ])
+                .collect(),
+        );
+    }
+    let embed = EMBED.with_borrow(|e| e.as_ref().map(|(_, area)| *area));
+    if let (Page::Plugin, Some([x, y, w, h, radius])) = (ui.get_page(), embed) {
+        let window = ui.window().size().to_logical(ui.window().scale_factor());
+        return record(
+            chosen
+                .into_iter()
+                .chain([
+                    ("shown", Value::Bool(true)),
+                    ("top", px(y)),
+                    ("bottom", px(window.height - y - h)),
+                    ("left", px(x)),
+                    ("right", px(window.width - x - w)),
+                    ("radius", px(radius)),
                 ])
                 .collect(),
         );

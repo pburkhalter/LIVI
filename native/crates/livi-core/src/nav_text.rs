@@ -16,6 +16,13 @@ impl Language {
         }
     }
 
+    fn decimal_mark(self) -> char {
+        match self {
+            Self::En => '.',
+            Self::De | Self::Fr | Self::Ua => ',',
+        }
+    }
+
     fn words(self) -> &'static Words {
         match self {
             Self::En => &EN,
@@ -58,7 +65,7 @@ pub fn no_route(language: Language) -> &'static str {
     language.words().no_route
 }
 
-pub fn distance(meters: f64) -> Option<String> {
+pub fn distance(meters: f64, language: Language) -> Option<String> {
     if !meters.is_finite() || meters < 0.0 {
         return None;
     }
@@ -67,13 +74,13 @@ pub fn distance(meters: f64) -> Option<String> {
     }
     let km = meters / 1000.0;
     if km < 10.0 {
-        Some(format!("{} km", one_decimal(km)))
+        Some(format!("{} km", one_decimal(km, language)))
     } else {
         Some(format!("{} km", km.round()))
     }
 }
 
-fn one_decimal(v: f64) -> String {
+fn one_decimal(v: f64, language: Language) -> String {
     let exact = format!("{v:.30}");
     let (whole, fraction) = exact.split_once('.').unwrap_or((&exact, "0"));
     let mut tenths: u64 = whole.parse::<u64>().unwrap_or(0) * 10;
@@ -82,7 +89,7 @@ fn one_decimal(v: f64) -> String {
     if digits.next().unwrap_or(b'0') >= b'5' {
         tenths += 1;
     }
-    format!("{}.{}", tenths / 10, tenths % 10)
+    format!("{}{}{}", tenths / 10, language.decimal_mark(), tenths % 10)
 }
 
 pub fn time_left(seconds: f64) -> Option<String> {
@@ -378,11 +385,21 @@ mod tests {
     }
 
     #[test]
+    fn a_distance_takes_the_decimal_mark_of_its_language() {
+        assert_eq!(distance(5000.0, Language::De).as_deref(), Some("5,0 km"));
+        assert_eq!(distance(1250.0, Language::Fr).as_deref(), Some("1,3 km"));
+        assert_eq!(distance(1250.0, Language::Ua).as_deref(), Some("1,3 km"));
+        assert_eq!(distance(1250.0, Language::En).as_deref(), Some("1.3 km"));
+        assert_eq!(distance(800.0, Language::De).as_deref(), Some("800 m"));
+        assert_eq!(distance(58000.0, Language::De).as_deref(), Some("58 km"));
+    }
+
+    #[test]
     fn distances_and_times_read_as_before() {
         let v = vectors();
         for (meters, text) in v["meters"].as_object().unwrap() {
             assert_eq!(
-                distance(meters.parse().unwrap()).as_deref(),
+                distance(meters.parse().unwrap(), Language::En).as_deref(),
                 text.as_str(),
                 "{meters} m"
             );
@@ -394,8 +411,8 @@ mod tests {
                 "{seconds} s"
             );
         }
-        assert_eq!(distance(1250.0).as_deref(), Some("1.3 km"));
-        assert_eq!(distance(f64::NAN), None);
+        assert_eq!(distance(1250.0, Language::En).as_deref(), Some("1.3 km"));
+        assert_eq!(distance(f64::NAN, Language::En), None);
     }
 
     #[test]

@@ -813,8 +813,10 @@ fn written_out(nav: &mut Navigation, language: nav_text::Language) {
     nav.maneuver_text = nav
         .maneuver_type
         .and_then(|code| nav_text::maneuver(code, language));
-    nav.maneuver_distance_text = nav.remain_distance.and_then(nav_text::distance);
-    nav.destination_distance_text = nav.distance_to_destination.and_then(nav_text::distance);
+    nav.maneuver_distance_text = nav.remain_distance.and_then(|m| nav_text::distance(m, language));
+    nav.destination_distance_text = nav
+        .distance_to_destination
+        .and_then(|m| nav_text::distance(m, language));
     nav.time_left_text = nav.time_to_destination.and_then(nav_text::time_left);
 }
 

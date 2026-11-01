@@ -95,6 +95,26 @@ pub fn surface_at(state: &LiviState, lx: f64, ly: f64) -> Option<(WlSurface, Poi
     None
 }
 
+/// The app under a point (app_id livi-embed:<name>), where the UI above it is fully transparent: as with the phone's
+/// picture, everything the plugin draws over it stays the UI's
+fn embed_under(
+    state: &mut LiviState,
+    lx: f64,
+    ly: f64,
+) -> Option<(WlSurface, Point<f64, Logical>)> {
+    let pt = Point::<f64, Logical>::from((lx, ly));
+    let under = state.video_order.iter().rev().find_map(|&i| {
+        let t = state.toplevels.get(i)?;
+        if t.kind != Kind::Video || !t.embed || !t.visible {
+            return None;
+        }
+        let local = pt - Point::from((t.position.x as f64, t.position.y as f64));
+        let (surface, surf_local) = crate::render::surface_under(t.toplevel.wl_surface(), local)?;
+        Some((surface, pt - surf_local))
+    })?;
+    crate::projection::ui_transparent_at(state, lx, ly).then_some(under)
+}
+
 pub fn pointer_clear_focus(state: &mut LiviState) {
     state.host.pointer_on_inner = false;
     let pointer = state.seat.get_pointer();
@@ -123,7 +143,7 @@ pub fn pointer_motion(state: &mut LiviState, time: u32) {
         pointer_clear_focus(state);
         return;
     }
-    let under = surface_at(state, lx, ly);
+    let under = embed_under(state, lx, ly).or_else(|| surface_at(state, lx, ly));
     state.host.pointer_on_inner = under.is_some();
     let pointer = state.seat.get_pointer();
     if let Some(pointer) = pointer {
@@ -229,7 +249,7 @@ pub fn touch_down(state: &mut LiviState, time: u32, id: u32, lx: f64, ly: f64, _
         state.host.touch_positions.push((id, lx, ly));
         return;
     }
-    let under = surface_at(state, lx, ly);
+    let under = embed_under(state, lx, ly).or_else(|| surface_at(state, lx, ly));
     log::debug!(
         "touch down id={id} at {lx:.0},{ly:.0} surface={}",
         if under.is_some() {

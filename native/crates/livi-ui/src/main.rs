@@ -654,6 +654,21 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
             }
             None => println!("[ui] plugin action camera-area {argument} unknown"),
         },
+        ("embed-area", argument) => match embed_area(argument) {
+            Some((name, area)) => {
+                plugins::embed_card(name, area);
+                let rectangle = area.map(|a| [a[0], a[1], a[2], a[3]].map(|v| v.round() as i32));
+                CLIENT.with_borrow(|c| {
+                    if let Some(c) = c {
+                        c.act(Action::SetEmbedArea {
+                            name: name.into(),
+                            area: rectangle,
+                        });
+                    }
+                })
+            }
+            None => println!("[ui] plugin action embed-area {argument} unknown"),
+        },
         _ => println!("[ui] plugin action {verb} {argument} unknown"),
     }
     sync_plugin(&ui);
@@ -691,6 +706,23 @@ fn camera_area(argument: &str) -> Option<Option<([f32; 5], [f32; 4])>> {
         && picture[2] > 0.0
         && picture[3] > 0.0;
     fine.then_some(Some((card, picture)))
+}
+
+/// What a plugin says about an app in the window, in the window's pixels: "<name> x y width height [radius]", or
+/// "<name>" alone to hide it
+fn embed_area(argument: &str) -> Option<(&str, Option<[f32; 5]>)> {
+    let mut words = argument.split_whitespace();
+    let name = words.next()?;
+    let numbers: Vec<f32> = words.map(str::parse).collect::<Result<_, _>>().ok()?;
+    let area = match numbers[..] {
+        [] => None,
+        [x, y, w, h] => Some([x, y, w, h, 0.0]),
+        [x, y, w, h, r] => Some([x, y, w, h, r]),
+        _ => return None,
+    };
+    let fine = area
+        .is_none_or(|a| a.iter().all(|v| v.is_finite() && *v >= 0.0) && a[2] > 0.0 && a[3] > 0.0);
+    fine.then_some((name, area))
 }
 
 /// An event a plugin component sent to the programs that listen to its topic (`Livi.emit`, companion channel)
@@ -956,7 +988,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{camera_area, video_view};
+    use super::{camera_area, embed_area, video_view};
 
     #[test]
     fn a_video_view_is_two_settings() {
@@ -964,6 +996,24 @@ mod tests {
         assert_eq!(video_view("wide"), Some((true, true)));
         assert_eq!(video_view("full"), Some((false, false)));
         assert_eq!(video_view("x"), None);
+    }
+
+    #[test]
+    fn an_embed_area_comes_apart_or_is_refused() {
+        assert_eq!(embed_area("map"), Some(("map", None)));
+        assert_eq!(
+            embed_area("map 10 20 300 400"),
+            Some(("map", Some([10.0, 20.0, 300.0, 400.0, 0.0])))
+        );
+        assert_eq!(
+            embed_area("map 10 20 300 400 24"),
+            Some(("map", Some([10.0, 20.0, 300.0, 400.0, 24.0])))
+        );
+        assert_eq!(embed_area(""), None);
+        assert_eq!(embed_area("map 1 2 3"), None);
+        assert_eq!(embed_area("map 1 2 0 4"), None);
+        assert_eq!(embed_area("map -1 2 3 4"), None);
+        assert_eq!(embed_area("map a b c d"), None);
     }
 
     #[test]

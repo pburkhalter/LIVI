@@ -57,6 +57,9 @@ pub enum Kind {
 pub struct TopLevel {
     pub toplevel: ToplevelSurface,
     pub kind: Kind,
+    /// A program beside LIVI that shows in the window (app_id livi-embed:<name>): touches reach it, and while it is
+    /// hidden it gets no frame callbacks, so that it stops drawing
+    pub embed: bool,
     pub screen_idx: usize,
     pub tag: String,
     pub awaiting_claim: bool,
@@ -175,7 +178,13 @@ impl LiviState {
         let viewporter_state = ViewporterState::new::<Self>(&dh);
         let cursor_shape_state = CursorShapeManagerState::new::<Self>(&dh);
 
-        let source = ListeningSocketSource::new_auto().expect("wayland socket");
+        // a fixed name for programs beside LIVI that show in its window (docs/plugins.md, Apps in a card)
+        let source = std::env::var("LIVI_WAYLAND_SOCKET")
+            .ok()
+            .filter(|name| !name.is_empty())
+            .and_then(|name| ListeningSocketSource::with_name(&name).ok())
+            .or_else(|| ListeningSocketSource::new_auto().ok())
+            .expect("wayland socket");
         let ui_socket = source.socket_name().to_string_lossy().into_owned();
         let loop_handle = event_loop.handle();
         loop_handle

@@ -76,6 +76,7 @@ impl Rig {
             links: Default::default(),
             notices: Vec::new(),
             video: Default::default(),
+            embeds: Default::default(),
             config: defaults(),
         }));
         let (tx, cmds) = mpsc::unbounded_channel();
@@ -1064,6 +1065,10 @@ async fn navigation_follows_the_phone_in_front_and_clears_at_the_end() {
     assert_eq!(
         rig.navigation().maneuver_text.as_deref(),
         Some("Links abbiegen")
+    );
+    assert_eq!(
+        rig.navigation().destination_distance_text.as_deref(),
+        Some("5,0 km")
     );
 
     rig.meta(

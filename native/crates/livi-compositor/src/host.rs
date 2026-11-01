@@ -752,12 +752,34 @@ pub fn request_frame(state: &mut LiviState, screen_idx: usize) {
     }
 }
 
+/// A hidden app draws nothing: without callbacks it waits, and they stay for when it shows again
+fn wants_frames(embed: bool, visible: bool) -> bool {
+    !embed || visible
+}
+
+#[cfg(test)]
+mod embed_tests {
+    use super::wants_frames;
+
+    #[test]
+    fn only_a_hidden_app_waits_for_its_frames() {
+        assert!(wants_frames(false, false), "LIVI's own planes as before");
+        assert!(wants_frames(false, true));
+        assert!(wants_frames(true, true));
+        assert!(!wants_frames(true, false));
+    }
+}
+
 pub fn send_frame_callbacks(state: &mut LiviState) {
     let time_ms: u32 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u32;
-    for t in &state.toplevels {
+    for t in state
+        .toplevels
+        .iter()
+        .filter(|t| wants_frames(t.embed, t.visible))
+    {
         smithay::wayland::compositor::with_surface_tree_downward(
             t.toplevel.wl_surface(),
             (),

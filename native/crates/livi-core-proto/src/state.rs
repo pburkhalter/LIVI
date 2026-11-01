@@ -29,6 +29,10 @@ pub struct State {
     /// Whether the pictures show as a card or full screen now
     #[serde(default)]
     pub video: VideoMode,
+    /// Programs beside LIVI that show in the main window now (Action::SetEmbedArea): name, and x, y, width, height in
+    /// the window's pixels
+    #[serde(default)]
+    pub embeds: BTreeMap<String, [i32; 4]>,
     /// Notifications other programs sent to LIVI (org.freedesktop.Notifications on the session bus), oldest first
     #[serde(default)]
     pub notices: Vec<Notice>,
@@ -70,6 +74,18 @@ pub struct VideoMode {
     /// height in pixels of the main window; None: the whole screen
     #[serde(default)]
     pub camera_area: Option<[i32; 4]>,
+}
+
+/// Whether a program may show in LIVI's window under this name (Action::SetEmbedArea, app_id livi-embed:<name>): 1 to 64
+/// letters, digits, - or _, and none of the names of LIVI's own pictures
+pub fn embed_name_allowed(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !matches!(name, "main" | "video" | "camera")
+        && !name.starts_with("cluster-")
 }
 
 impl VideoMode {

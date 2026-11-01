@@ -15,6 +15,9 @@
 //   Livi.action("camera-area", "<x> <y> <w> <h> [<radius> [<px> <py> <pw> <ph>]]")  from the camera page's frame
 //                                ("frame" in the manifest): the card for the camera's picture and where the whole
 //                                picture goes (window pixels, fitted; the card when left out), "" full screen
+//   Livi.action("embed-area", "<name> <x> <y> <w> <h> [<radius>]")  a program beside LIVI (app_id livi-embed:<name>)
+//                                shows in this rectangle (window pixels), reported in `video`; "<name>" alone hides it
+//                                (docs/plugins.md, Apps in a card)
 //   Livi.action("video-view", v) how the phone's picture shows, kept in the settings: "card", "wide" or "full"
 // LIVI draws the button that steps the phone's picture through card, wider card and full screen itself.
 //   Livi.action("settings", w)   on the plugin's settings page (LiviSettings below): "open:<node>", "toggle:<row>",
