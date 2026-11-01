@@ -331,7 +331,10 @@ impl Projection {
         };
         let now = (
             song.title.clone(),
-            song.artist.clone(),
+            // Apple Music adds the quality to the artist ("Band • Lossless"); the display has no use for it
+            song.artist
+                .as_deref()
+                .map(|artist| artist.split(" \u{2022} ").next().unwrap_or(artist).to_string()),
             song.album.clone(),
             song.duration_ms.map(|ms| ms as u64),
             song.playing,
