@@ -587,6 +587,13 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
             })
         }
         ("open", path) => open_path(&ui, path),
+        ("touch-keep", argument) => {
+            let numbers: Vec<f64> = argument
+                .split_whitespace()
+                .filter_map(|v| v.parse().ok())
+                .collect();
+            touch_ui::keep(<[f64; 4]>::try_from(numbers).ok());
+        }
         ("phone-home", _) => CLIENT.with_borrow(|c| {
             if let Some(c) = c {
                 c.act(Action::PhoneHome);
