@@ -969,12 +969,36 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
             return;
         }
     };
+    // probe P126: every frame in the log, and everything through the GPU instead of the display's planes
+    let probe = std::env::var_os("LIVI_PROBE_FRAMES").is_some();
+    let flags = if std::env::var_os("LIVI_PROBE_NO_SCANOUT").is_some() {
+        FrameFlags::empty()
+    } else {
+        FrameFlags::DEFAULT
+    };
     let flipped = match output
         .surface
-        .render_frame(renderer, &elements, clear, FrameFlags::DEFAULT)
+        .render_frame(renderer, &elements, clear, flags)
     {
-        Ok(frame) if frame.is_empty => false,
+        Ok(frame) if frame.is_empty => {
+            if probe {
+                log::info!("[frame] {} empty elements={}", output.connector, elements.len());
+            }
+            false
+        }
         Ok(frame) => {
+            if probe {
+                let primary = match &frame.primary_element {
+                    PrimaryPlaneElement::Swapchain(e) => format!("swapchain age={} slot={:p}", e.slot.age(), &*e.slot),
+                    PrimaryPlaneElement::Element(_) => "direct".to_string(),
+                };
+                log::info!(
+                    "[frame] {} primary {primary} overlays={} elements={}",
+                    output.connector,
+                    frame.overlay_elements.len(),
+                    elements.len()
+                );
+            }
             let direct = frame.overlay_elements.len()
                 + usize::from(matches!(
                     frame.primary_element,
