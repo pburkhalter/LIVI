@@ -152,7 +152,14 @@ pub enum StackCmd {
     NextClusterContent,
     ClusterLayout(ui_sync::Layout),
     Touches(Vec<Touch>),
+    /// Fingers on the cluster picture, for its own touch device
+    ClusterTouches(Vec<Touch>),
     Knob {
+        state: KnobState,
+        momentary: bool,
+    },
+    /// The knob of the cluster picture; momentary rests again at once, as with Knob
+    ClusterKnob {
         state: KnobState,
         momentary: bool,
     },

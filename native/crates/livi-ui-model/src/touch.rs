@@ -89,6 +89,10 @@ impl Fingers {
     pub fn holds(&self, finger: u64) -> bool {
         self.active.iter().any(|f| f.finger == finger)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.active.is_empty()
+    }
 }
 
 #[cfg(test)]

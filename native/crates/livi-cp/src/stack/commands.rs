@@ -1,5 +1,16 @@
 use super::*;
 
+fn contacts(touches: &[Touch], width: f64, height: f64) -> Vec<Contact> {
+    touches
+        .iter()
+        .map(|t| Contact {
+            x: t.x * width,
+            y: t.y * height,
+            down: t.down,
+        })
+        .collect()
+}
+
 impl<M: Media> Conn<M> {
     pub(super) async fn handle_command(&mut self, req: &Request) -> Response {
         let body = bplist::decode(&req.body).unwrap_or(Value::Dict(Vec::new()));
@@ -136,6 +147,18 @@ impl<M: Media> Conn<M> {
         }
     }
 
+    /// The size of the cluster picture, while it has input devices and the phone is there to hear of them
+    fn cluster_input(&self) -> Option<(f64, f64)> {
+        self.event.as_ref()?;
+        let cfg = self.ctx.config.borrow();
+        let cluster = cfg
+            .info
+            .cluster
+            .as_ref()
+            .filter(|_| cfg.info.cluster_touch)?;
+        Some((cluster.width_pixels as f64, cluster.height_pixels as f64))
+    }
+
     pub(super) async fn on_cmd(&mut self, cmd: StackCmd) {
         match cmd {
             StackCmd::Touches(touches) => {
@@ -149,16 +172,25 @@ impl<M: Media> Conn<M> {
                         cfg.info.main.height_pixels as f64,
                     )
                 };
-                let contacts: Vec<Contact> = touches
+                let report = hid::touch_report(&contacts(&touches, w, h));
+                self.send_hid(hid::TOUCH_HID_UID, &report).await;
+            }
+            StackCmd::ClusterTouches(touches) => {
+                let Some((w, h)) = self.cluster_input() else {
+                    println!("[cpStack] cluster touch dropped: no device or event connection");
+                    return;
+                };
+                let contacts = contacts(&touches, w, h);
+                let fingers: Vec<String> = contacts
                     .iter()
-                    .map(|t| Contact {
-                        x: t.x * w,
-                        y: t.y * h,
-                        down: t.down,
+                    .map(|c| {
+                        let phase = if c.down { "down" } else { "up" };
+                        format!("{:.0},{:.0} {phase}", c.x, c.y)
                     })
                     .collect();
+                println!("[cpStack] cluster touch {}", fingers.join(", "));
                 let report = hid::touch_report(&contacts);
-                self.send_hid(hid::TOUCH_HID_UID, &report).await;
+                self.send_hid(hid::CLUSTER_TOUCH_HID_UID, &report).await;
             }
             StackCmd::Knob { state, momentary } => {
                 self.send_hid(hid::KNOB_HID_UID, &hid::knob_report(state))
@@ -166,6 +198,22 @@ impl<M: Media> Conn<M> {
                 if momentary {
                     self.send_hid(hid::KNOB_HID_UID, &hid::knob_report(KnobState::default()))
                         .await;
+                }
+            }
+            StackCmd::ClusterKnob { state, momentary } => {
+                if self.cluster_input().is_none() {
+                    println!("[cpStack] cluster knob dropped: no device or event connection");
+                    return;
+                }
+                let report = hid::knob_report(state);
+                println!(
+                    "[cpStack] cluster knob wheel {} select {} report {report:02x?}",
+                    state.wheel, state.select
+                );
+                self.send_hid(hid::CLUSTER_KNOB_HID_UID, &report).await;
+                if momentary {
+                    let rest = hid::knob_report(KnobState::default());
+                    self.send_hid(hid::CLUSTER_KNOB_HID_UID, &rest).await;
                 }
             }
             StackCmd::History(entries) => {

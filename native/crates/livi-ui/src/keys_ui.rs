@@ -570,6 +570,10 @@ pub fn wire(ui: &AppWindow, client: &Client) {
                     }
                     return EventResult::PreventDefault;
                 }
+                let down = event.state == winit::event::ElementState::Pressed;
+                if crate::touch_ui::map_key(&ui, &client, &code, down, event.repeat) {
+                    return EventResult::PreventDefault;
+                }
                 let state = client.state();
                 let config = state["config"].clone();
                 drop(state);
@@ -627,8 +631,11 @@ pub fn wire(ui: &AppWindow, client: &Client) {
                 ui.invoke_wake_nav();
                 EventResult::Propagate
             }
-            winit::event::WindowEvent::MouseWheel { .. } => {
+            winit::event::WindowEvent::MouseWheel { delta, .. } => {
                 ui.invoke_wake_nav();
+                if crate::touch_ui::map_wheel(&ui, &client, delta) {
+                    return EventResult::PreventDefault;
+                }
                 EventResult::Propagate
             }
             // Slint keeps one event hook per window, so the frames are counted from here (main.rs, redraw_requested)

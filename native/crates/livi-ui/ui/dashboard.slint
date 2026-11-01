@@ -4,6 +4,7 @@ import { Gauge, Readout } from "dashboard/gauge.slint";
 import { NavFull, NavMini } from "dashboard/nav.slint";
 import { Blink, DashState, Signal } from "dashboard/state.slint";
 import { Dots, Lamp, Level } from "dashboard/widgets.slint";
+import { TouchPhase } from "projection.slint";
 
 export { CapData, DashState, GaugeData, LabelData, TrailData } from "dashboard/state.slint";
 
@@ -33,8 +34,26 @@ export component Dashboard inherits Rectangle {
     }
 
     TouchArea {
+        property <bool> on-map: DashState.map-touch && DashState.enabled && DashState.map;
+        function to-map(phase: TouchPhase) {
+            DashState.map-pointer(phase, (self.absolute-position.x + self.mouse-x) / 1px,
+                (self.absolute-position.y + self.mouse-y) / 1px);
+        }
+        moved => {
+            if (self.on-map) {
+                self.to-map(TouchPhase.move);
+            }
+        }
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.down) {
+            if (self.on-map) {
+                if (e.kind == PointerEventKind.down) {
+                    self.to-map(TouchPhase.down);
+                } else if (e.kind == PointerEventKind.up) {
+                    self.to-map(TouchPhase.up);
+                } else if (e.kind == PointerEventKind.cancel) {
+                    self.to-map(TouchPhase.cancel);
+                }
+            } else if (e.kind == PointerEventKind.down) {
                 root.swipe-from = self.mouse-x;
             } else if (e.kind == PointerEventKind.up) {
                 let dx = self.mouse-x - root.swipe-from;

@@ -375,6 +375,7 @@ fn choose(ui: &AppWindow, page: Page) {
 }
 
 fn reported(ui: &AppWindow, client: &Client, page: Page) {
+    touch_ui::map_leaving(ui, client);
     let plugin_path;
     let (front, path) = match page {
         Page::Projection => (Front::Projection, "/"),
@@ -800,7 +801,18 @@ fn wire(ui: &AppWindow, client: &Client) {
             });
         }
     });
-    dashboard_ui::wire(&ui.global::<DashState>(), client);
+    let dash = ui.global::<DashState>();
+    dash.set_map_touch(livi_core_proto::input::cluster_touch());
+    dash.on_map_pointer({
+        let c = client.clone();
+        let weak = ui.as_weak();
+        move |phase, x, y| {
+            if let Some(ui) = weak.upgrade() {
+                touch_ui::map_pointer(&ui, &c, phase, x, y);
+            }
+        }
+    });
+    dashboard_ui::wire(&dash, client);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

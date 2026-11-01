@@ -5,6 +5,7 @@ pub const KNOB_HID_UID: u32 = 0x2a2a_2a2b;
 pub const MEDIA_HID_UID: u32 = 0x2a2a_2a2c;
 pub const TELEPHONY_HID_UID: u32 = 0x2a2a_2a2d;
 pub const CLUSTER_KNOB_HID_UID: u32 = 0x2a2a_2a2e;
+pub const CLUSTER_TOUCH_HID_UID: u32 = 0x2a2a_2a2f;
 
 pub const TOUCH_CONTACTS: usize = 2;
 const BYTES_PER_FINGER: usize = 6;
@@ -66,6 +67,15 @@ pub fn touch_device(x_max: u16, y_max: u16, display_uuid: &str) -> Value {
     device_entry(
         TOUCH_HID_UID,
         "LIVI Touchscreen",
+        multitouch_descriptor(x_max, y_max),
+        display_uuid,
+    )
+}
+
+pub fn cluster_touch_device(x_max: u16, y_max: u16, display_uuid: &str) -> Value {
+    device_entry(
+        CLUSTER_TOUCH_HID_UID,
+        "LIVI Cluster Touchscreen",
         multitouch_descriptor(x_max, y_max),
         display_uuid,
     )
@@ -199,6 +209,21 @@ mod tests {
         assert_eq!(desc.len(), 6 + 2 * 51 + 1);
         assert_eq!(&desc[6 + 32..6 + 35], &[0x26, 0x00, 0x05]);
         assert_eq!(&desc[6 + 43..6 + 46], &[0x26, 0xd0, 0x02]);
+    }
+
+    #[test]
+    fn the_cluster_touch_device_has_its_own_uid_and_the_picture_size() {
+        let device = cluster_touch_device(2110, 770, "alt");
+        assert_eq!(device.get("uuid").and_then(Value::as_str), Some("2a2a2a2f"));
+        assert_eq!(
+            device.get("displayUUID").and_then(Value::as_str),
+            Some("alt")
+        );
+        let Some(Value::Data(desc)) = device.get("hidDescriptor").cloned() else {
+            panic!("no descriptor");
+        };
+        assert_eq!(&desc[6 + 32..6 + 35], &[0x26, 0x3e, 0x08]);
+        assert_eq!(&desc[6 + 43..6 + 46], &[0x26, 0x02, 0x03]);
     }
 
     #[test]

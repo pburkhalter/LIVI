@@ -1,4 +1,5 @@
 import { MaskData } from "../mask.slint";
+import { TouchPhase } from "../projection.slint";
 
 export struct CapData {
     path: string,
@@ -89,6 +90,9 @@ export global DashState {
     in property <string> nav-destination;
     in property <string> nav-app;
     in property <string> placeholder: "No dashboard on this screen";
+    // trial LIVI_CLUSTER_TOUCH: the phone's map takes what lands on the dashboard (touch_ui.rs), in pixels of the window
+    in property <bool> map-touch;
+    callback map-pointer(TouchPhase, float, float);
     callback select-page(int);
     callback step(int);
 }

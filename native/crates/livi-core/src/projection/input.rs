@@ -1,5 +1,16 @@
 use super::*;
 
+fn touches(points: &[Point]) -> Vec<Touch> {
+    points
+        .iter()
+        .map(|p| Touch {
+            x: p.x.clamp(0.0, 1.0),
+            y: p.y.clamp(0.0, 1.0),
+            down: !matches!(p.phase, Phase::Up | Phase::Cancel),
+        })
+        .collect()
+}
+
 impl Projection {
     pub(super) fn media(&self, control: MediaControl) {
         self.to_active(Do::Media(control));
@@ -17,8 +28,43 @@ impl Projection {
                 screen: Screen::Main,
                 points,
             } => self.pointer(&points),
+            Input::Pointer {
+                screen: Screen::Cluster,
+                points,
+            } if self.cluster_touch => self.cluster_pointer(&points),
             Input::Pointer { .. } => {}
             Input::Key { code, down } => self.key(&code, down),
+            Input::ClusterKnob { wheel, select } if self.cluster_touch => {
+                self.cluster_knob(wheel, select);
+            }
+            Input::ClusterKnob { .. } => {}
+        }
+    }
+
+    /// The phone connected over CarPlay, while its cluster picture shows: Android Auto has no device for it here
+    fn cluster_session(&self) -> Option<SessionId> {
+        match self.active().map(|s| s.link) {
+            Some(Link::Cp(id)) if self.cluster_on => Some(id),
+            _ => None,
+        }
+    }
+
+    fn cluster_pointer(&self, points: &[Point]) {
+        if let Some(id) = self.cluster_session().filter(|_| !points.is_empty()) {
+            self.cp.stack(id, StackCmd::ClusterTouches(touches(points)));
+        }
+    }
+
+    fn cluster_knob(&self, wheel: f64, select: bool) {
+        if let Some(id) = self.cluster_session() {
+            let state = KnobState {
+                select,
+                wheel,
+                ..Default::default()
+            };
+            let momentary = wheel != 0.0;
+            self.cp
+                .stack(id, StackCmd::ClusterKnob { state, momentary });
         }
     }
 
@@ -27,17 +73,7 @@ impl Projection {
             return;
         }
         match self.active().map(|s| s.link) {
-            Some(Link::Cp(id)) => {
-                let touches = points
-                    .iter()
-                    .map(|p| Touch {
-                        x: p.x.clamp(0.0, 1.0),
-                        y: p.y.clamp(0.0, 1.0),
-                        down: !matches!(p.phase, Phase::Up | Phase::Cancel),
-                    })
-                    .collect();
-                self.cp.stack(id, StackCmd::Touches(touches));
-            }
+            Some(Link::Cp(id)) => self.cp.stack(id, StackCmd::Touches(touches(points))),
             Some(Link::Aa(id)) => {
                 let crop = *self.aa_crop.borrow();
                 let touches = points

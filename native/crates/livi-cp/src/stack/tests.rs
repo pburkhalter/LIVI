@@ -1162,6 +1162,117 @@ async fn the_phone_moves_between_its_view_areas_without_reconnecting() {
 }
 
 #[tokio::test]
+async fn the_cluster_picture_has_its_own_input_devices() {
+    let mut rig = Rig::new().await;
+    rig.config.send_modify(|c| {
+        let mut cluster = c.info.main.clone();
+        cluster.width_pixels = 2000;
+        cluster.height_pixels = 800;
+        c.info.cluster = Some(cluster);
+        c.info.cluster_touch = true;
+    });
+    let secret = rig.secret;
+    rig.phone.verify(&secret, b"phone-1").await;
+    let info = rig.phone.plist("GET", "/info", &dict([])).await;
+    let devices = info.get("hidDevices").and_then(Value::as_array).unwrap();
+    assert_eq!(
+        devices[4..],
+        [
+            hid::cluster_knob_device(crate::info::ALT_UUID),
+            hid::cluster_touch_device(2000, 800, crate::info::ALT_UUID),
+        ]
+    );
+    let session = dict([
+        ("name", Value::String("iPhone".into())),
+        ("deviceID", Value::String("AA:BB".into())),
+        ("timingPort", Value::Int(9)),
+    ]);
+    let resp = rig.phone.plist("SETUP", "/s", &session).await;
+    let _ = rig.event().await;
+    let mut event = TcpStream::connect(("127.0.0.1", int_of(&resp, "eventPort") as u16))
+        .await
+        .unwrap();
+    let shared = rig.phone.shared;
+    let mut event_cipher = ControlCipher::new(
+        hkdf_sha512(&shared, b"Events-Salt", b"Events-Write-Encryption-Key"),
+        hkdf_sha512(&shared, b"Events-Salt", b"Events-Read-Encryption-Key"),
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let fingers = vec![
+        Touch {
+            x: 0.5,
+            y: 0.25,
+            down: true,
+        },
+        Touch {
+            x: 0.25,
+            y: 0.5,
+            down: false,
+        },
+    ];
+    rig.cmds.send(StackCmd::ClusterTouches(fingers)).unwrap();
+    rig.cmds
+        .send(StackCmd::ClusterKnob {
+            state: KnobState {
+                wheel: -1.0,
+                ..Default::default()
+            },
+            momentary: true,
+        })
+        .unwrap();
+    rig.cmds
+        .send(StackCmd::ClusterKnob {
+            state: KnobState {
+                select: true,
+                ..Default::default()
+            },
+            momentary: false,
+        })
+        .unwrap();
+
+    let (mut sealed, mut plain, mut chunk) = (Vec::new(), Vec::new(), vec![0u8; 16 * 1024]);
+    let mut reports: Vec<(String, Vec<u8>)> = Vec::new();
+    while reports.len() < 4 {
+        let n = tokio::time::timeout(Duration::from_secs(5), event.read(&mut chunk))
+            .await
+            .unwrap()
+            .unwrap();
+        sealed.extend_from_slice(&chunk[..n]);
+        let (data, rest) = event_cipher.decrypt(&sealed).unwrap();
+        sealed = rest;
+        plain.extend(data);
+        let (msgs, rest) = rtsp::parse(&plain);
+        plain = rest;
+        for m in msgs {
+            let body = bplist::decode(&m.body).unwrap();
+            if body.get("type").and_then(Value::as_str) == Some("hidSendReport") {
+                reports.push((
+                    body.get("uuid").and_then(Value::as_str).unwrap().into(),
+                    body.get("hidReport")
+                        .and_then(Value::as_data)
+                        .unwrap()
+                        .to_vec(),
+                ));
+            }
+        }
+    }
+    let at = |uid: &str, report: &[u8]| (uid.to_string(), report.to_vec());
+    assert_eq!(
+        reports,
+        [
+            at(
+                "2a2a2a2f",
+                &[0, 1, 0xe8, 0x03, 0xc8, 0x00, 1, 0, 0xf4, 0x01, 0x90, 0x01]
+            ),
+            at("2a2a2a2e", &[0, 0, 0, 0xff]),
+            at("2a2a2a2e", &[0, 0, 0, 0]),
+            at("2a2a2a2e", &[1, 0, 0, 0]),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn a_verified_session_streams_and_takes_input() {
     let mut rig = Rig::new().await;
     let secret = rig.secret;

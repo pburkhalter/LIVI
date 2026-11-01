@@ -71,6 +71,8 @@ pub struct InfoConfig {
     pub icons: Vec<Icon>,
     pub right_hand_drive: bool,
     pub theme_displays: Option<ThemeDisplays>,
+    /// Trial: the cluster picture gets a touch device and a knob of its own (LIVI_CLUSTER_TOUCH)
+    pub cluster_touch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -371,8 +373,17 @@ pub fn build(cfg: &InfoConfig) -> Value {
         hid::media_device(&main_uuid),
         hid::telephony_device(&main_uuid),
     ];
-    if cfg.theme_displays.is_some() && cfg.cluster.is_some() {
-        hid_devices.push(hid::cluster_knob_device(&alt_uuid));
+    if let Some(cluster) = &cfg.cluster {
+        if cfg.theme_displays.is_some() || cfg.cluster_touch {
+            hid_devices.push(hid::cluster_knob_device(&alt_uuid));
+        }
+        if cfg.cluster_touch {
+            hid_devices.push(hid::cluster_touch_device(
+                hid_axis(cluster.width_pixels),
+                hid_axis(cluster.height_pixels),
+                &alt_uuid,
+            ));
+        }
     }
     info.push(("hidDevices".to_string(), Value::Array(hid_devices)));
     if !cfg.icons.is_empty() {
@@ -516,6 +527,7 @@ pub(crate) mod tests {
             icons: Vec::new(),
             right_hand_drive: false,
             theme_displays: None,
+            cluster_touch: false,
         }
     }
 
@@ -772,6 +784,77 @@ pub(crate) mod tests {
         assert_eq!(
             display_uuids(&sample()),
             (MAIN_UUID.to_string(), ALT_UUID.to_string())
+        );
+    }
+
+    fn hid_devices(cfg: &InfoConfig) -> Vec<Value> {
+        build(cfg)
+            .get("hidDevices")
+            .and_then(Value::as_array)
+            .unwrap()
+            .to_vec()
+    }
+
+    fn with_cluster(width: i64, height: i64) -> InfoConfig {
+        let mut cfg = sample();
+        let mut cluster = cfg.main.clone();
+        cluster.width_pixels = width;
+        cluster.height_pixels = height;
+        cfg.cluster = Some(cluster);
+        cfg
+    }
+
+    #[test]
+    fn without_the_switch_the_phone_hears_of_the_same_devices() {
+        let main = [
+            hid::touch_device(1280, 720, MAIN_UUID),
+            hid::knob_device(MAIN_UUID),
+            hid::media_device(MAIN_UUID),
+            hid::telephony_device(MAIN_UUID),
+        ];
+        assert_eq!(hid_devices(&sample()), main);
+        assert_eq!(hid_devices(&with_cluster(2110, 770)), main);
+
+        let mut themed = with_cluster(2110, 770);
+        themed.theme_displays = Some(names());
+        assert_eq!(
+            hid_devices(&themed),
+            [
+                hid::touch_device(1280, 720, "Center_Display"),
+                hid::knob_device("Center_Display"),
+                hid::media_device("Center_Display"),
+                hid::telephony_device("Center_Display"),
+                hid::cluster_knob_device("Cluster_Display"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_switch_alone_adds_nothing_without_a_cluster() {
+        let mut switched = sample();
+        switched.cluster_touch = true;
+        assert_eq!(
+            crate::bplist::encode(&build(&switched)),
+            crate::bplist::encode(&build(&sample()))
+        );
+    }
+
+    #[test]
+    fn the_switch_gives_the_cluster_a_knob_and_a_touch_device_of_its_size() {
+        let mut cfg = with_cluster(2110, 770);
+        cfg.cluster_touch = true;
+        let devices = hid_devices(&cfg);
+        assert_eq!(devices.len(), 6);
+        assert_eq!(devices[4], hid::cluster_knob_device(ALT_UUID));
+        assert_eq!(devices[5], hid::cluster_touch_device(2110, 770, ALT_UUID));
+
+        cfg.theme_displays = Some(names());
+        let devices = hid_devices(&cfg);
+        assert_eq!(devices.len(), 6, "the knob is not there twice with a theme");
+        assert_eq!(devices[4], hid::cluster_knob_device("Cluster_Display"));
+        assert_eq!(
+            devices[5],
+            hid::cluster_touch_device(2110, 770, "Cluster_Display")
         );
     }
 

@@ -416,6 +416,7 @@ pub fn stack_config(
             icons: icons(cfg),
             right_hand_drive: cfg.hand == HandDriveType::Rhd,
             theme_displays: theme_displays(cfg, theme),
+            cluster_touch: livi_core_proto::input::cluster_touch(),
             device_id: addresses.accessory.clone(),
             bt_mac: addresses.bt_mac.clone(),
             source_version: if source.is_empty() {

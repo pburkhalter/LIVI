@@ -523,6 +523,102 @@ async fn buttons_and_touch_go_to_the_active_phone() {
 }
 
 #[tokio::test]
+async fn with_the_switch_the_cluster_picture_takes_touches_and_the_knob() {
+    let mut rig = Rig::new();
+    rig.connect(1, true);
+    rig.drain();
+    let point = |id, x, phase| Point {
+        id,
+        x,
+        y: 0.5,
+        phase,
+    };
+    let fingers = Input::Pointer {
+        screen: Screen::Cluster,
+        points: vec![point(0, 0.25, Phase::Move), point(1, 1.5, Phase::Up)],
+    };
+    let turn = Input::ClusterKnob {
+        wheel: 1.0,
+        select: false,
+    };
+    rig.p.input(fingers.clone());
+    rig.p.input(turn.clone());
+    rig.p.asked(PerScreen {
+        main: Front::Cluster,
+        ..livi()
+    });
+    assert_eq!(rig.drain(), [CpCmd::ClusterActive(true)]);
+    rig.p.input(fingers.clone());
+    rig.p.input(turn.clone());
+    assert!(rig.drain().is_empty(), "nothing without the switch");
+
+    rig.p.cluster_touch = true;
+    rig.p.input(Input::Pointer {
+        screen: Screen::Cluster,
+        points: vec![],
+    });
+    rig.p.input(Input::Pointer {
+        screen: Screen::Aux,
+        points: vec![point(0, 0.25, Phase::Down)],
+    });
+    assert!(rig.drain().is_empty());
+    rig.p.input(fingers.clone());
+    rig.p.input(turn.clone());
+    rig.p.input(Input::ClusterKnob {
+        wheel: 0.0,
+        select: true,
+    });
+    let wheel = KnobState {
+        wheel: 1.0,
+        ..Default::default()
+    };
+    let select = KnobState {
+        select: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        rig.drain(),
+        [
+            stack(
+                1,
+                StackCmd::ClusterTouches(vec![
+                    Touch {
+                        x: 0.25,
+                        y: 0.5,
+                        down: true
+                    },
+                    Touch {
+                        x: 1.0,
+                        y: 0.5,
+                        down: false
+                    },
+                ])
+            ),
+            stack(
+                1,
+                StackCmd::ClusterKnob {
+                    state: wheel,
+                    momentary: true
+                }
+            ),
+            stack(
+                1,
+                StackCmd::ClusterKnob {
+                    state: select,
+                    momentary: false
+                }
+            ),
+        ]
+    );
+
+    rig.p.asked(livi());
+    assert_eq!(rig.drain(), [CpCmd::ClusterActive(false)]);
+    rig.p.input(fingers);
+    rig.p.input(turn);
+    assert!(rig.drain().is_empty(), "the picture is gone");
+}
+
+#[tokio::test]
 async fn media_keys_go_to_the_radio_while_it_is_the_source() {
     let mut rig = Rig::new();
     let (tx, mut radio) = mpsc::unbounded_channel();

@@ -2,11 +2,29 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::Screen;
 
+/// Trial: whether the phone's cluster picture takes touches and a knob (`LIVI_CLUSTER_TOUCH=1`). The core announces the
+/// devices and forwards to them, the UI sends what lands on the map.
+pub fn cluster_touch() -> bool {
+    std::env::var("LIVI_CLUSTER_TOUCH").is_ok_and(|v| v == "1")
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Input {
-    Pointer { screen: Screen, points: Vec<Point> },
-    Key { code: String, down: bool },
+    Pointer {
+        screen: Screen,
+        points: Vec<Point>,
+    },
+    Key {
+        code: String,
+        down: bool,
+    },
+    /// The knob of the cluster picture: `wheel` is a turn by that many detents, which rests again by itself,
+    /// `select` its button, held until the next one says otherwise
+    ClusterKnob {
+        wheel: f64,
+        select: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -46,6 +64,18 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&input).unwrap(),
             json!({ "kind": "pointer", "screen": "main", "points": [{ "id": 0, "x": 0.25, "y": 0.5, "phase": "down" }] })
+        );
+    }
+
+    #[test]
+    fn the_cluster_knob_on_the_wire() {
+        let input = Input::ClusterKnob {
+            wheel: -1.0,
+            select: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&input).unwrap(),
+            json!({ "kind": "clusterKnob", "wheel": -1.0, "select": false })
         );
     }
 

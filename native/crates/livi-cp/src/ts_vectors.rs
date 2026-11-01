@@ -76,6 +76,7 @@ fn info_config() -> InfoConfig {
         }],
         right_hand_drive: true,
         theme_displays: None,
+        cluster_touch: false,
     }
 }
 
