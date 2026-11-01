@@ -28,13 +28,8 @@ export struct VideoCardData {
     left: int,
     right: int,
     radius: int,
-    // the button on the card, from its left and bottom edge in pixels of the window; both 0: top right (settings
-    // videoButtonLeft, videoButtonBottom), and whether it steps between the cards only (videoCardsOnly)
-    button-left: int,
-    button-bottom: int,
-    // room above it for a button of the plugin, in pixels of the window (videoButtonAbove)
-    button-above: int,
-    cards-only: bool,
+    // no button on the picture to switch the view (setting videoButtonHidden)
+    button-hidden: bool,
 }
 
 // A page of the UI plugin, as the window shows it
@@ -156,17 +151,11 @@ export component AppWindow inherits Window {
     property <bool> bars-shown: !root.nav-hidden && !root.plugin-bars-hidden;
     // where the button is, for touches the phone must not get (touch_ui.rs)
     out property <bool> video-button-shown: root.page == Page.projection && root.phone == PhoneState.streaming
-        && root.card-set;
+        && root.card-set && !root.video-card.button-hidden;
     out property <length> video-button-size: 72px;
-    out property <length> video-button-above: root.video-card-shown ? root.video-card.button-above * 1px : 0px;
-    property <bool> video-button-placed: root.video-card.button-left + root.video-card.button-bottom > 0;
-    out property <length> video-button-x: !root.video-card-shown ? 20px
-        : root.video-button-placed ? root.card-left + root.video-card.button-left * 1px
-        : root.width - root.card-right - 20px - self.video-button-size;
-    out property <length> video-button-y: !root.video-card-shown ? 20px
-        : root.video-button-placed
-            ? root.height - root.card-bottom - root.video-card.button-bottom * 1px - self.video-button-size
-        : root.card-top + 20px;
+    out property <length> video-button-x: root.video-card-shown
+        ? root.width - root.card-right - 20px - self.video-button-size : 20px;
+    out property <length> video-button-y: root.video-card-shown ? root.card-top + 20px : 20px;
 
     public function wake-nav() {
         root.nav-asleep = false;
@@ -410,7 +399,7 @@ export component AppWindow inherits Window {
             viewbox-height: 24;
             fill: #ffffff;
             // Material "fullscreen" and "fullscreen exit"
-            commands: root.video-card-shown && !(root.video-card.cards-only && root.video-card.wide)
+            commands: root.video-card-shown
                 ? "M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
                 : "M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z";
         }

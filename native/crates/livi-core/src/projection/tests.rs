@@ -287,6 +287,18 @@ async fn a_session_without_video_keeps_the_ui_in_front() {
 }
 
 #[tokio::test]
+async fn the_phone_can_stay_where_it_was_when_it_comes_to_the_front() {
+    let mut rig = Rig::new();
+    rig.p.config_seen.projection_keeps_app = true;
+    rig.want(Front::Livi);
+    rig.p.asked(PerScreen {
+        main: Front::Projection,
+        ..rig.p.asked
+    });
+    assert!(!rig.drain().iter().any(|c| *c == stack(1, home())));
+}
+
+#[tokio::test]
 async fn the_first_phone_projects_where_the_ui_asks() {
     let mut rig = Rig::new();
     rig.want(Front::Projection);

@@ -50,13 +50,8 @@ pub struct VideoCard {
     pub left: u32,
     pub right: u32,
     pub radius: u32,
-    /// the button on the card, from its left and bottom edge in pixels of the window; both 0: top right
-    pub button_left: u32,
-    pub button_bottom: u32,
-    /// room above it for a button of the plugin
-    pub button_above: u32,
-    /// the button steps between the cards only
-    pub cards_only: bool,
+    /// no button on the picture to switch the view
+    pub button_hidden: bool,
 }
 
 impl VideoCard {
@@ -107,10 +102,7 @@ impl VideoCard {
             left,
             right,
             radius: n("videoCardRadius"),
-            button_left: n("videoButtonLeft"),
-            button_bottom: n("videoButtonBottom"),
-            button_above: n("videoButtonAbove"),
-            cards_only: state["config"]["videoCardsOnly"].as_bool().unwrap_or(false),
+            button_hidden: state["config"]["videoButtonHidden"].as_bool().unwrap_or(false),
         }
     }
 }
@@ -305,13 +297,10 @@ mod tests {
     }
 
     #[test]
-    fn the_place_and_the_steps_of_the_button_come_from_the_settings() {
-        let card = VideoCard::read(&json!({ "config": {
-            "videoButtonLeft": 16, "videoButtonBottom": 52, "videoButtonAbove": 84,
-            "videoCardsOnly": true } }));
-        assert_eq!((card.button_left, card.button_bottom, card.button_above), (16, 52, 84));
-        assert!(card.cards_only);
-        assert!(!VideoCard::read(&json!({})).cards_only);
+    fn the_button_on_the_picture_can_be_left_out() {
+        let card = VideoCard::read(&json!({ "config": { "videoButtonHidden": true } }));
+        assert!(card.button_hidden);
+        assert!(!VideoCard::read(&json!({})).button_hidden);
     }
 
     #[test]

@@ -293,9 +293,8 @@ bars instead of full screen, like its own pages. The settings (Video, Main Video
 | `videoCardTop`, `videoCardBottom`, `videoCardLeft`, `videoCardRight`, `videoCardRadius` | the card, in pixels of the phone's picture (`projectionWidth` x `projectionHeight`, like the view area); all 0: no card. A card that leaves less than 64 pixels of the picture either way counts as none |
 | `projectionWide`, `videoWideTop`, `videoWideBottom`, `videoWideLeft`, `videoWideRight` | a second, wider card, e.g. up to the window's edges on three sides, with the same corner radius; `projectionWide` shows it instead of the card |
 | `videoCardBleedTop`, `videoCardBleedBottom`, `videoCardBleedLeft`, `videoCardBleedRight` | how far the view area told to the phone reaches beyond either card, in pixels of its picture; it ends at the picture's edges. What CarPlay draws at the rim of its area, its bar on the side, a margin, round corners, then lies outside the card, under what the plugin draws around it. The card stays what shows and what takes touches; default 0 |
-| `videoButtonLeft`, `videoButtonBottom` | where the button that switches the view sits on a card, in pixels of the window from the card's left and bottom edge; both 0: at the top right |
-| `videoButtonAbove` | room above that button for a button of the plugin in its overlay, in pixels of the window: touches there go to the plugin, not to the phone; default 0 |
-| `videoCardsOnly` | the button steps between the cards only, full screen is not one of its steps; default false |
+| `videoButtonHidden` | no button on the phone's picture to switch the view: the plugin has its own (`Livi.action("video-view", …)`), or the view stays as set; default false |
+| `projectionKeepsApp` | coming to the front, the phone stays where it was; otherwise it goes to its home screen; default false |
 
 - CarPlay knows its view areas from the start, full screen, the card and the wider card if one is set, and draws only in the one it is told. The
   picture keeps its size; CarPlay leaves the rest. Android Auto stays full screen, without the button.
