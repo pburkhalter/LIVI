@@ -14,12 +14,37 @@ pub const SOCK_PATH: &str = "/tmp/livi-shared.sock";
 const WAKE_UUID: &str = "0000111f-0000-1000-8000-00805f9b34fb";
 
 type SetPlaybackStatus = Box<dyn Fn(&str) + Send + Sync>;
+type SetTrack = Box<dyn Fn(Track) + Send + Sync>;
+
+/// What plays, as the phone tells it, for whoever shows it over AVRCP.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Track {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub duration_ms: u64,
+}
+
+impl Track {
+    /// One line of the socket: `track {"title":…,"artist":…,"album":…,"durationMs":…}`, what is missing stays empty.
+    fn parse(json: &str) -> Option<Track> {
+        let v: serde_json::Value = serde_json::from_str(json).ok()?;
+        let text = |key: &str| v[key].as_str().unwrap_or_default().to_string();
+        v.is_object().then(|| Track {
+            title: text("title"),
+            artist: text("artist"),
+            album: text("album"),
+            duration_ms: v["durationMs"].as_u64().unwrap_or(0),
+        })
+    }
+}
 
 pub struct SharedSockDeps {
     pub adapter: String,
     pub wifi_iface: String,
     pub events: Broadcaster,
     pub set_playback_status: SetPlaybackStatus,
+    pub set_track: SetTrack,
     pub deauth_dongle: Option<fn() -> Option<usize>>,
 }
 
@@ -73,6 +98,13 @@ async fn handle(
                 ok_json()
             }
             other => err_json(&format!("unknown playback status: {other}")),
+        },
+        "track" => match Track::parse(arg) {
+            Some(track) => {
+                (deps.set_track)(track);
+                ok_json()
+            }
+            None => err_json("track needs a JSON object"),
         },
         "deauth-ap" => {
             let count = match deps.deauth_dongle {

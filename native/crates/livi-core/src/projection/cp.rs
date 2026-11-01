@@ -319,6 +319,44 @@ impl Projection {
         }
         if self.is_active(link) {
             self.publish();
+            self.tell_bluetooth();
         }
+    }
+
+    /// The phone's song on to the helper's Bluetooth player, whose metadata a car's head unit shows over AVRCP. CarPlay
+    /// plays through this board, so the player knows nothing else of it.
+    fn tell_bluetooth(&mut self) {
+        let Some(song) = self.active().map(|s| &s.now_playing) else {
+            return;
+        };
+        let now = (
+            song.title.clone(),
+            song.artist.clone(),
+            song.album.clone(),
+            song.duration_ms.map(|ms| ms as u64),
+            song.playing,
+        );
+        if now == self.told_bluetooth {
+            return;
+        }
+        let before = std::mem::replace(&mut self.told_bluetooth, now.clone());
+        let (title, artist, album, duration_ms, playing) = now;
+        let mut lines = Vec::new();
+        if (&title, &artist, &album, duration_ms) != (&before.0, &before.1, &before.2, before.3) {
+            let track = serde_json::json!({
+                "title": title, "artist": artist, "album": album, "durationMs": duration_ms,
+            });
+            lines.push(format!("track {track}"));
+        }
+        if let Some(playing) = playing.filter(|_| playing != before.4) {
+            lines.push(format!("playback-status {}", if playing { "playing" } else { "paused" }));
+        }
+        tokio::spawn(async move {
+            for line in lines {
+                if let Err(e) = devices::shared(line, Duration::from_secs(2)).await {
+                    eprintln!("[bluetooth] the song not sent: {e}");
+                }
+            }
+        });
     }
 }

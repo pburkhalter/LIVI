@@ -514,6 +514,13 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
                 adapter: adapter.clone(),
                 wifi_iface: wifi_iface.clone(),
                 events: shared_events,
+                set_track: {
+                    let mpris = mpris.clone();
+                    Box::new(move |track| {
+                        let Some(h) = mpris.clone() else { return };
+                        tokio::spawn(async move { h.set_track(track).await });
+                    })
+                },
                 set_playback_status: Box::new(move |state| {
                     let Some(h) = mpris.clone() else { return };
                     let status = match state {

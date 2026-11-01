@@ -425,6 +425,7 @@ pub fn run() -> ExitCode {
             wifi_iface: String::new(),
             events: Broadcaster::default(),
             set_playback_status: Box::new(|_| {}),
+            set_track: Box::new(|_| {}),
             deauth_dongle: dongle_ap.then_some(livi_link_host::ap::deauth as fn() -> Option<usize>),
         };
         tokio::spawn(async move {

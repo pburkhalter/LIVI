@@ -4,7 +4,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use livi_runtime::livi_sock::Broadcaster;
-use livi_runtime::shared_sock::{SharedSockDeps, serve};
+use livi_runtime::shared_sock::{SharedSockDeps, serve, Track};
 
 fn deps() -> SharedSockDeps {
     SharedSockDeps {
@@ -12,6 +12,7 @@ fn deps() -> SharedSockDeps {
         wifi_iface: "none0".into(),
         events: Broadcaster::default(),
         set_playback_status: Box::new(|_| {}),
+        set_track: Box::new(|_| {}),
         deauth_dongle: Some(|| Some(2)),
     }
 }
@@ -68,9 +69,12 @@ async fn the_player_state_and_the_events_reach_their_ends() {
     let path = path("player");
     let states = Arc::new(Mutex::new(Vec::new()));
     let heard = states.clone();
+    let tracks = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let told = tracks.clone();
     let events = Broadcaster::default();
     let deps = SharedSockDeps {
         set_playback_status: Box::new(move |s| heard.lock().unwrap().push(s.to_string())),
+        set_track: Box::new(move |t| told.lock().unwrap().push(t)),
         events: events.clone(),
         ..deps()
     };
@@ -91,6 +95,21 @@ async fn the_player_state_and_the_events_reach_their_ends() {
             .contains("\"ok\":false")
     );
     assert_eq!(*states.lock().unwrap(), vec!["playing".to_string()]);
+    assert!(
+        request(&path, r#"track {"title":"Song","artist":"Band","durationMs":2000}"#)
+            .await
+            .contains("\"ok\":true")
+    );
+    assert_eq!(
+        tracks.lock().unwrap().as_slice(),
+        [Track {
+            title: "Song".into(),
+            artist: "Band".into(),
+            album: String::new(),
+            duration_ms: 2000,
+        }]
+    );
+    assert!(request(&path, "track nothing").await.contains("\"ok\":false"));
     assert!(
         request(&path, "list_paired")
             .await

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::os::fd::OwnedFd;
 
+use crate::shared_sock::Track;
 use tokio::sync::mpsc;
 use zbus::Connection;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
@@ -700,15 +701,62 @@ impl MprisRoot {
 pub struct MprisPlayer {
     events: crate::livi_sock::Broadcaster,
     status: std::sync::Arc<std::sync::Mutex<String>>,
+    track: std::sync::Arc<std::sync::Mutex<Track>>,
+}
+
+/// BlueZ gives these to the other side over AVRCP: a car's head unit shows them as its Bluetooth source.
+fn track_metadata(track: &Track) -> HashMap<String, OwnedValue> {
+    let mut fields = HashMap::new();
+    let mut put = |key: &str, value: Value<'_>| {
+        if let Ok(value) = OwnedValue::try_from(value) {
+            fields.insert(key.to_string(), value);
+        }
+    };
+    if !track.title.is_empty() {
+        put("xesam:title", Value::from(track.title.as_str()));
+    }
+    if !track.artist.is_empty() {
+        put("xesam:artist", Value::from(vec![track.artist.as_str()]));
+    }
+    if !track.album.is_empty() {
+        put("xesam:album", Value::from(track.album.as_str()));
+    }
+    if track.duration_ms > 0 {
+        put("mpris:length", Value::from(track.duration_ms as i64 * 1000));
+    }
+    fields
 }
 
 #[derive(Clone)]
 pub struct MediaPlayerHandle {
     conn: Connection,
     status: std::sync::Arc<std::sync::Mutex<String>>,
+    track: std::sync::Arc<std::sync::Mutex<Track>>,
 }
 
 impl MediaPlayerHandle {
+    pub async fn set_track(&self, track: Track) {
+        {
+            let mut now = self.track.lock().unwrap();
+            if *now == track {
+                return;
+            }
+            *now = track;
+        }
+        if let Ok(iface) = self
+            .conn
+            .object_server()
+            .interface::<_, MprisPlayer>(PLAYER_PATH)
+            .await
+        {
+            let _ = iface
+                .get()
+                .await
+                .metadata_changed(iface.signal_emitter())
+                .await;
+        }
+    }
+
     pub async fn set_status(&self, status: &str) {
         {
             let mut s = self.status.lock().unwrap();
@@ -788,7 +836,7 @@ impl MprisPlayer {
 
     #[zbus(property, name = "Metadata")]
     fn metadata(&self) -> HashMap<String, OwnedValue> {
-        HashMap::new()
+        track_metadata(&self.track.lock().unwrap())
     }
 
     #[zbus(property, name = "Volume")]
@@ -848,6 +896,7 @@ pub async fn start_media_player(
     events: crate::livi_sock::Broadcaster,
 ) -> Result<MediaPlayerHandle, Box<dyn Error>> {
     let status = std::sync::Arc::new(std::sync::Mutex::new("Playing".to_string()));
+    let track = std::sync::Arc::new(std::sync::Mutex::new(Track::default()));
     conn.object_server().at(PLAYER_PATH, MprisRoot).await?;
     conn.object_server()
         .at(
@@ -855,6 +904,7 @@ pub async fn start_media_player(
             MprisPlayer {
                 events,
                 status: status.clone(),
+                track: track.clone(),
             },
         )
         .await?;
@@ -888,6 +938,7 @@ pub async fn start_media_player(
     Ok(MediaPlayerHandle {
         conn: conn.clone(),
         status,
+        track,
     })
 }
 
@@ -987,5 +1038,24 @@ mod tests {
         assert!(busy_answer("org.bluez.Error.Failed", Some("Busy")));
         assert!(!busy_answer("org.bluez.Error.Failed", Some("Not Powered")));
         assert!(!busy_answer("org.bluez.Error.Blocked", Some("Busy")));
+    }
+}
+
+#[cfg(test)]
+mod track_tests {
+    use super::*;
+
+    #[test]
+    fn only_what_the_phone_told_goes_out() {
+        let fields = track_metadata(&Track {
+            title: "Song".into(),
+            artist: "Band".into(),
+            album: String::new(),
+            duration_ms: 2000,
+        });
+        assert_eq!(fields.len(), 3);
+        assert!(!fields.contains_key("xesam:album"));
+        assert_eq!(i64::try_from(&fields["mpris:length"]).unwrap(), 2_000_000);
+        assert!(track_metadata(&Track::default()).is_empty());
     }
 }

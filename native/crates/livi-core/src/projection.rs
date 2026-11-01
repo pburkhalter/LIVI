@@ -423,6 +423,8 @@ pub struct Drivers {
 
 pub struct Projection {
     hub: Arc<Hub>,
+    // what the car's Bluetooth display last heard (cp.rs, tell_bluetooth)
+    told_bluetooth: (Option<String>, Option<String>, Option<String>, Option<u64>, Option<bool>),
     cp: CpHandle,
     aa: AaHandle,
     aa_crop: watch::Receiver<Option<Crop>>,
@@ -621,6 +623,7 @@ impl Projection {
             reversing: false,
             camera_found: false,
             config_seen: cfg,
+            told_bluetooth: Default::default(),
             cp_telemetry: CpTelemetry::new(HelperSock::default()),
             aa_telemetry: AaTelemetry::default(),
             bye: None,
