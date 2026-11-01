@@ -590,7 +590,7 @@ fn light(
         scale: Scale::from(1.0),
         transform,
     };
-    let surface = DrmCompositor::new(
+    let mut surface = DrmCompositor::new(
         source,
         surface,
         None,
@@ -602,6 +602,7 @@ fn light(
         Some(drm.gbm.clone()),
     )
     .map_err(|e| e.to_string())?;
+    surface.set_full_damage(*crate::levers::FULL_DAMAGE);
     let output = Output {
         screen_idx,
         connector: name.to_string(),
@@ -800,7 +801,9 @@ fn drawn(state: &mut LiviState, crtc: crtc::Handle, frame: u64) {
         return;
     }
     output.frame_pending = true;
-    crate::host::send_frame_callbacks(state);
+    if !*crate::levers::EARLY_CALLBACK {
+        crate::host::send_frame_callbacks(state);
+    }
 }
 
 pub fn damage(state: &mut LiviState) {
@@ -1006,6 +1009,12 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
                     output.drawing = Some(drm.frames);
                     // the GPU reads them now; released on the vblank after the flip in `drawn`
                     output.held = held;
+                    // `held` keeps the client from drawing into what the GPU reads, the callback says nothing about
+                    // it: the client's next frame can start here, next to the GPU's work, instead of after it
+                    if *crate::levers::EARLY_CALLBACK {
+                        drop(frame);
+                        crate::host::send_frame_callbacks(state);
+                    }
                     return;
                 }
                 if let Err(e) = element.sync.wait() {

@@ -7,6 +7,7 @@ use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
 };
 use smithay::backend::renderer::element::texture::TextureRenderElement;
+use smithay::backend::renderer::element::utils::CropRenderElement;
 use smithay::backend::renderer::gles::element::TextureShaderElement;
 use smithay::backend::renderer::gles::{
     GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName, UniformType,
@@ -20,6 +21,7 @@ use crate::state::{BTN_GAP, BTN_W, Kind, LiviState, TITLEBAR_H};
 smithay::backend::renderer::element::render_elements! {
     pub LiviElement<=GlesRenderer>;
     Surface=WaylandSurfaceRenderElement<GlesRenderer>,
+    Cropped=CropRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
     Deco=MemoryRenderBufferRenderElement<GlesRenderer>,
     Calibrated=TextureShaderElement,
 }
@@ -208,12 +210,33 @@ fn collect_elements(state: &mut LiviState, screen_idx: usize) -> Vec<LiviElement
         }
     }
 
+    if *crate::levers::UI_HOLE {
+        crate::hole::refresh(state, screen_idx);
+    }
     let renderer = state.renderer.as_mut().unwrap();
     for t in state
         .toplevels
         .iter()
         .filter(|t| t.kind == Kind::Ui && t.screen_idx == screen_idx && !t.clear)
     {
+        if let Some(strips) = t.hole.strips(to_local(t.position)) {
+            for strip in strips {
+                elements.extend(
+                    render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<GlesRenderer>>(
+                        renderer,
+                        t.toplevel.wl_surface(),
+                        to_local(t.position),
+                        scale,
+                        1.0,
+                        ElementKind::Unspecified,
+                    )
+                    .into_iter()
+                    .filter_map(|element| CropRenderElement::from_element(element, scale, strip))
+                    .map(LiviElement::Cropped),
+                );
+            }
+            continue;
+        }
         elements.extend(
             render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<GlesRenderer>>(
                 renderer,
@@ -353,6 +376,7 @@ pub fn render_screen(state: &mut LiviState, screen_idx: usize) {
 
     let parts = frame_parts(state, screen_idx);
     let mut tracker = OutputDamageTracker::new((width, height), 1.0, Transform::Flipped180);
+    tracker.set_full_damage(*crate::levers::FULL_DAMAGE);
 
     let res = {
         let renderer = state.renderer.as_mut().unwrap();

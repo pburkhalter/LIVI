@@ -2,9 +2,11 @@ mod cal;
 mod ctrl;
 mod deco;
 mod drm;
+mod hole;
 mod host;
 mod input;
 mod layout;
+mod levers;
 mod projection;
 mod render;
 mod shell;
@@ -42,6 +44,7 @@ fn main() {
         .filter_module("tracing::span", log::LevelFilter::Off)
         .init();
 
+    levers::announce();
     let startup_cmd = parse_args();
 
     let mut event_loop: EventLoop<LiviState> =
