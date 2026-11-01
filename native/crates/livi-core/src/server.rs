@@ -228,6 +228,10 @@ impl Core {
                 self.open_projection(&app);
                 Ok(())
             }
+            Action::PhoneHome => {
+                let _ = self.asks.commands.send(UiCommand::PhoneHome);
+                Ok(())
+            }
             Action::ImportMfi { file, path } => {
                 match crate::mfi::import(&self.mfi_dir, file, std::path::Path::new(&path)) {
                     Ok(()) => self.refresh_mfi().await,

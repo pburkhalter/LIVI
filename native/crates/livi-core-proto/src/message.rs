@@ -138,6 +138,8 @@ pub enum Action {
     OpenApp {
         app: String,
     },
+    /// The home key of the phone's own screen: what a press in its picture would do
+    PhoneHome,
     SelectClusterLayout {
         layout: String,
     },
