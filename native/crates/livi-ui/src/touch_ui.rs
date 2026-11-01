@@ -17,20 +17,6 @@ thread_local! {
     static FLUSH_DUE: Cell<bool> = const { Cell::new(false) };
 }
 
-thread_local! {
-    // a plugin's own place on the phone's picture: x, y, width, height in pixels of the window
-    static KEPT: Cell<Option<[f64; 4]>> = const { Cell::new(None) };
-}
-
-/// A plugin's button on the phone's picture: touches in this area stay with the plugin
-pub fn keep(area: Option<[f64; 4]>) {
-    KEPT.set(area);
-}
-
-fn kept(area: Option<[f64; 4]>, x: f64, y: f64) -> bool {
-    area.is_some_and(|[ax, ay, w, h]| (ax..=ax + w).contains(&x) && (ay..=ay + h).contains(&y))
-}
-
 fn picture(ui: &AppWindow, x: f64, y: f64) -> Option<(f64, f64)> {
     let size = ui.window().size();
     let (ww, wh) = (f64::from(size.width), f64::from(size.height));
@@ -60,9 +46,6 @@ fn for_phone(ui: &AppWindow, x: f64, y: f64) -> bool {
         if (bx..=bx + size).contains(&x) && (by..=by + size).contains(&y) {
             return false;
         }
-    }
-    if kept(KEPT.get(), x, y) {
-        return false;
     }
     if !ui.get_video_card_shown() {
         return true;
@@ -106,18 +89,4 @@ pub fn handle(ui: &AppWindow, client: &Client, touch: &winit::event::Touch) -> b
         });
     }
     true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_plugins_area_keeps_its_touches() {
-        let area = Some([10.0, 20.0, 80.0, 80.0]);
-        assert!(kept(area, 10.0, 20.0));
-        assert!(kept(area, 90.0, 100.0));
-        assert!(!kept(area, 91.0, 50.0));
-        assert!(!kept(None, 50.0, 50.0));
-    }
 }
