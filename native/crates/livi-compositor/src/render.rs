@@ -14,8 +14,15 @@ use smithay::backend::renderer::gles::{
 use smithay::backend::renderer::sync::SyncPoint;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Offscreen, Renderer};
 use smithay::utils::{Logical, Point, Rectangle, Transform};
+use std::sync::LazyLock;
 
+use crate::projection::STREAM_TAG;
 use crate::state::{BTN_GAP, BTN_W, Kind, LiviState, TITLEBAR_H};
+
+/// Probe P131, lever 4: LIVI_PROBE_NO_UI_OVER_VIDEO leaves LIVI's UI out while the phone's picture is on this screen, the
+/// upper limit of not blending it over the video. Touches still reach it, it only is not drawn.
+static PROBE_NO_UI_OVER_VIDEO: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("LIVI_PROBE_NO_UI_OVER_VIDEO").is_some());
 
 smithay::backend::renderer::element::render_elements! {
     pub LiviElement<=GlesRenderer>;
@@ -208,11 +215,15 @@ fn collect_elements(state: &mut LiviState, screen_idx: usize) -> Vec<LiviElement
         }
     }
 
+    let no_ui = *PROBE_NO_UI_OVER_VIDEO
+        && state.toplevels.iter().any(|t| {
+            t.kind == Kind::Video && t.tag == STREAM_TAG && t.visible && t.screen_idx == screen_idx
+        });
     let renderer = state.renderer.as_mut().unwrap();
     for t in state
         .toplevels
         .iter()
-        .filter(|t| t.kind == Kind::Ui && t.screen_idx == screen_idx && !t.clear)
+        .filter(|t| t.kind == Kind::Ui && t.screen_idx == screen_idx && !t.clear && !no_ui)
     {
         elements.extend(
             render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<GlesRenderer>>(

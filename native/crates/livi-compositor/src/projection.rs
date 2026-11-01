@@ -13,7 +13,7 @@ use smithay::wayland::shm::{BufferData, with_buffer_contents};
 
 use crate::state::{Kind, LiviState};
 
-const STREAM_TAG: &str = "main";
+pub const STREAM_TAG: &str = "main";
 const MOVE_EVERY: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy, Debug, PartialEq)]

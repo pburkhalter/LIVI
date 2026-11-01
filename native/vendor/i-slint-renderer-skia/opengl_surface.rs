@@ -3,6 +3,8 @@
 
 // cSpell: ignore fboid
 use std::num::NonZeroU32;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{cell::RefCell, sync::Arc};
 
 use glutin::{
@@ -19,6 +21,64 @@ use i_slint_core::platform::PlatformError;
 use i_slint_core::renderer::DrawOutcome;
 
 use crate::SkiaSharedContext;
+
+/// The probe switches of this copy (P126, P131), read once. With none of them set `render` draws and swaps as upstream
+/// does and writes nothing. docs/messungen/2026-11-01_flacker-pruefbau.md in the T100 repo lists them.
+struct Probe {
+    /// LIVI_SKIA_AGE_LOG: the age and the area of each frame
+    age_log: bool,
+    /// LIVI_SKIA_FINISH=1: glFinish before the swap, the time it takes is the GPU's
+    finish: bool,
+    /// LIVI_SKIA_DAMAGE=1: tells EGL the area of each frame instead of the whole window
+    damage: bool,
+    /// LIVI_SKIA_DAMAGE=noflip: the same with y left as it is, so wrong on purpose: the preview's control that a wrong
+    /// area shows at all. Never on the board.
+    damage_noflip: bool,
+}
+
+static PROBE: LazyLock<Probe> = LazyLock::new(|| {
+    let damage = std::env::var("LIVI_SKIA_DAMAGE").ok();
+    Probe {
+        age_log: std::env::var_os("LIVI_SKIA_AGE_LOG").is_some(),
+        finish: std::env::var("LIVI_SKIA_FINISH").is_ok_and(|v| v == "1"),
+        damage: damage.is_some(),
+        damage_noflip: damage.as_deref() == Some("noflip"),
+    }
+});
+
+impl Probe {
+    fn logs(&self) -> bool {
+        self.age_log || self.finish || self.damage
+    }
+}
+
+fn ms(time: Duration) -> f64 {
+    time.as_secs_f64() * 1000.0
+}
+
+/// The areas Slint reports, for EGL: physical pixels with y counted from the bottom edge, one rectangle each, and how
+/// much of the window they cover in percent.
+fn damage_rects(
+    dirty: &DirtyRegion,
+    scale: f32,
+    size: PhysicalWindowSize,
+    flip: bool,
+) -> (Vec<glutin::surface::Rect>, f64) {
+    let scale = i_slint_core::lengths::ScaleFactor::new(scale);
+    let height = size.height as i32;
+    let mut pixels = 0.0;
+    let rects: Vec<_> = dirty
+        .iter()
+        .map(|r| {
+            let r = (r * scale).to_rect().round_out();
+            let (x, y, w, h) =
+                (r.origin.x as i32, r.origin.y as i32, r.size.width as i32, r.size.height as i32);
+            pixels += f64::from(w) * f64::from(h);
+            glutin::surface::Rect::new(x, if flip { height - y - h } else { y }, w, h)
+        })
+        .collect();
+    (rects, pixels * 100.0 / (f64::from(size.width) * f64::from(size.height)).max(1.0))
+}
 
 /// Wraps a [`glutin::context::PossiblyCurrentContext`] and makes it not-current on drop,
 /// so that no stale thread-local state remains after the context is destroyed.
@@ -97,7 +157,7 @@ impl super::Surface for OpenGLSurface {
 
     fn render(
         &self,
-        _window: &Window,
+        window: &Window,
         size: PhysicalWindowSize,
         callback: &dyn Fn(
             &skia_safe::Canvas,
@@ -130,30 +190,62 @@ impl super::Surface for OpenGLSurface {
         }
 
         let skia_canvas = surface.canvas();
+        let started = PROBE.logs().then(Instant::now);
 
         skia_canvas.save();
-        callback(
-            skia_canvas,
-            Some(gr_context),
-            {
-                let age = self.glutin_surface.buffer_age();
-                if std::env::var_os("LIVI_SKIA_AGE_LOG").is_some() {
-                    eprintln!("[age] {age}");
-                }
-                u8::try_from(age).unwrap_or_default()
-            },
-        );
+        let age = self.glutin_surface.buffer_age();
+        if PROBE.age_log {
+            eprintln!("[age] {age}");
+        }
+        let dirty = callback(skia_canvas, Some(gr_context), u8::try_from(age).unwrap_or_default());
         skia_canvas.restore();
+
+        // the CPU's part ends here: with LIVI_SKIA_FINISH nothing of Skia's may wait behind glFinish
+        let cpu = started.map(|started| {
+            if PROBE.finish {
+                gr_context.flush_and_submit();
+            }
+            started.elapsed()
+        });
+        let gpu = PROBE.finish.then(|| {
+            let finish_started = Instant::now();
+            self.gl_finish();
+            finish_started.elapsed()
+        });
 
         if let Some(pre_present_callback) = pre_present_callback.borrow_mut().as_mut() {
             pre_present_callback();
         }
 
-        self.glutin_surface.swap_buffers(current_context).map(|_| DrawOutcome::Success).map_err(
-            |glutin_error| {
-                format!("Skia OpenGL Renderer: Error swapping buffers: {glutin_error}").into()
-            },
-        )
+        let (rects, area) = match &dirty {
+            Some(dirty) if PROBE.logs() => {
+                damage_rects(dirty, window.scale_factor(), size, !PROBE.damage_noflip)
+            }
+            _ => (Vec::new(), 100.0),
+        };
+        let swap_started = Instant::now();
+        let swapped = if PROBE.damage && dirty.is_some() {
+            self.swap_with_damage(current_context, &rects)
+        } else {
+            self.glutin_surface.swap_buffers(current_context)
+        };
+
+        if let Some(cpu) = cpu {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+            eprintln!(
+                "[skia] {} age={age} rects={} area={area:.2} cpu={:.2} gpu={} swap={:.2} damage={}",
+                now.as_millis(),
+                rects.len(),
+                ms(cpu),
+                gpu.map_or("-".to_string(), |gpu| format!("{:.2}", ms(gpu))),
+                ms(swap_started.elapsed()),
+                u8::from(PROBE.damage && dirty.is_some()),
+            );
+        }
+
+        swapped.map(|_| DrawOutcome::Success).map_err(|glutin_error| {
+            format!("Skia OpenGL Renderer: Error swapping buffers: {glutin_error}").into()
+        })
     }
 
     fn resize_event(&self, size: PhysicalWindowSize) -> Result<(), PlatformError> {
@@ -222,6 +314,34 @@ impl super::Surface for OpenGLSurface {
 }
 
 impl OpenGLSurface {
+    /// LIVI_SKIA_FINISH: waits for the GPU. The context is current, render made it so.
+    fn gl_finish(&self) {
+        let finish = self.glutin_context.display().get_proc_address(c"glFinish");
+        if finish.is_null() {
+            eprintln!("[skia] the driver has no glFinish");
+            return;
+        }
+        // SAFETY: the name is glFinish, which takes nothing and returns nothing
+        let finish: unsafe extern "system" fn() = unsafe { std::mem::transmute(finish) };
+        unsafe { finish() }
+    }
+
+    /// LIVI_SKIA_DAMAGE: glutin has this on its EGL surface only, and falls back to a plain swap without the extension
+    fn swap_with_damage(
+        &self,
+        context: &glutin::context::PossiblyCurrentContext,
+        rects: &[glutin::surface::Rect],
+    ) -> glutin::error::Result<()> {
+        match (&self.glutin_surface, context) {
+            #[cfg(target_os = "linux")]
+            (
+                glutin::surface::Surface::Egl(surface),
+                glutin::context::PossiblyCurrentContext::Egl(context),
+            ) => surface.swap_buffers_with_damage(context, rects),
+            _ => self.glutin_surface.swap_buffers(context),
+        }
+    }
+
     pub fn new_with_config(
         window_handle: Arc<dyn raw_window_handle::HasWindowHandle>,
         display_handle: Arc<dyn raw_window_handle::HasDisplayHandle>,

@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
-use std::time::Instant;
+use std::sync::LazyLock;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::format::FormatSet;
@@ -38,6 +39,26 @@ use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke};
 
 use crate::render::LiviElement;
 use crate::state::{Kind, LiviState};
+
+// Probe switches (P126, P131), read once: with none of them set the compositor does what the branch t100 does.
+// docs/messungen/2026-11-01_flacker-pruefbau.md in the T100 repo lists them.
+/// LIVI_PROBE_FRAMES: a line for each frame when it is rendered and when the GPU has drawn it, with the time
+static PROBE_FRAMES: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("LIVI_PROBE_FRAMES").is_some());
+/// LIVI_PROBE_RESET_AGES: every frame drawn whole. The swapchain cannot change the age of the buffer on screen, it
+/// drops that one instead, so that each frame gets a new buffer: a test of what the two buffers do, not a fix
+static PROBE_RESET_AGES: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("LIVI_PROBE_RESET_AGES").is_some());
+/// LIVI_PROBE_EARLY_CALLBACK: the frame callbacks go out when the GPU starts a frame, not when it has finished it
+static PROBE_EARLY_CALLBACK: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("LIVI_PROBE_EARLY_CALLBACK").is_some());
+
+fn probe_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
 
 mod libinput;
 mod modes;
@@ -795,12 +816,17 @@ fn drawn(state: &mut LiviState, crtc: crtc::Handle, frame: u64) {
         return;
     };
     output.drawing = None;
+    if *PROBE_FRAMES {
+        log::info!("[drawn] {} {}", probe_ms(), output.connector);
+    }
     if let Err(e) = output.surface.queue_frame(()) {
         log::error!("display flip: {e}");
         return;
     }
     output.frame_pending = true;
-    crate::host::send_frame_callbacks(state);
+    if !*PROBE_EARLY_CALLBACK {
+        crate::host::send_frame_callbacks(state);
+    }
 }
 
 pub fn damage(state: &mut LiviState) {
@@ -969,32 +995,46 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
             return;
         }
     };
-    // probe P126: every frame in the log, and everything through the GPU instead of the display's planes
-    let probe = std::env::var_os("LIVI_PROBE_FRAMES").is_some();
-    let flags = if std::env::var_os("LIVI_PROBE_NO_SCANOUT").is_some() {
-        FrameFlags::empty()
-    } else {
-        FrameFlags::DEFAULT
-    };
+    if *PROBE_RESET_AGES {
+        output.surface.reset_buffer_ages();
+    }
     let flipped = match output
         .surface
-        .render_frame(renderer, &elements, clear, flags)
+        .render_frame(renderer, &elements, clear, FrameFlags::DEFAULT)
     {
         Ok(frame) if frame.is_empty => {
-            if probe {
-                log::info!("[frame] {} empty elements={}", output.connector, elements.len());
+            if *PROBE_FRAMES {
+                log::info!(
+                    "[frame] {} {} empty elements={}",
+                    probe_ms(),
+                    output.connector,
+                    elements.len()
+                );
             }
             false
         }
         Ok(frame) => {
-            if probe {
-                let primary = match &frame.primary_element {
-                    PrimaryPlaneElement::Swapchain(_) => "swapchain".to_string(),
-                    PrimaryPlaneElement::Element(_) => "direct".to_string(),
+            if *PROBE_FRAMES {
+                // the buffer by its address, the newest entry of the damage is what this frame drew
+                let (buffer, rects, pixels) = match &frame.primary_element {
+                    PrimaryPlaneElement::Swapchain(element) => {
+                        let newest = element.damage.raw().next();
+                        let (rects, pixels) = newest.map_or((0, 0), |damage| {
+                            damage.fold((0, 0), |(rects, pixels), r| {
+                                let size = i64::from(r.size.w) * i64::from(r.size.h);
+                                (rects + 1, pixels + size)
+                            })
+                        });
+                        (format!("{:p}", element.buffer()), rects, pixels)
+                    }
+                    PrimaryPlaneElement::Element(_) => ("direct".to_string(), 0, 0),
                 };
+                let (w, h) = output.logical();
                 log::info!(
-                    "[frame] {} primary {primary} overlays={} elements={}",
+                    "[frame] {} {} buffer={buffer} rects={rects} drawn={:.2} overlays={} elements={}",
+                    probe_ms(),
                     output.connector,
+                    pixels as f64 * 100.0 / (i64::from(w) * i64::from(h)).max(1) as f64,
                     frame.overlay_elements.len(),
                     elements.len()
                 );
@@ -1030,6 +1070,10 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
                     output.drawing = Some(drm.frames);
                     // the GPU reads them now; released on the vblank after the flip in `drawn`
                     output.held = held;
+                    if *PROBE_EARLY_CALLBACK {
+                        drop(frame);
+                        crate::host::send_frame_callbacks(state);
+                    }
                     return;
                 }
                 if let Err(e) = element.sync.wait() {
