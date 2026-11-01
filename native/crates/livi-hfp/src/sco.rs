@@ -145,7 +145,12 @@ mod kernel {
         Ok(fd)
     }
 
-    pub fn accept(listen: &OwnedFd) -> std::io::Result<Link> {
+    /// `allowed` sees the peer (least significant byte first) before the link is answered: with deferred setup,
+    /// closing the socket refuses it.
+    pub fn accept(
+        listen: &OwnedFd,
+        allowed: &dyn Fn(&[u8; 6]) -> bool,
+    ) -> std::io::Result<Link> {
         let mut addr = SockaddrSco {
             sco_family: 0,
             sco_bdaddr: [0; 6],
@@ -163,6 +168,9 @@ mod kernel {
             return Err(std::io::Error::last_os_error());
         }
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+        if !allowed(&addr.sco_bdaddr) {
+            return Err(std::io::ErrorKind::PermissionDenied.into());
+        }
         set(&fd, SOL_BLUETOOTH, BT_VOICE, &VOICE_CVSD_16BIT)?;
         let mut first = [0u8; 1];
         if unsafe { libc::read(fd.as_raw_fd(), first.as_mut_ptr().cast(), 1) } < 0 {
