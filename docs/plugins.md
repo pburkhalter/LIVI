@@ -303,6 +303,7 @@ bars instead of full screen, like its own pages. The settings (Video, Main Video
   on the bars stay in LIVI, also where a bar is transparent.
 - LIVI draws a button on the picture that steps through card, wider card and full screen until LIVI starts again or
   the setting changes (`Action::SetVideoCard`). Full screen hides the bars; the button leads back.
+- `Livi.action("phone-home", "")` presses the home key of the phone's own screen, as a press in its picture would.
 - `Livi.action("video-view", v)` changes the settings themselves: `card`, `wide` or `full`. `Livi.video.view` says which
   one is set, `Livi.video.wide-set` whether a wider card exists. A background draws around the wider card like around
   the card; with `right` 0 it may leave out the corners on that side.
