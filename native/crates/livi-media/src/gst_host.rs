@@ -644,8 +644,7 @@ impl GstHost {
 }
 
 fn log_file(path: &std::path::Path) -> Option<std::fs::File> {
-    std::fs::create_dir_all(path.parent()?).ok()?;
-    std::fs::File::create(path).ok()
+    crate::log_files::fresh(path)
 }
 
 pub async fn probe_codecs(launch: &Launch) -> Option<serde_json::Value> {
