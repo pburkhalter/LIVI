@@ -83,6 +83,10 @@ impl CompositorHandler for LiviState {
             .position(|t| t.toplevel.wl_surface() == &root)
         {
             classify_on_initial_commit(self, idx);
+            if self.toplevels[idx].kind == Kind::Video {
+                let t = &mut self.toplevels[idx];
+                t.commits = t.commits.saturating_add(1);
+            }
             if self.toplevels[idx].kind == Kind::Ui {
                 self.toplevels[idx].clear = crate::projection::ui_clear(&root);
             }
@@ -324,6 +328,7 @@ impl XdgShellHandler for LiviState {
             position: Point::from((0, 0)),
             clear: false,
             hole: Default::default(),
+            commits: 0,
         });
     }
 

@@ -1,4 +1,6 @@
-use super::{Offered, assign, choose, panel_name, size_of, wl_output_in};
+use super::{
+    Offered, assign, camera_ready, choose, panel_name, size_of, splash_over, wl_output_in,
+};
 
 fn mode(w: u16, h: u16, refresh: u32, preferred: bool) -> Offered {
     Offered {
@@ -336,4 +338,31 @@ mod pacing {
         assert!((off.frame_ms - VBLANK).abs() < 0.5, "{off:?}");
         assert!((on.frame_ms - VBLANK).abs() < 0.5, "{on:?}");
     }
+}
+
+#[test]
+fn the_start_waits_for_the_ui_unless_the_camera_or_the_time_ends_it() {
+    assert_eq!(splash_over(false, false, false), None);
+    assert_eq!(
+        splash_over(true, false, false),
+        Some("first frame of the UI")
+    );
+    // the UI first when both are there: the log says what the screen shows
+    assert_eq!(splash_over(true, true, true), Some("first frame of the UI"));
+    assert_eq!(
+        splash_over(false, true, false),
+        Some("first frame with the camera, before the UI")
+    );
+    assert_eq!(
+        splash_over(false, false, true),
+        Some("first frame without the UI (splash wait over)")
+    );
+}
+
+#[test]
+fn the_camera_counts_only_after_a_few_frames() {
+    assert!(!camera_ready(0));
+    assert!(!camera_ready(1));
+    assert!(camera_ready(5));
+    assert!(camera_ready(u32::MAX));
 }

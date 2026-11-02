@@ -13,6 +13,14 @@ pub static EARLY_CALLBACK: LazyLock<bool> = LazyLock::new(|| {
         .as_deref())
 });
 
+/// LIVI_COMPOSITOR_CAMERA_FIRST=1: the start's wait for the UI also ends when the camera's picture has come, so that a
+/// reversing camera shows before the UI has drawn (see `drm::keep_splash`).
+pub static CAMERA_FIRST: LazyLock<bool> = LazyLock::new(|| {
+    on(std::env::var("LIVI_COMPOSITOR_CAMERA_FIRST")
+        .ok()
+        .as_deref())
+});
+
 /// LIVI_COMPOSITOR_UI_HOLE=1: the UI is not drawn where it is fully transparent (see `hole`).
 pub static UI_HOLE: LazyLock<bool> =
     LazyLock::new(|| on(std::env::var("LIVI_COMPOSITOR_UI_HOLE").ok().as_deref()));
@@ -37,9 +45,11 @@ fn full_damage(value: Option<&str>) -> FullDamage {
 
 /// A line in the log when a switch is on: a measurement has to show what it ran with
 pub fn announce() {
-    let (early, hole, full) = (*EARLY_CALLBACK, *UI_HOLE, *FULL_DAMAGE);
-    if early || hole || full != FullDamage::Keep {
-        log::info!("graphics levers: early callback {early}, UI hole {hole}, full damage {full:?}");
+    let (early, hole, full, camera) = (*EARLY_CALLBACK, *UI_HOLE, *FULL_DAMAGE, *CAMERA_FIRST);
+    if early || hole || full != FullDamage::Keep || camera {
+        log::info!(
+            "graphics levers: early callback {early}, UI hole {hole}, full damage {full:?}, camera first {camera}"
+        );
     }
 }
 

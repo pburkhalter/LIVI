@@ -886,24 +886,60 @@ fn ui_has_drawn(state: &LiviState, screen_idx: usize) -> bool {
         })
 }
 
+/// Commits of the camera's window before LIVI_COMPOSITOR_CAMERA_FIRST shows it: not its first buffer, which may come
+/// before the decoder has locked on the picture (white or black, 2026-10-31)
+const CAMERA_FIRST_COMMITS: u32 = 5;
+
+/// Whether the camera's window on this screen is shown and has drawn enough to stand in for the UI at the start
+fn camera_has_drawn(state: &LiviState, screen_idx: usize) -> bool {
+    state.toplevels.iter().any(|t| {
+        t.kind == Kind::Video
+            && t.tag == "camera"
+            && t.screen_idx == screen_idx
+            && t.visible
+            && camera_ready(t.commits)
+            && with_states(t.toplevel.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<RendererSurfaceStateUserData>()
+                    .is_some_and(|d| d.lock().unwrap().buffer().is_some())
+            })
+    })
+}
+
+fn camera_ready(commits: u32) -> bool {
+    commits >= CAMERA_FIRST_COMMITS
+}
+
+/// What ends the wait of the start, in the order it is said in the log; None while it goes on
+fn splash_over(ui: bool, camera: bool, timed_out: bool) -> Option<&'static str> {
+    if ui {
+        Some("first frame of the UI")
+    } else if camera {
+        Some("first frame with the camera, before the UI")
+    } else if timed_out {
+        Some("first frame without the UI (splash wait over)")
+    } else {
+        None
+    }
+}
+
 /// Flicker-free start: no frame until LIVI's UI has drawn, so the boot splash stays on the display instead of the
 /// backdrop colour (the UI needs a few seconds for its first frame; the video planes come earlier, with black
-/// buffers, and must not end the wait). After SPLASH_WAIT the backdrop is shown in any case.
+/// buffers, and must not end the wait). After SPLASH_WAIT the backdrop is shown in any case. With
+/// LIVI_COMPOSITOR_CAMERA_FIRST the camera's picture ends it too: in reverse it is what the driver waits for (P156).
 fn keep_splash(state: &mut LiviState, screen_idx: usize) -> bool {
     let client = ui_has_drawn(state, screen_idx);
+    let camera = *crate::levers::CAMERA_FIRST && camera_has_drawn(state, screen_idx);
     let Some(drm) = state.drm.as_mut() else {
         return false;
     };
     let Some(until) = drm.splash_until else {
         return false;
     };
-    if client || Instant::now() >= until {
+    if let Some(why) = splash_over(client, camera, Instant::now() >= until) {
         drm.splash_until = None;
-        if client {
-            log::info!("first frame of the UI");
-        } else {
-            log::info!("first frame without the UI (splash wait over)");
-        }
+        log::info!("{why}");
         drm.marker_due = true;
         return false;
     }

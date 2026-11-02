@@ -76,6 +76,8 @@ pub struct TopLevel {
     pub clear: bool,
     /// LIVI_COMPOSITOR_UI_HOLE: where a UI window leaves the video alone
     pub hole: crate::hole::Hole,
+    /// How often a video window has committed: LIVI_COMPOSITOR_CAMERA_FIRST waits for a few, not the first
+    pub commits: u32,
 }
 
 pub struct Screen {
