@@ -1,5 +1,6 @@
 pub mod compositor;
 pub mod gst_host;
+mod log_files;
 pub mod planes;
 
 #[cfg(test)]

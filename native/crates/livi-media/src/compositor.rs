@@ -132,11 +132,7 @@ pub fn start(bin: &Path, cfg: &Config, ctrl: &Path, log: &Path) -> Option<tokio:
     if std::env::var("LIVI_NO_COMPOSITOR").is_ok_and(|v| v == "1") || !bin.exists() {
         return None;
     }
-    let (stdout, stderr) = match log
-        .parent()
-        .map(std::fs::create_dir_all)
-        .and_then(|_| std::fs::File::create(log).ok())
-    {
+    let (stdout, stderr) = match crate::log_files::fresh(log) {
         Some(f) => (
             f.try_clone()
                 .map(Stdio::from)
