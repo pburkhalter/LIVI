@@ -6,6 +6,7 @@ exclude = ["vendor"]
 [patch.crates-io]
 femtovg = { path = "vendor/femtovg" }
 i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }
+smithay = { path = "vendor/smithay" }
 
 [workspace.package]
 version = "10.1.0"

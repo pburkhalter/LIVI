@@ -56,6 +56,9 @@ LIVI_GST_DEBUG=1 ./LIVI*.AppImage
 | `LIVI_WLR_DEBUG=1` | Raise the nested wlroots compositor log level to `WLR_DEBUG`. |
 | `LIVI_DEBUG_BG=1` | Paint a magenta debug background in the compositor, to see the layout and video planes. |
 | `LIVI_NO_COMPOSITOR=1` | Start without the nested compositor. |
+| `LIVI_COMPOSITOR_EARLY_CALLBACK=1` | Display backend: frame callbacks when the GPU starts a frame, not when it has finished it, so that a client's next frame overlaps the GPU's work. More frames per second from a slow client, up to one frame more latency. |
+| `LIVI_COMPOSITOR_UI_HOLE=1` | Leave the UI out over a video where its pixels are zero. Reads the UI's buffer once it has stood for 500 ms and writes a `[hole]` line with the time this took. |
+| `LIVI_COMPOSITOR_INVALIDATE=1` | A frame that draws everything anew starts with `glInvalidateFramebuffer`, so that a tile-based GPU need not load the old contents. `clear` starts it with a `glClear` to magenta instead, which shows if a frame leaves a pixel out. |
 
 ### UI
 

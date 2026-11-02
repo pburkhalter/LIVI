@@ -126,3 +126,214 @@ fn the_panel_name_comes_from_the_edid_descriptor() {
     assert_eq!(panel_name(&[0u8; 128]), None);
     assert_eq!(panel_name(&[0u8; 20]), None);
 }
+
+/// A model of the pacing in `render`, `drawn` and `vblank` for a client with two buffers, in milliseconds. It follows the
+/// order of those functions, it does not run them: they need a display.
+mod pacing {
+    const VBLANK: f64 = 1000.0 / 60.0;
+
+    #[derive(Debug)]
+    struct Pace {
+        frame_ms: f64,
+        commit_to_flip_ms: f64,
+    }
+
+    struct Model {
+        early: bool,
+        cpu: f64,
+        gpu: f64,
+        now: f64,
+        // the compositor, as in `Output`
+        drawing_until: Option<f64>,
+        frame_pending: bool,
+        needs_redraw: bool,
+        held: Option<usize>,
+        // the client
+        attached: Option<usize>,
+        drawing_into: usize,
+        client_done: Option<f64>,
+        wants_callback: bool,
+        wants_buffer: bool,
+        // when the frame was committed, while it goes through
+        committed: Option<f64>,
+        rendering: Option<f64>,
+        flipping: Option<f64>,
+        flips: Vec<f64>,
+        commit_to_flip: Vec<f64>,
+    }
+
+    impl Model {
+        fn new(early: bool, cpu: f64, gpu: f64) -> Self {
+            Self {
+                early,
+                cpu,
+                gpu,
+                now: 0.0,
+                drawing_until: None,
+                frame_pending: false,
+                needs_redraw: false,
+                held: None,
+                attached: None,
+                drawing_into: 0,
+                client_done: Some(cpu),
+                wants_callback: false,
+                wants_buffer: false,
+                committed: None,
+                rendering: None,
+                flipping: None,
+                flips: Vec::new(),
+                commit_to_flip: Vec::new(),
+            }
+        }
+
+        /// `wayland_wait_for_buffer_release` in the WSEGL: a buffer that is neither attached nor held
+        fn next_buffer(&mut self) {
+            let free = (0..2).find(|b| Some(*b) != self.attached && Some(*b) != self.held);
+            self.wants_buffer = free.is_none();
+            if let Some(buffer) = free {
+                self.drawing_into = buffer;
+                self.client_done = Some(self.now + self.cpu);
+            }
+        }
+
+        fn frame_callback(&mut self) {
+            if std::mem::take(&mut self.wants_callback) {
+                self.next_buffer();
+            }
+        }
+
+        fn commit(&mut self) {
+            self.client_done = None;
+            assert_ne!(
+                Some(self.drawing_into),
+                self.held,
+                "drew into what the GPU reads"
+            );
+            self.attached = Some(self.drawing_into);
+            self.committed = Some(self.now);
+            self.needs_redraw = true;
+            self.wants_callback = true;
+            if !self.frame_pending && self.drawing_until.is_none() {
+                self.render();
+            }
+        }
+
+        fn render(&mut self) {
+            self.needs_redraw = false;
+            self.drawing_until = Some(self.now + self.gpu);
+            self.held = self.attached;
+            self.rendering = self.committed.take();
+            if self.early {
+                self.frame_callback();
+            }
+        }
+
+        fn drawn(&mut self) {
+            self.drawing_until = None;
+            self.frame_pending = true;
+            self.flipping = self.rendering.take();
+            if !self.early {
+                self.frame_callback();
+            }
+        }
+
+        fn vblank(&mut self) {
+            if !self.frame_pending {
+                return;
+            }
+            self.frame_pending = false;
+            self.held = None;
+            self.flips.push(self.now);
+            if let Some(commit) = self.flipping.take() {
+                self.commit_to_flip.push(self.now - commit);
+            }
+            if self.wants_buffer {
+                self.next_buffer();
+            }
+            if self.needs_redraw {
+                self.render();
+            }
+        }
+
+        fn run(mut self) -> Pace {
+            let mut next_vblank = VBLANK;
+            while self.flips.len() < 200 {
+                let client = self.client_done.unwrap_or(f64::MAX);
+                let gpu = self.drawing_until.unwrap_or(f64::MAX);
+                self.now = client.min(gpu).min(next_vblank);
+                if self.now == client {
+                    self.commit();
+                } else if self.now == gpu {
+                    self.drawn();
+                } else {
+                    next_vblank += VBLANK;
+                    self.vblank();
+                }
+            }
+            // after the start, when the first frames find everything free
+            let flips = &self.flips[50..];
+            let waits = &self.commit_to_flip[50..];
+            Pace {
+                frame_ms: (flips[flips.len() - 1] - flips[0]) / (flips.len() - 1) as f64,
+                commit_to_flip_ms: waits.iter().sum::<f64>() / waits.len() as f64,
+            }
+        }
+    }
+
+    fn pace(early: bool, cpu: f64, gpu: f64) -> Pace {
+        Model::new(early, cpu, gpu).run()
+    }
+
+    #[test]
+    fn without_the_lever_cpu_and_gpu_add_up() {
+        let pace = pace(false, 15.0, 25.0);
+        assert!((pace.frame_ms - 40.0).abs() < 1.0, "{pace:?}");
+    }
+
+    #[test]
+    fn with_the_lever_they_overlap_and_the_frame_takes_two_vblanks() {
+        let pace = pace(true, 15.0, 25.0);
+        assert!((pace.frame_ms - VBLANK * 2.0).abs() < 0.5, "{pace:?}");
+    }
+
+    #[test]
+    fn the_price_is_less_than_one_frame_more_from_commit_to_flip() {
+        let (off, on) = (pace(false, 15.0, 25.0), pace(true, 15.0, 25.0));
+        println!("off {off:?}, on {on:?}");
+        assert!(
+            on.commit_to_flip_ms > off.commit_to_flip_ms,
+            "{off:?} {on:?}"
+        );
+        assert!(
+            on.commit_to_flip_ms < off.commit_to_flip_ms + on.frame_ms,
+            "{off:?} {on:?}"
+        );
+    }
+
+    #[test]
+    fn two_buffers_are_enough_and_no_frame_is_lost_at_any_speed() {
+        for cpu in [1.0, 5.0, 15.0, 30.0, 50.0] {
+            for gpu in [1.0, 7.0, 15.0, 25.0, 45.0, 90.0] {
+                for early in [false, true] {
+                    // `commit` panics when the client draws into what the GPU reads
+                    let pace = pace(early, cpu, gpu);
+                    assert!(
+                        pace.frame_ms >= VBLANK - 0.1,
+                        "{early} {cpu} {gpu} {pace:?}"
+                    );
+                    assert!(
+                        pace.frame_ms <= cpu + gpu + 2.0 * VBLANK,
+                        "{early} {cpu} {gpu} {pace:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_fast_client_keeps_the_panel_rate_either_way() {
+        let (off, on) = (pace(false, 2.0, 5.0), pace(true, 2.0, 5.0));
+        assert!((off.frame_ms - VBLANK).abs() < 0.5, "{off:?}");
+        assert!((on.frame_ms - VBLANK).abs() < 0.5, "{on:?}");
+    }
+}

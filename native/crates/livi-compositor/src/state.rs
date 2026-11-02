@@ -74,6 +74,8 @@ pub struct TopLevel {
     pub area: Option<[f64; 4]>,
     pub position: Point<i32, Logical>,
     pub clear: bool,
+    /// LIVI_COMPOSITOR_UI_HOLE: where a UI window leaves the video alone
+    pub hole: crate::hole::Hole,
 }
 
 pub struct Screen {

@@ -323,6 +323,7 @@ impl XdgShellHandler for LiviState {
             area: None,
             position: Point::from((0, 0)),
             clear: false,
+            hole: Default::default(),
         });
     }
 
