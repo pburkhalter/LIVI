@@ -87,6 +87,7 @@ system service as `Environment=SLINT_SKIA_PARTIAL_RENDERING=1` in its unit.
 | --- | --- |
 | `LIVI_CP_DEBUG=1` | Verbose CarPlay and helper logging (also enabled by `DEBUG=1`). |
 | `LIVI_CP_SYSLOG=1` | Tap the CarPlay helper output into syslog. |
+| `LIVI_BT_AGENT=0` | Leave Bluetooth pairing to another program on the system (e.g. one that shows the code and asks the user): LIVI registers no pairing agent and does not touch the controller's `Pairable`, also not after `LIVI_BT_PAIRING_SECONDS` or when it exits. Discovery for the wireless connections stays LIVI's. Without it, LIVI's agent accepts every pairing. |
 
 ## Common workflows
 

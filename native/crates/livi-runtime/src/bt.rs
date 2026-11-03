@@ -138,8 +138,46 @@ struct Found {
     discoverable_timeout: u32,
 }
 
+/// Who answers pairing requests on LIVI's controller. By default LIVI's own agent, which accepts every pairing;
+/// `LIVI_BT_AGENT=0` leaves pairing to another program on the system (e.g. one that asks the user and confirms the code):
+/// LIVI then registers no agent and leaves the controller's `Pairable` alone, also when it lets the controller go.
+/// Discovery stays LIVI's, as the wireless connections need it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Pairing {
+    #[default]
+    Livi,
+    Other,
+}
+
+impl Pairing {
+    /// From the value of `LIVI_BT_AGENT`: only "0" leaves pairing to another program
+    pub fn from_env(value: Option<&str>) -> Self {
+        if value.map(str::trim) == Some("0") {
+            Pairing::Other
+        } else {
+            Pairing::Livi
+        }
+    }
+
+    /// What `close_pairing_after` ends on LIVI's controller
+    fn closed_after_a_while(self) -> &'static [&'static str] {
+        match self {
+            Pairing::Livi => &["Discoverable", "Pairable"],
+            Pairing::Other => &["Discoverable"],
+        }
+    }
+
+    /// What `let_go` puts back on a controller; `ours` is LIVI's own
+    fn put_back(self, ours: bool) -> &'static [&'static str] {
+        match (self, ours) {
+            (Pairing::Other, true) => &["Alias", "DiscoverableTimeout", "Discoverable"],
+            _ => &["Alias", "DiscoverableTimeout", "Discoverable", "Pairable"],
+        }
+    }
+}
+
 #[derive(Default)]
-pub struct Held(Vec<(String, Found)>);
+pub struct Held(Vec<(String, Found)>, Pairing);
 
 fn to_put_back(found: Found, alias: &str) -> Found {
     if found.alias == alias {
@@ -193,12 +231,12 @@ async fn controllers(conn: &Connection) -> Result<Vec<(String, Found)>, Box<dyn 
     Ok(out)
 }
 
-async fn hold(conn: &Connection, adapter: &str, alias: &str) -> Held {
+async fn hold(conn: &Connection, adapter: &str, alias: &str, pairing: Pairing) -> Held {
     let found = match controllers(conn).await {
         Ok(found) => found,
         Err(e) => {
             eprintln!("[bt] the controllers could not be read, nothing will be put back: {e}");
-            return Held::default();
+            return Held(Vec::new(), pairing);
         }
     };
     let held: Vec<(String, Found)> = found
@@ -221,23 +259,20 @@ async fn hold(conn: &Connection, adapter: &str, alias: &str) -> Held {
             }
         }
     }
-    Held(held)
+    Held(held, pairing)
 }
 
 pub async fn let_go(conn: &Connection, adapter: &str, held: &Held) {
     stop_ble_ad(conn, adapter).await;
     for (name, back) in &held.0 {
         let path = format!("/org/bluez/{name}");
-        let props = [
-            ("Alias", Value::from(back.alias.as_str())),
-            (
-                "DiscoverableTimeout",
-                Value::from(back.discoverable_timeout),
-            ),
-            ("Discoverable", Value::from(back.discoverable)),
-            ("Pairable", Value::from(back.pairable)),
-        ];
-        for (prop, value) in props {
+        for &prop in held.1.put_back(name == adapter) {
+            let value = match prop {
+                "Alias" => Value::from(back.alias.as_str()),
+                "DiscoverableTimeout" => Value::from(back.discoverable_timeout),
+                "Discoverable" => Value::from(back.discoverable),
+                _ => Value::from(back.pairable),
+            };
             if let Err(e) = set_prop_within(conn, &path, prop, value, LET_GO_WAIT).await {
                 eprintln!("[bt] {name}: {prop} could not be put back: {e}");
             }
@@ -289,38 +324,47 @@ pub async fn start(
     adapter: &str,
     alias: &str,
     wireless: Wireless,
+    pairing: Pairing,
 ) -> Result<(Connection, mpsc::UnboundedReceiver<IncomingConn>, Held), Box<dyn Error>> {
     let conn = Connection::system().await?;
     let (tx, rx) = mpsc::unbounded_channel();
 
     let ours = || adapter.to_string();
-    conn.object_server()
-        .at(AGENT_PATH, Agent { adapter: ours() })
-        .await?;
+    if pairing == Pairing::Livi {
+        conn.object_server()
+            .at(AGENT_PATH, Agent { adapter: ours() })
+            .await?;
+    }
     if wireless.carplay {
         start_carplay(&conn, adapter, tx).await?;
     }
 
-    conn.call_method(
-        Some("org.bluez"),
-        "/org/bluez",
-        Some("org.bluez.AgentManager1"),
-        "RegisterAgent",
-        &(ObjectPath::try_from(AGENT_PATH)?, "KeyboardDisplay"),
-    )
-    .await?;
-    conn.call_method(
-        Some("org.bluez"),
-        "/org/bluez",
-        Some("org.bluez.AgentManager1"),
-        "RequestDefaultAgent",
-        &(ObjectPath::try_from(AGENT_PATH)?,),
-    )
-    .await?;
+    if pairing == Pairing::Livi {
+        conn.call_method(
+            Some("org.bluez"),
+            "/org/bluez",
+            Some("org.bluez.AgentManager1"),
+            "RegisterAgent",
+            &(ObjectPath::try_from(AGENT_PATH)?, "KeyboardDisplay"),
+        )
+        .await?;
+        conn.call_method(
+            Some("org.bluez"),
+            "/org/bluez",
+            Some("org.bluez.AgentManager1"),
+            "RequestDefaultAgent",
+            &(ObjectPath::try_from(AGENT_PATH)?,),
+        )
+        .await?;
+    } else {
+        println!(
+            "[bt] pairing is left to another program (LIVI_BT_AGENT=0): no agent, Pairable untouched"
+        );
+    }
 
     let adapter_path = format!("/org/bluez/{adapter}");
     wait_for_adapter(&conn, &adapter_path).await?;
-    let held = hold(&conn, adapter, alias).await;
+    let held = hold(&conn, adapter, alias, pairing).await;
     set_prop(&conn, &adapter_path, "Alias", Value::from(alias)).await?;
     if wireless.any() {
         set_prop(
@@ -344,20 +388,23 @@ pub async fn start(
         Value::from(wireless.any()),
     )
     .await?;
-    set_prop(&conn, &adapter_path, "Pairable", Value::from(true)).await?;
+    if pairing == Pairing::Livi {
+        set_prop(&conn, &adapter_path, "Pairable", Value::from(true)).await?;
+    }
 
     Ok((conn, rx, held))
 }
 
-/// Ends discovery and pairing after `seconds`; paired devices still connect. 0 leaves both open.
-pub fn close_pairing_after(conn: &Connection, adapter: &str, seconds: u64) {
+/// Ends discovery and pairing after `seconds`; paired devices still connect. 0 leaves both open. With pairing left to
+/// another program (`Pairing::Other`) only discovery.
+pub fn close_pairing_after(conn: &Connection, adapter: &str, seconds: u64, pairing: Pairing) {
     if seconds == 0 {
         return;
     }
     let (conn, path) = (conn.clone(), format!("/org/bluez/{adapter}"));
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
-        for prop in ["Discoverable", "Pairable"] {
+        for &prop in pairing.closed_after_a_while() {
             if let Err(e) = set_prop(&conn, &path, prop, Value::from(false)).await {
                 eprintln!("[bt] {prop} stays on: {e}");
             }
@@ -1030,6 +1077,30 @@ mod tests {
                 ..found("", true)
             }
         );
+    }
+
+    #[test]
+    fn only_zero_leaves_pairing_to_another_program() {
+        assert_eq!(Pairing::from_env(None), Pairing::Livi);
+        assert_eq!(Pairing::from_env(Some("1")), Pairing::Livi);
+        assert_eq!(Pairing::from_env(Some("")), Pairing::Livi);
+        assert_eq!(Pairing::from_env(Some("0")), Pairing::Other);
+        assert_eq!(Pairing::from_env(Some(" 0 ")), Pairing::Other);
+        assert_eq!(Pairing::default(), Pairing::Livi);
+    }
+
+    #[test]
+    fn with_pairing_left_to_another_program_pairable_is_never_touched() {
+        assert_eq!(
+            Pairing::Livi.closed_after_a_while(),
+            ["Discoverable", "Pairable"]
+        );
+        assert_eq!(Pairing::Other.closed_after_a_while(), ["Discoverable"]);
+        assert!(Pairing::Livi.put_back(true).contains(&"Pairable"));
+        assert!(!Pairing::Other.put_back(true).contains(&"Pairable"));
+        // another controller LIVI held goes back as it was found, whoever pairs on LIVI's
+        assert!(Pairing::Other.put_back(false).contains(&"Pairable"));
+        assert!(Pairing::Other.put_back(true).contains(&"Discoverable"));
     }
 
     #[test]
