@@ -587,6 +587,13 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
             })
         }
         ("open", path) => open_path(&ui, path),
+        ("call", order) => CLIENT.with_borrow(|c| {
+            if let Some(c) = c {
+                c.act(Action::Call {
+                    order: order.into(),
+                });
+            }
+        }),
         ("phone-home", _) => CLIENT.with_borrow(|c| {
             if let Some(c) = c {
                 c.act(Action::PhoneHome);

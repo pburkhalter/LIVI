@@ -39,6 +39,49 @@ pub struct State {
     /// Whether Wi-Fi and Bluetooth are off, on or connected to a phone, e.g. for status icons
     #[serde(default)]
     pub links: Links,
+    /// The calls of the active phone and its lists of calls, through CarPlay with LIVI_CP_CALLS=1
+    #[serde(default)]
+    pub call: Call,
+}
+
+/// A call of the active phone, from CarPlay's call state (iAP2 Communications), and the phone's recent and favourite
+/// calls. Only with LIVI_CP_CALLS=1 and a CarPlay session (`available`); otherwise all empty
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Call {
+    pub available: bool,
+    /// "idle", "dialing", "ringing" (incoming), "active", "held", "ending"
+    pub state: String,
+    pub incoming: bool,
+    pub number: String,
+    /// The contact's name, "" without one
+    pub name: String,
+    /// The phone's id of the call (a UUID)
+    pub id: String,
+    /// When the call became active, in Unix seconds; 0 before
+    pub since: u64,
+    /// The microphone as LIVI last set it for this call
+    pub muted: bool,
+    /// A second call that rings meanwhile: its name, or its number
+    pub waiting: String,
+    /// Newest first, at most what the phone sends (12 under CarPlay)
+    pub recents: Vec<CallEntry>,
+    pub favorites: Vec<CallEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CallEntry {
+    pub number: String,
+    pub name: String,
+    /// The phone's label of the number, e.g. "mobile"
+    pub label: String,
+    /// Recents: "in", "out", "missed" or ""
+    pub kind: String,
+    /// Recents: Unix seconds
+    pub time: u64,
+    /// Recents: calls from or to the number in a row
+    pub count: u32,
 }
 
 /// The radios a phone connects over; one that is not named is off

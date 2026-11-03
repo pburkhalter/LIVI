@@ -136,6 +136,14 @@ impl HelperSock {
         self.request(&line).await.map(drop)
     }
 
+    /// An order for a call (livi_runtime::calls::Order, e.g. `dial +41790000001`) to the session of the phone with
+    /// this Bluetooth address, or to any
+    pub async fn call(&self, order: &str, bt_mac: Option<&str>) -> Result<(), String> {
+        self.request_ok(&format!("call {} {order}", bt_mac.unwrap_or("-")))
+            .await
+            .map(drop)
+    }
+
     pub async fn send_reconnect_targets(
         &self,
         targets: &[(String, Option<String>)],

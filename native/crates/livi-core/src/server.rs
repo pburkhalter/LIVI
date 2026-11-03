@@ -228,6 +228,16 @@ impl Core {
                 self.open_projection(&app);
                 Ok(())
             }
+            Action::Call { order } => {
+                if !crate::projection::calls_enabled() {
+                    return Err(format!(
+                        "calls are off ({}=1 turns them on)",
+                        crate::projection::CALLS_ENV
+                    ));
+                }
+                let _ = self.asks.commands.send(UiCommand::Call(order));
+                Ok(())
+            }
             Action::PhoneHome => {
                 let _ = self.asks.commands.send(UiCommand::PhoneHome);
                 Ok(())
@@ -591,6 +601,7 @@ mod tests {
             cameras: Vec::new(),
             mfi: Default::default(),
             links: Default::default(),
+            call: Default::default(),
             notices: Vec::new(),
             video: Default::default(),
             embeds: Default::default(),
@@ -695,6 +706,18 @@ mod tests {
             Some(FromCore::Reply { id: 9, error: None })
         );
         assert_eq!(asks.commands.recv().await, Some(UiCommand::Seek(61000)));
+        // LIVI_CP_CALLS is not set for the tests
+        ui.send(&ToCore::Action {
+            id: 8,
+            action: Action::Call {
+                order: "dial +41790000001".into(),
+            },
+        })
+        .await;
+        assert!(matches!(
+            ui.recv().await,
+            Some(FromCore::Reply { id: 8, error: Some(e) }) if e.contains("LIVI_CP_CALLS")
+        ));
         for (id, action, ask) in [
             (
                 10,

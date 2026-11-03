@@ -123,6 +123,7 @@ no work while nothing it reads changes, as long as nothing on it runs by itself 
 | `Livi.action("open", "/media")` and the like | Shows one of LIVI's pages: `/projection`, `/media`, `/telemetry`, `/camera`, `/settings`. |
 | `Livi.action("open", "/projection/<app>")` | Brings the projection up with one of the phone's apps, e.g. `maps`, `music`, `mobilephone` (CarPlay). |
 | `Livi.action("media", "play-pause")` | Controls the phone's player; also `next` and `prev`. |
+| `Livi.action("call", "<order>")` | A call through CarPlay, with `LIVI_CP_CALLS=1` (Calls, below). |
 | `Livi.action("page", "next")` | The plugin's next page in tab order (`prev`: the previous one), e.g. after a swipe; nothing at the first or last page. |
 | `Livi.action("camera-area", "<x> <y> <width> <height> [<radius> [<px> <py> <pwidth> <pheight>]]")` | From a `frame` component of the camera page: the card the camera's picture shows in (window pixels, e.g. from `absolute-position`), and where the whole picture goes, fitted and centred (`p…`, the card when left out; larger than the card for a picture with borders, also beyond the window). `""` puts it back on the whole screen. |
 | `Livi.action("embed-area", "<name> <x> <y> <width> <height> [<radius>]")` | Shows a program beside LIVI in a rectangle of the window; `"<name>"` alone hides it (Apps in a card). |
@@ -204,6 +205,27 @@ changed press-serial => { root.pressed(Livi.press.target); }
 
 The example plugin's page has two buttons for the keys, its bar shows the focus of LIVI's navigation and its settings
 page the focus on the settings' rows, with an entry of its own above them on the top screen.
+
+## Calls
+
+With `LIVI_CP_CALLS=1` in LIVI's environment a plugin can have a phone page of its own beside CarPlay: maps and music
+stay in CarPlay, the call goes through the phone's CarPlay session (iAP2 call control), over Wi-Fi as over the cable.
+Off by default: the identification then names the messages of call control and of the call lists, and a phone that
+refuses them gets an identification without them, and CarPlay goes on.
+
+- `Livi.call`: `available` (the switch is on and a phone is connected over CarPlay), `state` (`idle`, `dialing`,
+  `ringing` for a call coming in, `active`, `held`, `ending`), `incoming`, `number`, `name` (`""` without a contact),
+  `since` (when it became active, Unix seconds), `muted` (as the plugin last set it), `waiting` (name or number of a
+  second call that rings meanwhile). With several calls it is the one in conversation.
+- `Livi.recents`: the phone's recent calls, newest first, at most 12 (the phone's limit under CarPlay): `number`,
+  `name`, `label` (the phone's word for the number), `kind` (`in`, `out`, `missed`), `time` (Unix seconds), `count`
+  (calls in a row). `Livi.favorites`: `number`, `name`, `label`. The phone sends both again whenever they change. Its
+  contacts it does not send.
+- `Livi.action("call", ...)`: `dial <number>` (digits, a leading `+`, `*`, `#`; spaces and dashes go), `redial`,
+  `voicemail`, `accept` (holding a call in conversation), `accept end` (ending it), `reject` (the call that rings),
+  `end` (the call in conversation, also while it dials), `end all`, `mute on|off`, `hold on|off`, `swap`, and
+  `dtmf <key>` (`0`-`9`, `*`, `#`; as CarPlay's telephony keys). Without the switch LIVI refuses it.
+- The sound of a call stays CarPlay's, and CarPlay still comes to the front when a call rings.
 
 ## Companion channel
 

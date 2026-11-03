@@ -43,12 +43,15 @@ use crate::update::UpdateAsk;
 
 mod aa;
 mod audio;
+mod calls;
 mod cluster;
 mod cp;
 mod input;
 mod screens;
 mod sessions;
 mod state;
+
+pub use calls::{ENV as CALLS_ENV, enabled as calls_enabled};
 
 const RAMP_DOWN_MS: u32 = 500;
 const RAMP_UP_MS: u32 = 1500;
@@ -197,6 +200,7 @@ struct Entry {
     duck_ramp_ms: u32,
     now_playing: NowPlaying,
     navigation: Navigation,
+    calls: calls::Calls,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -480,6 +484,8 @@ pub enum UiCommand {
     CameraFound(bool),
     OpenApp(String),
     PhoneHome,
+    /// Action::Call, with LIVI_CP_CALLS=1
+    Call(String),
 }
 
 fn kept_cluster(cfg: &Config, theme: Theme) -> Cluster {
@@ -701,6 +707,7 @@ impl Projection {
                     UiCommand::CameraFound(found) => self.camera_found(found),
                     UiCommand::OpenApp(target) => self.open_app(&target),
                     UiCommand::PhoneHome => self.to_active(Do::Home),
+                    UiCommand::Call(order) => self.call(&order),
                 },
                 Some(input) = asks.input.recv() => self.input(input),
                 Some(done) = asks.goodbye.recv() => self.goodbye(done),

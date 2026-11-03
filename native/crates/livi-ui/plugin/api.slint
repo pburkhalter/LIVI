@@ -9,6 +9,9 @@
 //   Livi.action("open", path)    show a page: "/projection", "/projection/<app>" (e.g. maps, music, mobilephone), "/media",
 //                                "/telemetry", "/camera", "/settings", "/plugin/<page id>"
 //   Livi.action("media", what)   "play-pause", "next" or "prev" for the phone's player
+//   Livi.action("call", order)   a call through CarPlay (LIVI_CP_CALLS=1, `call` below): "dial <number>", "redial",
+//                                "accept", "accept end", "reject", "end", "end all", "mute on|off", "hold on|off",
+//                                "swap", "dtmf <0-9, * or #>"
 //   Livi.action("page", "next")  the plugin's next page in the tab order ("prev": the previous one), e.g. after a
 //                                swipe; nothing at the first or last one
 //   Livi.action("notice", "dismiss:<id>")  close a notice (LiviNotice)
@@ -277,6 +280,32 @@ export struct LiviValue {
     value: string,
 }
 
+// A call of the phone through CarPlay (docs/plugins.md, "Calls"). `available`: LIVI runs with LIVI_CP_CALLS=1 and a
+// phone is connected over CarPlay; everything else is empty without. `state`: "idle", "dialing", "ringing" (a call
+// coming in), "active", "held", "ending". `since`: when the call became active, in Unix seconds (0 before).
+// `muted`: the microphone as the plugin last set it. `waiting`: name or number of a second call that rings meanwhile.
+export struct LiviCall {
+    available: bool,
+    state: string,
+    incoming: bool,
+    number: string,
+    name: string,
+    since: int,
+    muted: bool,
+    waiting: string,
+}
+
+// A recent or favourite call of the phone. `name` is "" without a contact; `label` the phone's word for the number,
+// e.g. "mobile". Recents only: `kind` "in", "out", "missed" or "", `time` in Unix seconds, `count` calls in a row.
+export struct LiviCallEntry {
+    number: string,
+    name: string,
+    label: string,
+    kind: string,
+    time: int,
+    count: int,
+}
+
 // Where the focus of the keys and a rotary knob is (docs/plugins.md, "Keys"). `zone`: "" nothing has it (after a
 // touch, or before the first key), "nav" the navigation, "page" the page on screen. `target`: in "page" the id the
 // plugin declared (action focus-targets), on the plugin's settings page one of LIVI's settings ("back", "apply",
@@ -340,6 +369,10 @@ export global Livi {
     in property <[LiviPick]> setting-picks;
     in property <[LiviKnob]> setting-knobs;
     in property <[LiviSettingRow]> setting-dialog-rows;
+    // a call through CarPlay, the phone's recent (newest first, at most 12) and favourite calls (docs/plugins.md, "Calls")
+    in property <LiviCall> call;
+    in property <[LiviCallEntry]> recents;
+    in property <[LiviCallEntry]> favorites;
     // keys and a rotary knob (docs/plugins.md, "Keys")
     in property <LiviFocus> focus;
     in property <LiviPress> press;

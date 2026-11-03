@@ -39,6 +39,8 @@ pub struct EventTag {
     pub cid: Option<String>,
     pub usb_transport_id: Option<String>,
     pub navigation: Navigation,
+    /// The recent and favourite calls (crate::calls), only with LIVI_CP_CALLS=1
+    pub call_lists: crate::calls::Lists,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -131,6 +133,16 @@ impl EventTag {
             }
             _ => None,
         }
+    }
+
+    /// ListUpdate (0x4171): the lists with what this message brings
+    pub fn call_lists_json(&mut self, frame: &[u8]) -> Option<String> {
+        if frame_msg_id(frame)? != 0x4171 {
+            return None;
+        }
+        let m = iap2_csm::messages::communications::ListUpdate::decode(frame).ok()?;
+        self.call_lists.apply(m);
+        Some(self.call_lists.json())
     }
 
     pub fn apply(&self, json: String) -> String {
@@ -291,6 +303,15 @@ fn call(frame: &[u8]) -> Option<String> {
     };
     let mut o = Obj::new("call");
     o.str("phase", phase);
+    // the phone's own values: status 0 disconnected, 1 sending, 2 ringing, 3 connecting, 4 active, 5 held,
+    // 6 disconnecting; direction 1 incoming, 2 outgoing
+    o.num("status", status);
+    if let Some(d) = m.direction {
+        o.num("direction", d);
+    }
+    if let Some(id) = &m.call_uuid {
+        o.str("uuid", id);
+    }
     if phase != "ended" {
         if let Some(n) = m.remote_id {
             o.str("number", &n);
@@ -506,6 +527,73 @@ mod device_tests {
             daylight_savings_offset_minutes: None,
         };
         assert_eq!(to_json(&update.encode()), None);
+    }
+
+    #[test]
+    fn a_call_says_the_phones_own_status_and_direction() {
+        use iap2_csm::messages::communications::CallStateUpdate;
+        let held = CallStateUpdate {
+            remote_id: Some("+41790000001".into()),
+            display_name: Some("Test".into()),
+            status: Some(5),
+            direction: Some(2),
+            call_uuid: Some("u-1".into()),
+            disconnect_reason: None,
+        };
+        let v: serde_json::Value = serde_json::from_str(&to_json(&held.encode()).unwrap()).unwrap();
+        assert_eq!(v["phase"], "active");
+        assert_eq!(
+            (v["status"].as_u64(), v["direction"].as_u64()),
+            (Some(5), Some(2))
+        );
+        assert_eq!(
+            (v["uuid"].as_str(), v["number"].as_str()),
+            (Some("u-1"), Some("+41790000001"))
+        );
+        let ended = CallStateUpdate {
+            status: Some(0),
+            ..held
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&to_json(&ended.encode()).unwrap()).unwrap();
+        assert_eq!(
+            (v["phase"].as_str(), v["uuid"].as_str()),
+            (Some("ended"), Some("u-1"))
+        );
+        assert!(v.get("number").is_none());
+    }
+
+    #[test]
+    fn call_lists_add_up_over_their_messages() {
+        use iap2_csm::messages::communications::{ListEntry, ListUpdate};
+        let mut tag = EventTag::default();
+        let head = ListUpdate {
+            recents_available: Some(true),
+            recents_count: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(tag.call_lists_json(&frame()), None, "not a list");
+        let json = tag.call_lists_json(&head.encode()).unwrap();
+        assert!(json.contains("\"recents\":[]"), "{json}");
+        let entry = ListUpdate {
+            recents: vec![ListEntry {
+                index: Some(0),
+                remote_id: Some("+41790000001".into()),
+                display_name: Some("Test".into()),
+                label: None,
+                address_book_id: None,
+                service: Some(1),
+                kind: Some(1),
+                unix_timestamp: Some(1),
+                duration: None,
+                occurrences: None,
+            }],
+            ..Default::default()
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&tag.call_lists_json(&entry.encode()).unwrap()).unwrap();
+        assert_eq!(v["recents"][0]["name"], "Test");
+        assert_eq!(v["recents"][0]["kind"], "in");
     }
 
     #[test]

@@ -140,6 +140,12 @@ pub enum Action {
     },
     /// The home key of the phone's own screen: what a press in its picture would do
     PhoneHome,
+    /// A call through the phone's CarPlay session, with LIVI_CP_CALLS=1: `dial <number>`, `redial`, `voicemail`,
+    /// `accept`, `accept end` (end the active call and accept), `reject`, `end`, `end all`, `hold on|off`,
+    /// `mute on|off`, `swap`, `dtmf <0-9, * or #>`
+    Call {
+        order: String,
+    },
     SelectClusterLayout {
         layout: String,
     },

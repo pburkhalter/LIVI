@@ -237,6 +237,13 @@ impl Projection {
     }
 
     pub(super) fn metadata(&mut self, link: Link, event: &Value) {
+        if matches!(
+            event.get("type").and_then(Value::as_str),
+            Some("call" | "callLists")
+        ) {
+            self.call_event(link, event);
+            return;
+        }
         let Some(entry) = self.by_link(link) else {
             return;
         };

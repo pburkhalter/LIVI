@@ -1,5 +1,5 @@
 use base64::Engine;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
 use iap2_csm::messages::identification::{ChargingConnectorType, EngineType};
 use iap2_csm::messages::location::StartLocationInformation;
@@ -220,6 +220,7 @@ pub struct Vehicle {
     location: watch::Sender<(u64, String)>,
     status: watch::Sender<VehicleStatus>,
     seek: watch::Sender<(u64, Seek)>,
+    call: broadcast::Sender<crate::calls::Targeted>,
 }
 
 #[derive(Clone)]
@@ -227,6 +228,8 @@ pub struct VehicleFeed {
     pub location: watch::Receiver<(u64, String)>,
     pub status: watch::Receiver<VehicleStatus>,
     pub seek: watch::Receiver<(u64, Seek)>,
+    /// Orders for calls (crate::calls), each session subscribes; every order once, unlike the latest value above
+    pub call: broadcast::Sender<crate::calls::Targeted>,
 }
 
 impl Default for Vehicle {
@@ -235,6 +238,7 @@ impl Default for Vehicle {
             location: watch::Sender::new((0, String::new())),
             status: watch::Sender::new(VehicleStatus::default()),
             seek: watch::Sender::new((0, Seek::default())),
+            call: broadcast::Sender::new(8),
         }
     }
 }
@@ -245,7 +249,15 @@ impl Vehicle {
             location: self.location.subscribe(),
             status: self.status.subscribe(),
             seek: self.seek.subscribe(),
+            call: self.call.clone(),
         }
+    }
+
+    /// `<bluetooth address>|- <order>` (crate::calls::Order); no session hears it when none runs
+    pub fn push_call(&self, arg: &str) -> Result<(), String> {
+        let order = crate::calls::Targeted::parse(arg)?;
+        let _ = self.call.send(order);
+        Ok(())
     }
 
     pub fn push_seek(&self, arg: &str) -> Result<(), String> {

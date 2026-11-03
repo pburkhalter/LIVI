@@ -60,18 +60,37 @@ pub const DROPPABLE: &[&str] = &[
     "vehicle_information_component",
     "vehicle_status_component",
     "route_guidance_display_component",
+    CALL_MESSAGES,
 ];
+
+/// The messages of call control and the call lists (crate::calls), left out again when the phone refuses the
+/// lists of messages
+pub const CALL_MESSAGES: &str = "call_messages";
 
 pub fn build_identification(
     id: &Identity,
     transport: Transport,
     exclude: &[&str],
 ) -> IdentificationInformation {
+    build_identification_with(id, transport, exclude, crate::calls::enabled())
+}
+
+pub fn build_identification_with(
+    id: &Identity,
+    transport: Transport,
+    exclude: &[&str],
+    calls: bool,
+) -> IdentificationInformation {
     let dropped = |f: &str| exclude.contains(&f);
     let wired = transport == Transport::Wired;
     let mut sent = SENT.to_vec();
     if wired {
         sent.push(POWER_SOURCE_UPDATE);
+    }
+    let mut received = RECEIVED.to_vec();
+    if calls && !dropped(CALL_MESSAGES) {
+        sent.extend_from_slice(crate::calls::SENT);
+        received.extend_from_slice(crate::calls::RECEIVED);
     }
     IdentificationInformation {
         name: id.name.clone(),
@@ -81,7 +100,7 @@ pub fn build_identification(
         firmware_version: "1.0.0".into(),
         hardware_version: "1.0".into(),
         messages_sent_by_accessory: ids(&sent),
-        messages_received_from_accessory: ids(RECEIVED),
+        messages_received_from_accessory: ids(&received),
         power_providing_capability: if wired {
             PowerProvidingCapability::Advanced
         } else {

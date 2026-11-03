@@ -583,6 +583,18 @@ impl Devices {
         }
     }
 
+    /// An order for a call (Action::Call) to the helper; the log names what, never the number
+    pub fn call(&self, order: String, bt_mac: Option<String>) {
+        let helper = self.helper.clone();
+        tokio::spawn(async move {
+            let what = order.split(' ').next().unwrap_or_default().to_string();
+            match helper.call(&order, bt_mac.as_deref()).await {
+                Ok(()) => println!("[devices] call: {what} sent"),
+                Err(e) => eprintln!("[devices] call: {what} not sent: {e}"),
+            }
+        });
+    }
+
     pub fn seek(&self, ms: u32, bt_mac: Option<String>) {
         let helper = self.helper.clone();
         tokio::spawn(async move {

@@ -18,7 +18,7 @@ use iap2_csm::messages::wifi::*;
 use livi_wifi::{Channel, OnAir, Security};
 
 use crate::framing::frame_msg_id;
-use crate::ident::{DROPPABLE, Identity, Theme, Transport, build_identification};
+use crate::ident::{CALL_MESSAGES, DROPPABLE, Identity, Theme, Transport, build_identification};
 use crate::vehicle::{Fuels, LocationTypes, VehicleFeed, VehicleStatus};
 use crate::{AsyncAuth, ControlChannel, net};
 
@@ -92,8 +92,8 @@ impl core::fmt::Display for BringupError {
 
 impl std::error::Error for BringupError {}
 
-fn subscriptions() -> Vec<Vec<u8>> {
-    vec![
+fn subscriptions(calls: bool) -> Vec<Vec<u8>> {
+    let mut subs = vec![
         StartNowPlayingUpdates {
             media_item_attributes: Some(StartMediaItemAttributes {
                 persistent_id: false,
@@ -149,7 +149,11 @@ fn subscriptions() -> Vec<Vec<u8>> {
             start_timestamp: false,
         }
         .encode(),
-    ]
+    ];
+    if calls {
+        subs.push(crate::calls::start_lists().encode());
+    }
+    subs
 }
 
 async fn recv<C: ControlChannel>(ch: &mut C) -> Result<Vec<u8>, BringupError> {
@@ -175,7 +179,7 @@ async fn run_identification<C: ControlChannel>(
             Some(0x1D03) => {
                 let rejected = IdentificationRejected::decode(&frame)
                     .map_err(|e| BringupError::Identification(e.to_string()))?;
-                let flagged = flagged_fields(&rejected);
+                let flagged = flagged_fields(&rejected, crate::calls::enabled());
                 let drop: Vec<&str> = DROPPABLE
                     .iter()
                     .copied()
@@ -201,7 +205,7 @@ async fn run_identification<C: ControlChannel>(
     }
 }
 
-fn flagged_fields(r: &IdentificationRejected) -> Vec<&'static str> {
+fn flagged_fields(r: &IdentificationRejected, calls: bool) -> Vec<&'static str> {
     let mut out = Vec::new();
     let mut push = |on: bool, name| {
         if on {
@@ -217,6 +221,10 @@ fn flagged_fields(r: &IdentificationRejected) -> Vec<&'static str> {
         "vehicle_information_component",
     );
     push(r.vehicle_status_component, "vehicle_status_component");
+    push(
+        calls && (r.messages_sent_by_accessory || r.messages_received_from_accessory),
+        CALL_MESSAGES,
+    );
     out
 }
 
@@ -445,7 +453,8 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
         }
     }
 
-    for sub in subscriptions() {
+    let calls = crate::calls::enabled();
+    for sub in subscriptions(calls) {
         if ch.send(sub).await.is_err() {
             let _ = events.send(BringupEvent::Closed).await;
             return;
@@ -458,6 +467,7 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
     let mut offered = false;
     let mut phone_bt_mac: Option<String> = None;
     let again = cp.start_again.clone();
+    let mut orders = vehicle.call.subscribe();
     loop {
         let frame = tokio::select! {
             frame = ch.recv() => match frame {
@@ -490,6 +500,20 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
                 }
                 let status = vehicle.status.borrow_and_update().clone();
                 if status_wanted && !send_status(&mut ch, &status, id.fuels).await {
+                    break;
+                }
+                continue;
+            }
+            order = orders.recv(), if calls => {
+                // lagged: the orders it missed are old. Closed it never is: the feed holds a sender
+                let Ok(order) = order else {
+                    continue;
+                };
+                if !order.meant_for(phone_bt_mac.as_deref()) {
+                    continue;
+                }
+                println!("[cp] call: {}", order.order.what());
+                if ch.send(order.order.encode()).await.is_err() {
                     break;
                 }
                 continue;

@@ -37,6 +37,7 @@ impl Projection {
                     duck_ramp_ms: RAMP_UP_MS,
                     now_playing: NowPlaying::default(),
                     navigation: Navigation::default(),
+                    calls: Default::default(),
                 };
                 entry.device.merge(device);
                 self.sessions.push(entry);
@@ -321,7 +322,9 @@ impl Projection {
             &mut navigation,
             nav_text::Language::of(&self.config_seen.language),
         );
+        let call = self.call_view();
         self.hub.update(|s| {
+            s.call = call;
             s.front.main = main;
             s.front.cluster = cluster;
             s.front.aux = aux;
