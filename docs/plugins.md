@@ -214,17 +214,25 @@ Off by default: the identification then names the messages of call control and o
 refuses them gets an identification without them, and CarPlay goes on.
 
 - `Livi.call`: `available` (the switch is on and a phone is connected over CarPlay), `state` (`idle`, `dialing`,
-  `ringing` for a call coming in, `active`, `held`, `ending`), `incoming`, `number`, `name` (`""` without a contact),
-  `since` (when it became active, Unix seconds), `muted` (as the plugin last set it), `waiting` (name or number of a
-  second call that rings meanwhile). With several calls it is the one in conversation.
+  `ringing` for a call coming in, `active`, `held`, `ending` for 2 s after the last call), `incoming`, `number`, `name`
+  (`""` without a contact), `since` (when it became active, Unix seconds) and `elapsed` (its seconds when the call last
+  changed; LIVI does not count every second, the page counts on), `muted` (as the plugin last set it), `waiting` (name
+  or number of a second call that rings meanwhile), `missed` (missed calls on top of the recents since the page sent
+  `seen`). With several calls it is the one in conversation.
 - `Livi.recents`: the phone's recent calls, newest first, at most 12 (the phone's limit under CarPlay): `number`,
-  `name`, `label` (the phone's word for the number), `kind` (`in`, `out`, `missed`), `time` (Unix seconds), `count`
-  (calls in a row). `Livi.favorites`: `number`, `name`, `label`. The phone sends both again whenever they change. Its
+  `name`, `label` (the phone's word for the number), `initials`, `kind` (`in`, `out`, `missed`), `time` (Unix seconds)
+  and `when` (written out in LIVI's language: `14:32` today, `Gestern`/`Yesterday`, else the date), `count` (calls in
+  a row). `Livi.favorites`: `number`, `name`, `label`, `initials`. The phone sends both again whenever they change. Its
   contacts it does not send.
 - `Livi.action("call", ...)`: `dial <number>` (digits, a leading `+`, `*`, `#`; spaces and dashes go), `redial`,
   `voicemail`, `accept` (holding a call in conversation), `accept end` (ending it), `reject` (the call that rings),
   `end` (the call in conversation, also while it dials), `end all`, `mute on|off`, `hold on|off`, `swap`, and
-  `dtmf <key>` (`0`-`9`, `*`, `#`; as CarPlay's telephony keys). Without the switch LIVI refuses it.
+  `dtmf <key>` (`0`-`9`, `*`, `#`; as CarPlay's telephony keys), and `seen` (the page showed the missed calls). With
+  a call in conversation, `reject` declines the second call that rings and `end` ends the one in conversation. Without
+  the switch LIVI refuses it.
+- `LIVI_IAP2_TRACE=1` (independent of the switch) writes every message of the phone's call state and communications
+  to the helper's log, texts masked (length and last two digits), and asks for all their fields. It sends nothing else
+  and names nothing more in the identification: for looking at what a phone sends.
 - The sound of a call stays CarPlay's, and CarPlay still comes to the front when a call rings.
 
 ## Companion channel

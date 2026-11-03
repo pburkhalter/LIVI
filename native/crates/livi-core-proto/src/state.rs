@@ -60,10 +60,14 @@ pub struct Call {
     pub id: String,
     /// When the call became active, in Unix seconds; 0 before
     pub since: u64,
+    /// Seconds the call was active when this changed last (not every second: a page counts on from here)
+    pub elapsed: u64,
     /// The microphone as LIVI last set it for this call
     pub muted: bool,
     /// A second call that rings meanwhile: its name, or its number
     pub waiting: String,
+    /// Missed calls on top of the recents since the page said it saw them (Action::Call "seen")
+    pub missed: u32,
     /// Newest first, at most what the phone sends (12 under CarPlay)
     pub recents: Vec<CallEntry>,
     pub favorites: Vec<CallEntry>,
@@ -80,8 +84,12 @@ pub struct CallEntry {
     pub kind: String,
     /// Recents: Unix seconds
     pub time: u64,
+    /// Recents: the time written out in LIVI's language: "14:32" today, "Gestern"/"Yesterday", else "03.11."
+    pub when: String,
     /// Recents: calls from or to the number in a row
     pub count: u32,
+    /// Up to two letters of the name, "" without one
+    pub initials: String,
 }
 
 /// The radios a phone connects over; one that is not named is off

@@ -92,7 +92,7 @@ impl core::fmt::Display for BringupError {
 
 impl std::error::Error for BringupError {}
 
-fn subscriptions(calls: bool) -> Vec<Vec<u8>> {
+fn subscriptions(calls: bool, full: bool) -> Vec<Vec<u8>> {
     let mut subs = vec![
         StartNowPlayingUpdates {
             media_item_attributes: Some(StartMediaItemAttributes {
@@ -150,6 +150,12 @@ fn subscriptions(calls: bool) -> Vec<Vec<u8>> {
         }
         .encode(),
     ];
+    if full {
+        // every field of the call state and the communications, for the log (crate::calls::describe)
+        let (calls_full, comms_full) = crate::calls::full_subscriptions();
+        subs[3] = comms_full;
+        subs[4] = calls_full;
+    }
     if calls {
         subs.push(crate::calls::start_lists().encode());
     }
@@ -454,7 +460,11 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
     }
 
     let calls = crate::calls::enabled();
-    for sub in subscriptions(calls) {
+    let call_log = crate::calls::log_enabled();
+    for sub in subscriptions(calls, call_log) {
+        if call_log && let Some(line) = crate::calls::describe(&sub) {
+            println!("[cp] call frame tx {line}");
+        }
         if ch.send(sub).await.is_err() {
             let _ = events.send(BringupEvent::Closed).await;
             return;
@@ -513,7 +523,11 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
                     continue;
                 }
                 println!("[cp] call: {}", order.order.what());
-                if ch.send(order.order.encode()).await.is_err() {
+                let frame = order.order.encode();
+                if call_log && let Some(line) = crate::calls::describe(&frame) {
+                    println!("[cp] call frame tx {line}");
+                }
+                if ch.send(frame).await.is_err() {
                     break;
                 }
                 continue;
@@ -537,6 +551,9 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
         let Some(msg_id) = frame_msg_id(&frame) else {
             continue;
         };
+        if call_log && let Some(line) = crate::calls::describe(&frame) {
+            println!("[cp] call frame rx {line}");
+        }
         match msg_id {
             0x4E0E => {
                 if let Ok(m) = DeviceTransportIdentifierNotification::decode(&frame)
@@ -706,6 +723,32 @@ mod tests {
             channel: Channel::of_number(channel),
             security: Security::Wpa2,
         }
+    }
+
+    #[test]
+    fn the_subscriptions_ask_for_every_call_field_only_for_the_log() {
+        let ids = |subs: &[Vec<u8>]| -> Vec<u16> {
+            subs.iter().filter_map(|f| frame_msg_id(f)).collect()
+        };
+        let plain = subscriptions(false, false);
+        assert_eq!(ids(&plain), [0x5000, 0x5200, 0xAE00, 0x4157, 0x4154]);
+        let full = subscriptions(false, true);
+        assert_eq!(ids(&full), [0x5000, 0x5200, 0xAE00, 0x4157, 0x4154]);
+        assert!(full[3].len() > plain[3].len() && full[4].len() > plain[4].len());
+        assert_eq!(full[..3], plain[..3]);
+        assert_eq!(ids(&subscriptions(true, false)).last(), Some(&0x4170));
+        // without the switches: the requests of before, byte for byte (communications 0, 4, 5; call state 0-4, 11)
+        let request = |msg: u16, params: &[u16]| {
+            let mut f = vec![0x40, 0x40, 0x00, (6 + 4 * params.len()) as u8];
+            f.extend_from_slice(&msg.to_be_bytes());
+            for p in params {
+                f.extend_from_slice(&[0x00, 0x04]);
+                f.extend_from_slice(&p.to_be_bytes());
+            }
+            f
+        };
+        assert_eq!(plain[3], request(0x4157, &[0, 4, 5]));
+        assert_eq!(plain[4], request(0x4154, &[0, 1, 2, 3, 4, 11]));
     }
 
     #[test]

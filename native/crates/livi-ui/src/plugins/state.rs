@@ -233,8 +233,13 @@ fn call(state: &Json) -> Value {
         ("number", text("number")),
         ("name", text("name")),
         ("since", Value::Number(c["since"].as_f64().unwrap_or(0.0))),
+        (
+            "elapsed",
+            Value::Number(c["elapsed"].as_f64().unwrap_or(0.0)),
+        ),
         ("muted", flag("muted")),
         ("waiting", text("waiting")),
+        ("missed", Value::Number(c["missed"].as_f64().unwrap_or(0.0))),
     ])
 }
 
@@ -252,7 +257,9 @@ fn call_list(state: &Json, list: &str) -> Value {
                 ("label", text("label")),
                 ("kind", text("kind")),
                 ("time", Value::Number(e["time"].as_f64().unwrap_or(0.0))),
+                ("when", text("when")),
                 ("count", Value::Number(e["count"].as_f64().unwrap_or(0.0))),
+                ("initials", text("initials")),
             ])
         })
         .collect();
@@ -717,20 +724,24 @@ mod tests {
     fn a_call_and_the_lists_reach_the_plugin_as_the_core_tells_them() {
         let state = json!({ "call": {
             "available": true, "state": "active", "incoming": true, "number": "+41790000001", "name": "Test",
-            "id": "u-1", "since": 1_790_000_000u64, "muted": true, "waiting": "",
-            "recents": [ { "number": "2", "name": "", "label": "mobile", "kind": "missed", "time": 30, "count": 2 } ],
+            "id": "u-1", "since": 1_790_000_000u64, "elapsed": 65, "muted": true, "waiting": "", "missed": 2,
+            "recents": [ { "number": "2", "name": "", "label": "mobile", "kind": "missed", "time": 30, "count": 2,
+                           "when": "Gestern", "initials": "" } ],
             "favorites": [ { "number": "3", "name": "C", "label": "home", "kind": "", "time": 0, "count": 0 } ] } });
         let c = call(&state);
         assert_eq!(field(&c, "available"), Value::Bool(true));
         assert_eq!(field(&c, "state"), s("active"));
         assert_eq!(field(&c, "since"), Value::Number(1_790_000_000.0));
         assert_eq!(field(&c, "muted"), Value::Bool(true));
+        assert_eq!(field(&c, "elapsed"), Value::Number(65.0));
+        assert_eq!(field(&c, "missed"), Value::Number(2.0));
         let Value::Model(recents) = call_list(&state, "recents") else {
             panic!("not a model")
         };
         let first = recents.row_data(0).unwrap();
         assert_eq!(field(&first, "kind"), s("missed"));
         assert_eq!(field(&first, "count"), Value::Number(2.0));
+        assert_eq!(field(&first, "when"), s("Gestern"));
         let Value::Model(favorites) = call_list(&state, "favorites") else {
             panic!("not a model")
         };

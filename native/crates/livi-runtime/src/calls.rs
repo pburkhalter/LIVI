@@ -13,6 +13,103 @@ pub fn enabled() -> bool {
     std::env::var(ENV).is_ok_and(|v| v == "1")
 }
 
+/// Looking at the phone's call messages without taking part: every 0x41xx message in the log, its texts masked, and the
+/// subscriptions to the call state and the communications ask for every field. Nothing more is sent or named in the
+/// identification; independent of LIVI_CP_CALLS
+pub const LOG_ENV: &str = "LIVI_IAP2_TRACE";
+
+pub fn log_enabled() -> bool {
+    std::env::var(LOG_ENV).is_ok_and(|v| v == "1")
+}
+
+/// A text as the log shows it: its length, and the last two digits when it has digits (enough to tell calls apart,
+/// never a name or a whole number)
+fn masked(text: &str) -> String {
+    let digits: Vec<char> = text.chars().filter(char::is_ascii_digit).collect();
+    match digits.len() {
+        0 => format!("text<{}>", text.chars().count()),
+        n => format!(
+            "text<{}…{}>",
+            text.chars().count(),
+            digits[n.saturating_sub(2)..].iter().collect::<String>()
+        ),
+    }
+}
+
+/// A UTF-8 text ending in 0x00, with no other 0x00 and no control characters
+fn as_text(b: &[u8]) -> Option<&str> {
+    let (last, body) = b.split_last()?;
+    if *last != 0 || body.contains(&0) {
+        return None;
+    }
+    let text = std::str::from_utf8(body).ok()?;
+    (!text.chars().any(char::is_control)).then_some(text)
+}
+
+/// Parameters within a parameter, when its bytes are exactly that
+fn as_group(b: &[u8]) -> Option<Vec<(u16, &[u8])>> {
+    let params = iap2_csm::split_params(b);
+    let used: usize = params.iter().map(|(_, p)| p.len() + 4).sum();
+    (b.len() >= 4 && used == b.len() && params.iter().all(|(id, _)| *id < 64)).then_some(params)
+}
+
+fn value(b: &[u8]) -> String {
+    let int = |n: usize| b.iter().take(n).fold(0u64, |v, x| (v << 8) | u64::from(*x));
+    match b.len() {
+        0 => "flag".into(),
+        1 => format!("u8 {}", b[0]),
+        2 if as_text(b).is_none() => format!("u16 {}", int(2)),
+        _ => {
+            if let Some(t) = as_text(b) {
+                masked(t)
+            } else if let Some(group) = as_group(b) {
+                let inner: Vec<String> = group
+                    .iter()
+                    .map(|(id, p)| format!("{id} {}", value(p)))
+                    .collect();
+                format!("{{{}}}", inner.join(", "))
+            } else if b.len() == 4 || b.len() == 8 {
+                format!("u{} {}", b.len() * 8, int(b.len()))
+            } else {
+                format!("bytes<{}>", b.len())
+            }
+        }
+    }
+}
+
+/// One line for the log of a message of call state, communications, call control or the call lists
+/// (0x4154..=0x4172): its id and parameters, texts masked; None for other messages
+pub fn describe(frame: &[u8]) -> Option<String> {
+    let (msg_id, payload) = iap2_csm::frame_header(frame).ok()?;
+    if !(0x4154..=0x4172).contains(&msg_id) {
+        return None;
+    }
+    let params: Vec<String> = iap2_csm::split_params(payload)
+        .iter()
+        .map(|(id, p)| format!("{id} {}", value(p)))
+        .collect();
+    Some(format!("0x{msg_id:04X}: {}", params.join(" | ")))
+}
+
+/// The subscriptions to the call state (0x4154) and the communications (0x4157) with every field the phone knows
+/// (luka-dev, IAP2_COMMUNICATIONS.md: call state 0-4, 6-12; communications 0-17)
+pub fn full_subscriptions() -> (Vec<u8>, Vec<u8>) {
+    let start = |msg_id: u16, ids: &[u16]| {
+        let mut params = Vec::new();
+        for id in ids {
+            iap2_csm::put_param(&mut params, *id, &[]);
+        }
+        let mut f = vec![0x40, 0x40];
+        f.extend_from_slice(&(params.len() as u16 + 6).to_be_bytes());
+        f.extend_from_slice(&msg_id.to_be_bytes());
+        f.extend_from_slice(&params);
+        f
+    };
+    let calls: Vec<u16> = (0..=12).filter(|id| *id != 5).collect();
+    let comms: Vec<u16> = (0..=17).collect();
+    (start(0x4154, &calls), start(0x4157, &comms))
+}
+
 /// What the accessory sends for it (call control 0x415A..0x4160, the lists 0x4170/0x4172) and receives (0x4171).
 /// Call control needs StartCallStateUpdates and CallStateUpdate, which the identification names anyway.
 pub const SENT: &[u16] = &[
@@ -322,6 +419,56 @@ impl Targeted {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_log_masks_every_text_and_keeps_the_numbers() {
+        let update = CallStateUpdate {
+            remote_id: Some("+41790000001".into()),
+            display_name: Some("Test Eins".into()),
+            status: Some(4),
+            direction: Some(2),
+            call_uuid: Some("7D19170A-959C".into()),
+            disconnect_reason: None,
+        };
+        let line = describe(&update.encode()).unwrap();
+        assert_eq!(
+            line,
+            "0x4155: 0 text<12…01> | 1 text<9> | 2 u8 4 | 3 u8 2 | 4 text<13…59>"
+        );
+        assert!(!line.contains("Test") && !line.contains("790000"));
+        let lists = ListUpdate {
+            recents: vec![ListEntry {
+                index: Some(0),
+                remote_id: Some("+41790000001".into()),
+                display_name: Some("Test".into()),
+                label: None,
+                address_book_id: None,
+                service: Some(1),
+                kind: Some(3),
+                unix_timestamp: Some(1_790_000_000),
+                duration: None,
+                occurrences: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            describe(&lists.encode()).unwrap(),
+            "0x4171: 1 {0 u16 0, 1 text<12…01>, 2 text<4>, 5 u8 1, 6 u8 3, 7 u64 1790000000}"
+        );
+        assert_eq!(
+            describe(&[0x40, 0x40, 0x00, 0x06, 0x50, 0x01]),
+            None,
+            "not a call message"
+        );
+    }
+
+    #[test]
+    fn the_full_subscriptions_ask_for_every_field() {
+        let (calls, comms) = full_subscriptions();
+        let m = StartCallStateUpdates::decode(&calls).unwrap();
+        assert!(m.remote_id && m.address_book_id && m.label && m.service && m.start_timestamp);
+        assert_eq!(describe(&comms).unwrap().matches("flag").count(), 18);
+    }
 
     #[test]
     fn orders_read_back_as_written() {

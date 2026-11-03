@@ -142,7 +142,7 @@ pub enum Action {
     PhoneHome,
     /// A call through the phone's CarPlay session, with LIVI_CP_CALLS=1: `dial <number>`, `redial`, `voicemail`,
     /// `accept`, `accept end` (end the active call and accept), `reject`, `end`, `end all`, `hold on|off`,
-    /// `mute on|off`, `swap`, `dtmf <0-9, * or #>`
+    /// `mute on|off`, `swap`, `dtmf <0-9, * or #>`; `seen`: the page showed the missed calls (State::call.missed)
     Call {
         order: String,
     },

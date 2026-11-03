@@ -462,6 +462,8 @@ pub struct Projection {
     bye: Option<oneshot::Sender<()>>,
     activity: Option<watch::Sender<Activity>>,
     apply_due: Option<tokio::time::Instant>,
+    /// When "ending" of a call gives way to "idle" (calls.rs)
+    call_ending: Option<tokio::time::Instant>,
     cluster: Cluster,
     themes: PathBuf,
     theme_asked: String,
@@ -636,6 +638,7 @@ impl Projection {
             bye: None,
             activity: None,
             apply_due: None,
+            call_ending: None,
             cluster,
             themes,
             theme_asked: String::new(),
@@ -712,6 +715,10 @@ impl Projection {
                 Some(input) = asks.input.recv() => self.input(input),
                 Some(done) = asks.goodbye.recv() => self.goodbye(done),
                 () = until(self.apply_due) => self.apply_idle(),
+                () = until(self.call_ending) => {
+                    self.call_ending = None;
+                    self.publish();
+                }
                 changed = state.changed() => {
                     if changed.is_err() {
                         return;
