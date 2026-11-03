@@ -67,15 +67,9 @@ pub const DROPPABLE: &[&str] = &[
 /// lists of messages
 pub const CALL_MESSAGES: &str = "call_messages";
 
+/// `calls`: the session takes part in calls (CpConfig::calls), so the identification names their messages unless
+/// `exclude` has CALL_MESSAGES
 pub fn build_identification(
-    id: &Identity,
-    transport: Transport,
-    exclude: &[&str],
-) -> IdentificationInformation {
-    build_identification_with(id, transport, exclude, crate::calls::enabled())
-}
-
-pub fn build_identification_with(
     id: &Identity,
     transport: Transport,
     exclude: &[&str],
@@ -232,7 +226,7 @@ mod tests {
     use super::*;
     use iap2_csm::CsmMessage;
 
-    /// The lists of messages as they were before calls (fork t100 at 1498af94 and 09264412)
+    /// The lists of messages as they were before calls (1498af94 and 09264412)
     const SENT_BEFORE: &[u16] = &[
         0xA101, 0x5703, 0x5000, 0x5002, 0x5003, 0x5200, 0x5203, 0xFFFB, 0xAE00, 0xAE02, 0x4157,
         0x4159, 0x4154, 0x4156, 0x4301,
@@ -260,20 +254,20 @@ mod tests {
             (Transport::Wired, &[0xAE03][..]),
         ] {
             let id = identity();
-            let off = build_identification_with(&id, transport, &[], false);
+            let off = build_identification(&id, transport, &[], false);
             assert_eq!(
                 off.messages_sent_by_accessory,
                 ids(&[SENT_BEFORE, power].concat())
             );
             assert_eq!(off.messages_received_from_accessory, ids(RECEIVED_BEFORE));
             // the switch changes the lists of messages and nothing else
-            let mut on = build_identification_with(&id, transport, &[], true);
+            let mut on = build_identification(&id, transport, &[], true);
             assert_ne!(on.encode(), off.encode());
             on.messages_sent_by_accessory = off.messages_sent_by_accessory.clone();
             on.messages_received_from_accessory = off.messages_received_from_accessory.clone();
             assert_eq!(on.encode(), off.encode());
             // refused lists: the identification goes back to the one without calls
-            let dropped = build_identification_with(&id, transport, &[CALL_MESSAGES], true);
+            let dropped = build_identification(&id, transport, &[CALL_MESSAGES], true);
             assert_eq!(dropped.encode(), off.encode());
         }
     }

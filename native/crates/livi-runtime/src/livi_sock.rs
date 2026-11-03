@@ -448,6 +448,13 @@ pub async fn pump_events_for(
             }
             BringupEvent::Failed(e) => eprintln!("[cp-sock] {tag} bring-up failed: {e}"),
             BringupEvent::Identified => println!("[cp] {tag}: identification accepted"),
+            BringupEvent::CallsRefused => {
+                println!(
+                    "[cp] {tag}: the phone refused the call messages, CarPlay goes on without calls"
+                );
+                let json = crate::calls::refused_json();
+                bcast.push_json(ident.lock().unwrap().apply(json));
+            }
             BringupEvent::Authenticated => println!("[cp] {tag}: MFi auth succeeded"),
             BringupEvent::CarPlayStartSent { ip } => {
                 println!("[cp] {tag}: CarPlayStartSession sent");

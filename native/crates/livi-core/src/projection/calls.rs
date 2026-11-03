@@ -86,9 +86,11 @@ pub(super) struct Calls {
     ended: Option<u64>,
     /// The time of the newest recent call the page saw (Action::Call "seen"), for `missed`
     seen: u64,
+    /// The phone refused the call messages (the helper's `callLists` with `refused`): no calls through this session
+    refused: bool,
 }
 
-/// Up to two letters of a name: of its first and its last word that begin with a letter, as t100-phone does
+/// Up to two letters of a name: of its first and its last word that begin with a letter
 fn initials(name: &str) -> String {
     let letters: Vec<char> = name
         .split(|c: char| c.is_whitespace() || c == ',')
@@ -182,6 +184,9 @@ impl Calls {
         let text = |k: &str| event.get(k).and_then(Value::as_str).map(str::to_string);
         match event.get("type").and_then(Value::as_str) {
             Some("callLists") => {
+                if event.get("refused").and_then(Value::as_bool) == Some(true) {
+                    self.refused = true;
+                }
                 self.recents = entries(&event["recents"]);
                 self.recents.sort_by_key(|e| std::cmp::Reverse(e.time));
                 self.favorites = entries(&event["favorites"]);
@@ -261,6 +266,10 @@ impl Calls {
 
     /// What the page sees at this time, the recents' times in this language
     pub(super) fn view(&self, now: u64, lang: crate::nav_text::Language) -> Call {
+        // as without calls: nothing of them for the plugin
+        if self.refused {
+            return Call::default();
+        }
         let front = self.lines.iter().min_by_key(|l| l.rank());
         let (today, yesterday) = (local(now), local(now.saturating_sub(86_400)));
         let written = |e: &CallEntry, recent: bool| CallEntry {
@@ -317,6 +326,13 @@ impl Calls {
             .map(|l| l.id.as_str())
             .filter(|id| !id.is_empty())
     }
+
+    /// A call that "reject" must not end: in conversation, held or dialling
+    fn busy(&self) -> bool {
+        self.lines
+            .iter()
+            .any(|l| matches!(l.state(), "active" | "held" | "dialing"))
+    }
 }
 
 /// A key of the keypad as a CarPlay telephony key
@@ -330,14 +346,18 @@ fn tone(key: &str) -> Option<u8> {
     }
 }
 
-/// What goes to the helper for an order of a plugin (Action::Call); `ringing` is the id of a call that rings
-fn order_for_helper(order: &str, ringing: Option<&str>) -> String {
+/// What goes to the helper for an order of a plugin (Action::Call); `ringing` is the id of a call that rings, `busy`
+/// whether another one is in conversation, held or dialling. "reject" ends only the ringing call: without its id the
+/// frontmost, as a helper without call ids knows only one call, but never while another one would be ended instead
+/// (the second call stopped ringing just before the tap). None: nothing to send
+fn order_for_helper(order: &str, ringing: Option<&str>, busy: bool) -> Option<String> {
     match order {
         "reject" => match ringing {
-            Some(id) => format!("end {id}"),
-            None => "end".into(),
+            Some(id) => Some(format!("end {id}")),
+            None if busy => None,
+            None => Some("end".into()),
         },
-        other => other.to_string(),
+        other => Some(other.to_string()),
     }
 }
 
@@ -376,17 +396,23 @@ impl Projection {
     /// An order of a plugin (Action::Call)
     pub(super) fn call(&mut self, order: &str) {
         let order = order.trim();
-        let Some((id, bt_mac, ringing)) = self.active().and_then(|s| match s.link {
+        let Some((id, bt_mac, ringing, busy, refused)) = self.active().and_then(|s| match s.link {
             Link::Cp(id) => Some((
                 id,
                 s.device.bt_mac.clone(),
                 s.calls.ringing().map(str::to_string),
+                s.calls.busy(),
+                s.calls.refused,
             )),
             Link::Aa(_) => None,
         }) else {
             println!("[core] call: no CarPlay session");
             return;
         };
+        if refused {
+            println!("[core] call: the phone took no calls through CarPlay in this session");
+            return;
+        }
         if order == "seen" {
             if let Some(entry) = self.sessions.iter_mut().find(|s| s.link == Link::Cp(id)) {
                 entry.calls.seen();
@@ -397,7 +423,10 @@ impl Projection {
         if let Some(key) = order.strip_prefix("dtmf ") {
             match tone(key.trim()) {
                 Some(button) => self.cp.stack(id, StackCmd::Telephony(button)),
-                None => println!("[core] call: no key {key:?} on a keypad"),
+                None => println!(
+                    "[core] call: no key of {} signs on a keypad",
+                    key.trim().chars().count()
+                ),
             }
             return;
         }
@@ -412,8 +441,10 @@ impl Projection {
             entry.calls.muted = on && !entry.calls.lines.is_empty();
             self.publish();
         }
-        self.devices
-            .call(order_for_helper(order, ringing.as_deref()), bt_mac);
+        match order_for_helper(order, ringing.as_deref(), busy) {
+            Some(order) => self.devices.call(order, bt_mac),
+            None => println!("[core] call: reject, but no call rings any more"),
+        }
     }
 }
 
@@ -495,8 +526,25 @@ mod tests {
         assert_eq!((v.id.as_str(), v.state.as_str()), ("a", "active"));
         assert_eq!(v.waiting, "+41790000002");
         assert_eq!(c.ringing(), Some("b"));
-        assert_eq!(order_for_helper("reject", c.ringing()), "end b");
-        assert_eq!(order_for_helper("end", c.ringing()), "end");
+        assert_eq!(
+            order_for_helper("reject", c.ringing(), c.busy()).as_deref(),
+            Some("end b")
+        );
+        assert_eq!(
+            order_for_helper("end", c.ringing(), c.busy()).as_deref(),
+            Some("end")
+        );
+        // the second one stops ringing, the tap on its button comes just after: the conversation stays
+        c.take(
+            &json!({ "type": "call", "phase": "ended", "status": 0, "uuid": "b" }),
+            3,
+        );
+        assert_eq!(c.ringing(), None);
+        assert_eq!(order_for_helper("reject", c.ringing(), c.busy()), None);
+        assert_eq!(
+            order_for_helper("end", c.ringing(), c.busy()).as_deref(),
+            Some("end")
+        );
     }
 
     #[test]
@@ -514,8 +562,29 @@ mod tests {
             ("ringing", true)
         );
         assert_eq!(c.ringing(), None, "no id: reject ends the frontmost call");
+        assert_eq!(
+            order_for_helper("reject", c.ringing(), c.busy()).as_deref(),
+            Some("end")
+        );
         c.take(&json!({ "type": "call", "phase": "ended" }), 0);
         assert_eq!(c.view(1_000, Language::De).state, "idle");
+    }
+
+    #[test]
+    fn a_session_whose_phone_refused_the_calls_has_none() {
+        let mut c = Calls::default();
+        assert!(c.view(0, Language::De).available);
+        assert!(c.take(
+            &json!({ "type": "callLists", "refused": true, "recents": [], "favorites": [] }),
+            1
+        ));
+        assert!(!c.view(1, Language::De).available);
+        // the call state still comes (it was subscribed before calls too), the plugin sees no calls of its own
+        c.take(
+            &json!({ "type": "call", "phase": "ringing", "number": "+41790000001" }),
+            2,
+        );
+        assert_eq!(c.view(2, Language::De), Call::default());
     }
 
     #[test]
@@ -604,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn initials_as_the_board_service_makes_them() {
+    fn initials_of_the_first_and_the_last_word() {
         assert_eq!(initials("Anna Beispiel"), "AB");
         assert_eq!(initials("Emil Erfunden, Junior"), "EJ");
         assert_eq!(initials("zoë"), "Z");
