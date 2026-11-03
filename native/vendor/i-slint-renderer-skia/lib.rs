@@ -920,12 +920,10 @@ impl SkiaRenderer {
     }
 
     fn partial_rendering_state(&self) -> Option<&PartialRenderingState> {
-        // We don't know where the application might render to, so disable partial rendering.
-        if self.rendering_notifier.borrow().is_some() {
-            None
-        } else {
-            self.partial_rendering_state.as_ref()
-        }
+        // LIVI: kept with a rendering notifier. Upstream turns partial rendering off for any, as one might draw into the
+        // frame; LIVI's draw nothing (livi-ui: the lever "UI hole" reads after drawing what the frame shows, the
+        // secondary windows attach their video once).
+        self.partial_rendering_state.as_ref()
     }
 }
 

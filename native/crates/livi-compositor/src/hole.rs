@@ -25,6 +25,39 @@ pub struct Hole {
     window: Size<i32, Logical>,
     /// From the window's corner, not overlapping
     holes: Vec<Rectangle<i32, Logical>>,
+    log: Pace,
+}
+
+/// Lines of the region's changes a second at most, except a change to or from none (a plugin's cover that follows an
+/// animation would write one a frame)
+const LINES_A_SECOND: u32 = 4;
+
+/// How the region's changes reach the log: each one to or from none, of the others LINES_A_SECOND a second; the next
+/// line says how many it left out
+#[derive(Default)]
+pub(crate) struct Pace {
+    since: Option<std::time::Instant>,
+    lines: u32,
+    left_out: u32,
+}
+
+impl Pace {
+    pub(crate) fn line(&mut self, edge: bool, text: impl FnOnce() -> String) -> Option<String> {
+        let now = std::time::Instant::now();
+        if self.since.is_none_or(|s| now.duration_since(s).as_secs() >= 1) {
+            self.since = Some(now);
+            self.lines = 0;
+        }
+        if !edge && self.lines >= LINES_A_SECOND {
+            self.left_out += 1;
+            return None;
+        }
+        self.lines += 1;
+        Some(match std::mem::take(&mut self.left_out) {
+            0 => text(),
+            n => format!("{} ({n} changes before not logged)", text()),
+        })
+    }
 }
 
 impl Hole {
@@ -104,8 +137,12 @@ pub fn refresh(state: &mut LiviState, screen_idx: usize) {
             Vec::new()
         };
         let hole = &mut state.toplevels[ui].hole;
-        if hole.holes != holes {
-            log::info!("[hole] {}", describe(&holes));
+        if hole.holes != holes
+            && let Some(line) = hole
+                .log
+                .line(hole.holes.is_empty() || holes.is_empty(), || describe(&holes))
+        {
+            log::info!("[hole] {line}");
         }
         hole.window = window;
         hole.holes = holes;

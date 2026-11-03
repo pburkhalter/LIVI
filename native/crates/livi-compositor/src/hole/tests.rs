@@ -23,8 +23,8 @@ fn pixels(rects: &[Rectangle<i32, Logical>]) -> i64 {
         .sum()
 }
 
-/// The CarPlay card of the T100 as the compositor keeps what the UI reports: the middle, and the narrow parts beside
-/// the round corners
+/// A CarPlay card on a panel of 2400 x 900 with bars, as the compositor keeps what the UI reports: the middle, and the
+/// narrow parts beside the round corners
 fn card() -> Vec<Rectangle<i32, Logical>> {
     vec![
         rect(316, 18, 2016, 738),
@@ -49,7 +49,7 @@ fn without_a_region_or_without_a_video_nothing_is_left_out() {
 
 #[test]
 fn only_what_lies_over_the_video_and_in_the_window_is_left_out() {
-    // the video of the MMI page reaches beyond the window at the top
+    // a camera's video larger than its card reaches beyond the window at the top
     let video = Some(rect(982, -43, 1406, 791));
     let holes = holes_in(&[rect(1000, -10, 1400, 800)], WINDOW.into(), video);
     assert_eq!(holes, vec![rect(1000, 0, 1388, 748)]);
@@ -317,7 +317,7 @@ mod gl {
         )
     }
 
-    /// One of two video pictures, opaque, larger than the card as on the MMI page
+    /// One of two video pictures, opaque, larger than the card as a camera's may be
     fn video_pixels(frame: u8) -> Vec<u8> {
         let (w, h) = (680, 420);
         let mut pixels = zeros(w, h);

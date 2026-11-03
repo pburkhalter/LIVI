@@ -338,7 +338,11 @@ fn factory(component: ComponentDefinition, around: bool) -> ComponentFactory {
         });
         LIVE.with_borrow_mut(|live| live.push(instance.as_weak()));
         if around {
-            AROUND.with_borrow_mut(|a| a.push(instance.as_weak()));
+            // the ones gone first: components come and go with their pages, also without the lever
+            AROUND.with_borrow_mut(|a| {
+                a.retain(|w| w.upgrade().is_some());
+                a.push(instance.as_weak());
+            });
         }
         crate::debug::trace(&format!("plugin component {} created", component.name()));
         Some(instance)
