@@ -75,11 +75,11 @@ fn settle_intro(ui: &AppWindow) {
     });
 }
 
-// The main window does without a rendering notifier: with one, Slint's Skia renderer draws the whole window every
-// frame, it turns partial rendering (SLINT_SKIA_PARTIAL_RENDERING) off. What LIVI did in the notifier comes from the
-// window instead: the setup once the native window exists, the frames from winit's RedrawRequested. Only on macOS,
-// where Slint draws from the display link without that event, a notifier still counts the frames (no partial
-// rendering to lose there: CGL reports no buffer age).
+// The main window does without a rendering notifier for what can come from the window: the setup once the native
+// window exists, the frames from winit's RedrawRequested. Upstream's Skia renderer turns partial rendering
+// (SLINT_SKIA_PARTIAL_RENDERING) off for a window with a notifier; the vendored one keeps it (native/vendor/README.md),
+// so the lever "UI hole" (ui_hole.rs) can read after drawing. On macOS, where Slint draws from the display link
+// without that event, a notifier counts the frames (CGL reports no buffer age, partial rendering gains nothing there).
 
 /// After every frame of the main window: counts it (debug overlay, LIVI_UI_TRACE) and lets the start picture go.
 fn frame_drawn(ui: &AppWindow) {

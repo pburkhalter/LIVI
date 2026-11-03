@@ -10,11 +10,16 @@
 ## i-slint-renderer-skia 1.18.1
 
 - `opengl_surface.rs`: `LIVI_UI_FINISH=1` waits with `glFinish` until the GPU has drawn a frame, after Skia's flush and before
-  the swap. Off by default; nothing else changed against crates.io.
+  the swap. Off by default.
+- `lib.rs`, `partial_rendering_state`: partial rendering (`SLINT_SKIA_PARTIAL_RENDERING`) stays on for a window with a
+  rendering notifier. Upstream turns it off for any notifier, as one might draw into the frame; LIVI's draw nothing.
+  The main window gets one only with the lever "UI hole" (`livi-ui/src/ui_hole.rs`), which would otherwise redraw the
+  whole window each frame; the secondary windows have one to attach their video. Nothing else changed against
+  crates.io.
 - Why: some drivers pass the buffer to the compositor without a fence for drawing still under way (PowerVR DDK 1.11 on the
   GE8300, Wayland). The compositor then shows it half drawn or the one before, and the picture flickers between two
   buffers. Measured on that board: with the wait the buffers no longer alternate, at the same frame rate.
-- Not by a rendering notifier: one on the main window turns Slint's partial rendering off (see `livi-ui/src/main.rs`).
+- Not by a rendering notifier: the wait is wanted on every frame, also without the lever "UI hole".
 - Drop the copy once Slint offers a wait before the swap, or the driver keeps its fence.
 
 ## smithay 0.7.0

@@ -73,6 +73,38 @@ impl Px {
     }
 }
 
+/// Lines of the region's changes a second at most, except a change to or from none (a plugin's cover that follows an
+/// animation would write one a frame)
+const LINES_A_SECOND: u32 = 4;
+
+/// How the region's changes reach the log: each one to or from none, of the others LINES_A_SECOND a second; the next
+/// line says how many it left out
+#[derive(Default)]
+pub(crate) struct Pace {
+    since: Option<std::time::Instant>,
+    lines: u32,
+    left_out: u32,
+}
+
+impl Pace {
+    pub(crate) fn line(&mut self, edge: bool, text: impl FnOnce() -> String) -> Option<String> {
+        let now = std::time::Instant::now();
+        if self.since.is_none_or(|s| now.duration_since(s).as_secs() >= 1) {
+            self.since = Some(now);
+            self.lines = 0;
+        }
+        if !edge && self.lines >= LINES_A_SECOND {
+            self.left_out += 1;
+            return None;
+        }
+        self.lines += 1;
+        Some(match std::mem::take(&mut self.left_out) {
+            0 => text(),
+            n => format!("{} ({n} changes before not logged)", text()),
+        })
+    }
+}
+
 /// How far inside the card's edges the region begins: a background draws the card's rim there
 const EDGE: f32 = 2.0;
 /// Around what lies on the card, for its rounding to whole pixels
@@ -115,15 +147,19 @@ pub fn clear_rects(card: Area, radius: f32, pages: Area, covers: &[Area], scale:
         }
         rects.extend(new);
     }
-    // what lies on the card, outwards to whole pixels
+    // what lies on the card, outwards to whole pixels; only its part near the card counts, so that a plugin's huge
+    // rectangle (Covers.all) stays in the numbers of the window
+    let near = |v: f32, lo: f32, hi: f32| v.clamp(lo - 2.0 * MARGIN, hi + 2.0 * MARGIN);
     for c in covers.iter().filter(|c| c.w > 0.0 && c.h > 0.0) {
-        let a = ((c.x - MARGIN) * scale).floor() as i32;
-        let b = ((c.y - MARGIN) * scale).floor() as i32;
+        let (cx0, cx1) = (near(c.x, card.x, card.right()), near(c.right(), card.x, card.right()));
+        let (cy0, cy1) = (near(c.y, card.y, card.bottom()), near(c.bottom(), card.y, card.bottom()));
+        let a = ((cx0 - MARGIN) * scale).floor() as i32;
+        let b = ((cy0 - MARGIN) * scale).floor() as i32;
         let cover = Px {
             x: a,
             y: b,
-            w: ((c.right() + MARGIN) * scale).ceil() as i32 - a,
-            h: ((c.bottom() + MARGIN) * scale).ceil() as i32 - b,
+            w: ((cx1 + MARGIN) * scale).ceil() as i32 - a,
+            h: ((cy1 + MARGIN) * scale).ceil() as i32 - b,
         };
         rects = rects.iter().flat_map(|r| r.minus(&cover)).collect();
     }
@@ -200,11 +236,13 @@ pub fn start(ui: &AppWindow) {
         link: Option<wayland::Link>,
         check: Option<check::Check>,
         last: Option<Vec<Px>>,
+        log: Pace,
     }
     let run = RefCell::new(Run {
         link,
         check: check.then(check::Check::default),
         last: None,
+        log: Pace::default(),
     });
     let weak = ui.as_weak();
     let set = ui.window().set_rendering_notifier(move |state, api| {
@@ -218,7 +256,11 @@ pub fn start(ui: &AppWindow) {
         let rects = scale.map(|scale| region(&ui, scale)).unwrap_or_default();
         let changed = run.last.as_ref() != Some(&rects);
         if changed {
-            println!("[ui] hole: {}", describe(&rects));
+            // with the check every change: its lines refer to them
+            let edge = run.check.is_some() || run.last.as_ref().is_none_or(Vec::is_empty) || rects.is_empty();
+            if let Some(line) = run.log.line(edge, || describe(&rects)) {
+                println!("[ui] hole: {line}");
+            }
             if let Some(link) = run.link.as_mut() {
                 link.send(&rects);
             }
@@ -535,5 +577,29 @@ mod tests {
             let px = Px { x: c.x as i32 - 1, y: c.y as i32 - 1, w: c.w as i32 + 2, h: c.h as i32 + 2 };
             assert!(rects.iter().all(|r| !r.intersects(&px)));
         }
+    }
+
+    #[test]
+    fn the_log_takes_a_few_changes_a_second_and_every_one_to_or_from_none() {
+        let mut pace = Pace::default();
+        for i in 0..LINES_A_SECOND {
+            assert_eq!(pace.line(false, || format!("{i}")), Some(format!("{i}")));
+        }
+        assert_eq!(pace.line(false, || "left out".into()), None);
+        assert_eq!(pace.line(false, || "left out".into()), None);
+        assert_eq!(pace.line(true, || "none".into()).as_deref(), Some("none (2 changes before not logged)"));
+        std::thread::sleep(std::time::Duration::from_millis(1_050));
+        assert_eq!(pace.line(false, || "next".into()).as_deref(), Some("next"));
+    }
+
+    #[test]
+    fn a_huge_cover_takes_all_of_the_card_and_overflows_nothing() {
+        for (x, w) in [(-10_000.0, 20_000.0), (0.0, 1e10), (-1e10, 2e10), (-3e38, f32::MAX)] {
+            let all = Area { x, y: x, w, h: w };
+            assert_eq!(clear_rects(CARD, 26.0, PAGES, &[all], 1.5), Vec::new(), "{x} {w}");
+        }
+        // one beside the card leaves it as it is
+        let beside = Area { x: -1e10, y: 0.0, w: 1e10, h: 900.0 };
+        assert_eq!(clear_rects(CARD, 26.0, PAGES, &[beside], 1.0), clear_rects(CARD, 26.0, PAGES, &[], 1.0));
     }
 }
