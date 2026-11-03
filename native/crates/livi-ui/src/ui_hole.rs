@@ -216,7 +216,8 @@ pub fn start(ui: &AppWindow) {
         }
         let scale = crate::surface_scale(ui.window());
         let rects = scale.map(|scale| region(&ui, scale)).unwrap_or_default();
-        if run.last.as_ref() != Some(&rects) {
+        let changed = run.last.as_ref() != Some(&rects);
+        if changed {
             println!("[ui] hole: {}", describe(&rects));
             if let Some(link) = run.link.as_mut() {
                 link.send(&rects);
@@ -229,7 +230,7 @@ pub fn start(ui: &AppWindow) {
             (run.check.as_mut(), api, physical)
         {
             let height = ui.window().size().height as i32;
-            check.frame(get_proc_address, height, &rects);
+            check.frame(get_proc_address, height, &rects, changed);
         }
     });
     if let Err(e) = set {
@@ -263,7 +264,8 @@ mod check {
     }
 
     impl Check {
-        pub fn frame(&mut self, get: &dyn Fn(&CStr) -> *const c_void, height: i32, rects: &[Px]) {
+        /// `changed`: the region is new with this frame, its first result is logged also when all is clear
+        pub fn frame(&mut self, get: &dyn Fn(&CStr) -> *const c_void, height: i32, rects: &[Px], changed: bool) {
             let (read, integer, store) = (get(c"glReadPixels"), get(c"glGetIntegerv"), get(c"glPixelStorei"));
             if read.is_null() || integer.is_null() || store.is_null() {
                 return;
@@ -284,6 +286,8 @@ mod check {
             self.frames += 1;
             let mut wrong = 0_u64;
             let mut first = None;
+            // where the pixels that are not clear lie: left, top, right, bottom
+            let mut bounds = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
             unsafe { store(GL_PACK_ALIGNMENT, 4) };
             for r in rects {
                 let mut pixels = vec![0_u8; r.w as usize * r.h as usize * 4];
@@ -294,18 +298,26 @@ mod check {
                 for (i, p) in pixels.chunks_exact(4).enumerate() {
                     if p != [0, 0, 0, 0] {
                         wrong += 1;
+                        let (x, y) = (r.x + i as i32 % r.w, r.y + r.h - 1 - i as i32 / r.w);
+                        bounds = (bounds.0.min(x), bounds.1.min(y), bounds.2.max(x), bounds.3.max(y));
                         if first.is_none() {
-                            let (column, row) = (i as i32 % r.w, i as i32 / r.w);
-                            first = Some((r.x + column, r.y + r.h - 1 - row, [p[0], p[1], p[2], p[3]]));
+                            first = Some((x, y, [p[0], p[1], p[2], p[3]]));
                         }
                     }
                 }
             }
             unsafe { store(GL_PACK_ALIGNMENT, alignment) };
             if let Some((x, y, rgba)) = first {
-                println!("[ui] hole check: frame {}: {wrong} pixels not clear, first at {x},{y} {rgba:?}", self.frames);
+                let (left, top, right, bottom) = bounds;
+                println!(
+                    "[ui] hole check: frame {}: {wrong} pixels not clear, first at {x},{y} {rgba:?}, within {left},{top} to {right},{bottom}",
+                    self.frames
+                );
             } else if !rects.is_empty() {
                 self.clear += 1;
+                if changed {
+                    println!("[ui] hole check: frame {}: the new region is all clear", self.frames);
+                }
             }
             if self.frames.is_multiple_of(100) {
                 println!("[ui] hole check: {} frames, {} with a region all clear", self.frames, self.clear);

@@ -242,16 +242,23 @@ export component AppWindow inherits Window {
     }
     // Around the card the window is never fully transparent, even where a bar has a gap: the compositor gives a touch
     // on a transparent pixel straight to the phone (alpha 1 of 255 is invisible)
+    // (with x and y: Slint centres an element that has none, the top and left ones lay in the card)
     if root.video-card-shown: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
         height: root.card-top;
         background: #00000001;
     }
     if root.video-card-shown: Rectangle {
+        x: 0px;
         y: root.height - root.card-bottom;
+        width: root.width;
         height: root.card-bottom;
         background: #00000001;
     }
     if root.video-card-shown: Rectangle {
+        x: 0px;
         y: root.card-top;
         width: root.card-left;
         height: root.height - root.card-top - root.card-bottom;
