@@ -464,6 +464,8 @@ pub struct Projection {
     apply_due: Option<tokio::time::Instant>,
     /// When "ending" of a call gives way to "idle" (calls.rs)
     call_ending: Option<tokio::time::Instant>,
+    /// Whether a CarPlay call brings the phone's picture to the front (LIVI_CP_CALL_FRONT, calls.rs)
+    cp_call_front: bool,
     cluster: Cluster,
     themes: PathBuf,
     theme_asked: String,
@@ -639,6 +641,7 @@ impl Projection {
             activity: None,
             apply_due: None,
             call_ending: None,
+            cp_call_front: calls::call_front(),
             cluster,
             themes,
             theme_asked: String::new(),

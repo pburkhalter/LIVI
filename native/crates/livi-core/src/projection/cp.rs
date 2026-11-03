@@ -40,7 +40,10 @@ impl Projection {
                 if self.is_active(Link::Cp(id)) {
                     self.activity(|a| a.stream(profile.kind, active));
                 }
-                if profile.kind == AudioKind::Call && self.is_active(Link::Cp(id)) {
+                if profile.kind == AudioKind::Call
+                    && self.is_active(Link::Cp(id))
+                    && self.cp_call_front
+                {
                     self.attend(Attention::Call, active);
                 }
             }
@@ -115,7 +118,9 @@ impl Projection {
             CpEvent::Call { id, phase } => {
                 println!("[core] CarPlay call {phase:?}");
                 if self.is_active(Link::Cp(id)) {
-                    self.attend(Attention::Call, phase != CallPhase::Ended);
+                    if self.cp_call_front {
+                        self.attend(Attention::Call, phase != CallPhase::Ended);
+                    }
                     self.activity(|a| a.phone = phase != CallPhase::Ended);
                 }
             }

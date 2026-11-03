@@ -233,7 +233,8 @@ refuses them gets an identification without them, and CarPlay goes on.
 - `LIVI_IAP2_TRACE=1` (independent of the switch) writes every message of the phone's call state and communications
   to the helper's log, texts masked (length and last two digits), and asks for all their fields. It sends nothing else
   and names nothing more in the identification: for looking at what a phone sends.
-- The sound of a call stays CarPlay's, and CarPlay still comes to the front when a call rings.
+- The sound of a call stays CarPlay's. CarPlay comes to the front when a call rings or its sound starts, unless
+  `LIVI_CP_CALL_FRONT=0`: then the plugin shows the call itself (Siri still comes to the front).
 
 ## Companion channel
 
