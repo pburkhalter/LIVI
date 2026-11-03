@@ -43,12 +43,15 @@ use crate::update::UpdateAsk;
 
 mod aa;
 mod audio;
+mod calls;
 mod cluster;
 mod cp;
 mod input;
 mod screens;
 mod sessions;
 mod state;
+
+pub use calls::{ENV as CALLS_ENV, enabled as calls_enabled};
 
 const RAMP_DOWN_MS: u32 = 500;
 const RAMP_UP_MS: u32 = 1500;
@@ -197,6 +200,7 @@ struct Entry {
     duck_ramp_ms: u32,
     now_playing: NowPlaying,
     navigation: Navigation,
+    calls: calls::Calls,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -458,6 +462,8 @@ pub struct Projection {
     bye: Option<oneshot::Sender<()>>,
     activity: Option<watch::Sender<Activity>>,
     apply_due: Option<tokio::time::Instant>,
+    /// When "ending" of a call gives way to "idle" (calls.rs)
+    call_ending: Option<tokio::time::Instant>,
     cluster: Cluster,
     themes: PathBuf,
     theme_asked: String,
@@ -480,6 +486,8 @@ pub enum UiCommand {
     CameraFound(bool),
     OpenApp(String),
     PhoneHome,
+    /// Action::Call, with LIVI_CP_CALLS=1
+    Call(String),
 }
 
 fn kept_cluster(cfg: &Config, theme: Theme) -> Cluster {
@@ -630,6 +638,7 @@ impl Projection {
             bye: None,
             activity: None,
             apply_due: None,
+            call_ending: None,
             cluster,
             themes,
             theme_asked: String::new(),
@@ -701,10 +710,15 @@ impl Projection {
                     UiCommand::CameraFound(found) => self.camera_found(found),
                     UiCommand::OpenApp(target) => self.open_app(&target),
                     UiCommand::PhoneHome => self.to_active(Do::Home),
+                    UiCommand::Call(order) => self.call(&order),
                 },
                 Some(input) = asks.input.recv() => self.input(input),
                 Some(done) = asks.goodbye.recv() => self.goodbye(done),
                 () = until(self.apply_due) => self.apply_idle(),
+                () = until(self.call_ending) => {
+                    self.call_ending = None;
+                    self.publish();
+                }
                 changed = state.changed() => {
                     if changed.is_err() {
                         return;

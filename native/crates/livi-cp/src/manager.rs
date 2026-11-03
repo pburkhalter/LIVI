@@ -961,8 +961,13 @@ impl<M: Media> Manager<M> {
                     _ => return,
                 };
                 self.emit(CpEvent::Call { id, phase });
+                // number, name, the phone's own status and id: for the call state of UI plugins
+                self.emit(CpEvent::Metadata {
+                    id,
+                    event: ev.clone(),
+                });
             }
-            "albumart" | "navigation" | "nowplaying" => {
+            "albumart" | "navigation" | "nowplaying" | "callLists" => {
                 self.emit(CpEvent::Metadata {
                     id,
                     event: ev.clone(),
@@ -1410,6 +1415,9 @@ mod tests {
                 phase: CallPhase::Ringing
             }
         );
+        assert!(
+            matches!(rig.event().await, CpEvent::Metadata { id: m, ref event } if m == id && event["type"] == "call")
+        );
         rig.helper
             .push(serde_json::json!({ "type": "call", "cid": "phone-1", "phase": "active" }))
             .await;
@@ -1419,6 +1427,9 @@ mod tests {
                 id,
                 phase: CallPhase::Active
             }
+        );
+        assert!(
+            matches!(rig.event().await, CpEvent::Metadata { id: m, ref event } if m == id && event["type"] == "call")
         );
         rig.helper
             .push(serde_json::json!({ "type": "call", "phase": "ended" }))
@@ -1430,9 +1441,18 @@ mod tests {
                 phase: CallPhase::Ended
             }
         );
+        assert!(
+            matches!(rig.event().await, CpEvent::Metadata { id: m, ref event } if m == id && event["type"] == "call")
+        );
         rig.helper
             .push(serde_json::json!({ "type": "call", "phase": "odd" }))
             .await;
+        rig.helper
+            .push(serde_json::json!({ "type": "callLists", "recents": [], "favorites": [] }))
+            .await;
+        assert!(
+            matches!(rig.event().await, CpEvent::Metadata { id: m, ref event } if m == id && event["type"] == "callLists")
+        );
         rig.helper
             .push(serde_json::json!({ "type": "power", "level": 50, "charging": true }))
             .await;

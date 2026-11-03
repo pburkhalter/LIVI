@@ -18,7 +18,7 @@ use iap2_csm::messages::wifi::*;
 use livi_wifi::{Channel, OnAir, Security};
 
 use crate::framing::frame_msg_id;
-use crate::ident::{DROPPABLE, Identity, Theme, Transport, build_identification};
+use crate::ident::{CALL_MESSAGES, DROPPABLE, Identity, Theme, Transport, build_identification};
 use crate::vehicle::{Fuels, LocationTypes, VehicleFeed, VehicleStatus};
 use crate::{AsyncAuth, ControlChannel, net};
 
@@ -92,8 +92,8 @@ impl core::fmt::Display for BringupError {
 
 impl std::error::Error for BringupError {}
 
-fn subscriptions() -> Vec<Vec<u8>> {
-    vec![
+fn subscriptions(calls: bool, full: bool) -> Vec<Vec<u8>> {
+    let mut subs = vec![
         StartNowPlayingUpdates {
             media_item_attributes: Some(StartMediaItemAttributes {
                 persistent_id: false,
@@ -149,7 +149,17 @@ fn subscriptions() -> Vec<Vec<u8>> {
             start_timestamp: false,
         }
         .encode(),
-    ]
+    ];
+    if full {
+        // every field of the call state and the communications, for the log (crate::calls::describe)
+        let (calls_full, comms_full) = crate::calls::full_subscriptions();
+        subs[3] = comms_full;
+        subs[4] = calls_full;
+    }
+    if calls {
+        subs.push(crate::calls::start_lists().encode());
+    }
+    subs
 }
 
 async fn recv<C: ControlChannel>(ch: &mut C) -> Result<Vec<u8>, BringupError> {
@@ -175,7 +185,7 @@ async fn run_identification<C: ControlChannel>(
             Some(0x1D03) => {
                 let rejected = IdentificationRejected::decode(&frame)
                     .map_err(|e| BringupError::Identification(e.to_string()))?;
-                let flagged = flagged_fields(&rejected);
+                let flagged = flagged_fields(&rejected, crate::calls::enabled());
                 let drop: Vec<&str> = DROPPABLE
                     .iter()
                     .copied()
@@ -201,7 +211,7 @@ async fn run_identification<C: ControlChannel>(
     }
 }
 
-fn flagged_fields(r: &IdentificationRejected) -> Vec<&'static str> {
+fn flagged_fields(r: &IdentificationRejected, calls: bool) -> Vec<&'static str> {
     let mut out = Vec::new();
     let mut push = |on: bool, name| {
         if on {
@@ -217,6 +227,10 @@ fn flagged_fields(r: &IdentificationRejected) -> Vec<&'static str> {
         "vehicle_information_component",
     );
     push(r.vehicle_status_component, "vehicle_status_component");
+    push(
+        calls && (r.messages_sent_by_accessory || r.messages_received_from_accessory),
+        CALL_MESSAGES,
+    );
     out
 }
 
@@ -445,7 +459,12 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
         }
     }
 
-    for sub in subscriptions() {
+    let calls = crate::calls::enabled();
+    let call_log = crate::calls::log_enabled();
+    for sub in subscriptions(calls, call_log) {
+        if call_log && let Some(line) = crate::calls::describe(&sub) {
+            println!("[cp] call frame tx {line}");
+        }
         if ch.send(sub).await.is_err() {
             let _ = events.send(BringupEvent::Closed).await;
             return;
@@ -458,6 +477,7 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
     let mut offered = false;
     let mut phone_bt_mac: Option<String> = None;
     let again = cp.start_again.clone();
+    let mut orders = vehicle.call.subscribe();
     loop {
         let frame = tokio::select! {
             frame = ch.recv() => match frame {
@@ -494,6 +514,24 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
                 }
                 continue;
             }
+            order = orders.recv(), if calls => {
+                // lagged: the orders it missed are old. Closed it never is: the feed holds a sender
+                let Ok(order) = order else {
+                    continue;
+                };
+                if !order.meant_for(phone_bt_mac.as_deref()) {
+                    continue;
+                }
+                println!("[cp] call: {}", order.order.what());
+                let frame = order.order.encode();
+                if call_log && let Some(line) = crate::calls::describe(&frame) {
+                    println!("[cp] call frame tx {line}");
+                }
+                if ch.send(frame).await.is_err() {
+                    break;
+                }
+                continue;
+            }
             changed = vehicle.seek.changed() => {
                 if changed.is_err() {
                     continue;
@@ -513,6 +551,9 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
         let Some(msg_id) = frame_msg_id(&frame) else {
             continue;
         };
+        if call_log && let Some(line) = crate::calls::describe(&frame) {
+            println!("[cp] call frame rx {line}");
+        }
         match msg_id {
             0x4E0E => {
                 if let Ok(m) = DeviceTransportIdentifierNotification::decode(&frame)
@@ -682,6 +723,32 @@ mod tests {
             channel: Channel::of_number(channel),
             security: Security::Wpa2,
         }
+    }
+
+    #[test]
+    fn the_subscriptions_ask_for_every_call_field_only_for_the_log() {
+        let ids = |subs: &[Vec<u8>]| -> Vec<u16> {
+            subs.iter().filter_map(|f| frame_msg_id(f)).collect()
+        };
+        let plain = subscriptions(false, false);
+        assert_eq!(ids(&plain), [0x5000, 0x5200, 0xAE00, 0x4157, 0x4154]);
+        let full = subscriptions(false, true);
+        assert_eq!(ids(&full), [0x5000, 0x5200, 0xAE00, 0x4157, 0x4154]);
+        assert!(full[3].len() > plain[3].len() && full[4].len() > plain[4].len());
+        assert_eq!(full[..3], plain[..3]);
+        assert_eq!(ids(&subscriptions(true, false)).last(), Some(&0x4170));
+        // without the switches: the requests of before, byte for byte (communications 0, 4, 5; call state 0-4, 11)
+        let request = |msg: u16, params: &[u16]| {
+            let mut f = vec![0x40, 0x40, 0x00, (6 + 4 * params.len()) as u8];
+            f.extend_from_slice(&msg.to_be_bytes());
+            for p in params {
+                f.extend_from_slice(&[0x00, 0x04]);
+                f.extend_from_slice(&p.to_be_bytes());
+            }
+            f
+        };
+        assert_eq!(plain[3], request(0x4157, &[0, 4, 5]));
+        assert_eq!(plain[4], request(0x4154, &[0, 1, 2, 3, 4, 11]));
     }
 
     #[test]

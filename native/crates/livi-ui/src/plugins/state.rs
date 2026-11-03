@@ -220,6 +220,52 @@ fn links(state: &Json) -> Value {
     ])
 }
 
+/// A call through CarPlay (LIVI_CP_CALLS=1, the core's `call`); `available` false without
+fn call(state: &Json) -> Value {
+    let c = &state["call"];
+    let text = |key: &str| s(c[key].as_str().unwrap_or_default());
+    let flag = |key: &str| Value::Bool(c[key].as_bool().unwrap_or(false));
+    let told = c["state"].as_str().unwrap_or_default();
+    record(vec![
+        ("available", flag("available")),
+        ("state", s(if told.is_empty() { "idle" } else { told })),
+        ("incoming", flag("incoming")),
+        ("number", text("number")),
+        ("name", text("name")),
+        ("since", Value::Number(c["since"].as_f64().unwrap_or(0.0))),
+        (
+            "elapsed",
+            Value::Number(c["elapsed"].as_f64().unwrap_or(0.0)),
+        ),
+        ("muted", flag("muted")),
+        ("waiting", text("waiting")),
+        ("missed", Value::Number(c["missed"].as_f64().unwrap_or(0.0))),
+    ])
+}
+
+/// The phone's recent (`recents`) or favourite calls, as the phone sends them (recents newest first)
+fn call_list(state: &Json, list: &str) -> Value {
+    let out = state["call"][list]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| {
+            let text = |key: &str| s(e[key].as_str().unwrap_or_default());
+            record(vec![
+                ("number", text("number")),
+                ("name", text("name")),
+                ("label", text("label")),
+                ("kind", text("kind")),
+                ("time", Value::Number(e["time"].as_f64().unwrap_or(0.0))),
+                ("when", text("when")),
+                ("count", Value::Number(e["count"].as_f64().unwrap_or(0.0))),
+                ("initials", text("initials")),
+            ])
+        })
+        .collect();
+    model(out)
+}
+
 /// The notices other programs sent (org.freedesktop.Notifications, served by the core), newest first, with the
 /// local time they came
 fn notices(state: &Json, now: &libc::tm) -> Value {
@@ -502,6 +548,9 @@ pub fn build(
         ("extensions", extensions(state)),
         ("notices", notices(state, &tm)),
         ("notices-critical", critical(state)),
+        ("call", call(state)),
+        ("recents", call_list(state, "recents")),
+        ("favorites", call_list(state, "favorites")),
         ("video", video(ui)),
         ("focus", focus(ui)),
     ];
@@ -669,6 +718,38 @@ mod tests {
         assert_eq!(field(&rows.row_data(1).unwrap(), "urgency"), s("critical"));
         assert!(same(&notices(&json!({}), &now), &model(Vec::new())));
         assert_eq!(critical(&state), Value::Number(1.0));
+    }
+
+    #[test]
+    fn a_call_and_the_lists_reach_the_plugin_as_the_core_tells_them() {
+        let state = json!({ "call": {
+            "available": true, "state": "active", "incoming": true, "number": "+41790000001", "name": "Test",
+            "id": "u-1", "since": 1_790_000_000u64, "elapsed": 65, "muted": true, "waiting": "", "missed": 2,
+            "recents": [ { "number": "2", "name": "", "label": "mobile", "kind": "missed", "time": 30, "count": 2,
+                           "when": "Gestern", "initials": "" } ],
+            "favorites": [ { "number": "3", "name": "C", "label": "home", "kind": "", "time": 0, "count": 0 } ] } });
+        let c = call(&state);
+        assert_eq!(field(&c, "available"), Value::Bool(true));
+        assert_eq!(field(&c, "state"), s("active"));
+        assert_eq!(field(&c, "since"), Value::Number(1_790_000_000.0));
+        assert_eq!(field(&c, "muted"), Value::Bool(true));
+        assert_eq!(field(&c, "elapsed"), Value::Number(65.0));
+        assert_eq!(field(&c, "missed"), Value::Number(2.0));
+        let Value::Model(recents) = call_list(&state, "recents") else {
+            panic!("not a model")
+        };
+        let first = recents.row_data(0).unwrap();
+        assert_eq!(field(&first, "kind"), s("missed"));
+        assert_eq!(field(&first, "count"), Value::Number(2.0));
+        assert_eq!(field(&first, "when"), s("Gestern"));
+        let Value::Model(favorites) = call_list(&state, "favorites") else {
+            panic!("not a model")
+        };
+        assert_eq!(field(&favorites.row_data(0).unwrap(), "label"), s("home"));
+        let none = call(&json!({}));
+        assert_eq!(field(&none, "available"), Value::Bool(false));
+        assert_eq!(field(&none, "state"), s("idle"));
+        assert!(same(&call_list(&json!({}), "recents"), &model(Vec::new())));
     }
 
     #[test]

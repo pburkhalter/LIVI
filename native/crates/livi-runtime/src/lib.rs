@@ -2,6 +2,7 @@ pub mod aa_sock;
 pub mod bluetoothd;
 pub mod bonjour;
 pub mod bringup;
+pub mod calls;
 pub mod clock;
 pub mod driver;
 pub mod events;

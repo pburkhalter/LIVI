@@ -269,6 +269,20 @@ where
             };
             reply(&mut stream, &json).await
         }
+        "call" => {
+            let json = if !crate::calls::enabled() {
+                err_json(&format!(
+                    "calls are off ({}=1 turns them on)",
+                    crate::calls::ENV
+                ))
+            } else {
+                match state.vehicle().push_call(arg) {
+                    Ok(()) => "{\"ok\":true}".to_string(),
+                    Err(e) => err_json(&e),
+                }
+            };
+            reply(&mut stream, &json).await
+        }
         "drop-iap2" => {
             let n = state.restart_wired();
             println!("[cp-sock] drop-iap2: {n} wired session(s) end for a fresh start");
@@ -421,6 +435,7 @@ pub async fn pump_events_for(
                         events::device_json(&frame, usb_udid.as_deref()).map(|j| t.apply(j)),
                         events::to_json(&frame)
                             .or_else(|| t.navigation_json(&frame))
+                            .or_else(|| t.call_lists_json(&frame))
                             .map(|j| t.apply(j)),
                     )
                 };

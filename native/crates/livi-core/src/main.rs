@@ -196,6 +196,7 @@ async fn run() -> Result<Exit, String> {
         cameras: Vec::new(),
         mfi: Default::default(),
         links: Default::default(),
+        call: Default::default(),
         notices: Vec::new(),
         video: livi_core_proto::state::VideoMode::of(&config),
         embeds: Default::default(),

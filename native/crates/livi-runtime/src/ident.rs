@@ -60,18 +60,37 @@ pub const DROPPABLE: &[&str] = &[
     "vehicle_information_component",
     "vehicle_status_component",
     "route_guidance_display_component",
+    CALL_MESSAGES,
 ];
+
+/// The messages of call control and the call lists (crate::calls), left out again when the phone refuses the
+/// lists of messages
+pub const CALL_MESSAGES: &str = "call_messages";
 
 pub fn build_identification(
     id: &Identity,
     transport: Transport,
     exclude: &[&str],
 ) -> IdentificationInformation {
+    build_identification_with(id, transport, exclude, crate::calls::enabled())
+}
+
+pub fn build_identification_with(
+    id: &Identity,
+    transport: Transport,
+    exclude: &[&str],
+    calls: bool,
+) -> IdentificationInformation {
     let dropped = |f: &str| exclude.contains(&f);
     let wired = transport == Transport::Wired;
     let mut sent = SENT.to_vec();
     if wired {
         sent.push(POWER_SOURCE_UPDATE);
+    }
+    let mut received = RECEIVED.to_vec();
+    if calls && !dropped(CALL_MESSAGES) {
+        sent.extend_from_slice(crate::calls::SENT);
+        received.extend_from_slice(crate::calls::RECEIVED);
     }
     IdentificationInformation {
         name: id.name.clone(),
@@ -81,7 +100,7 @@ pub fn build_identification(
         firmware_version: "1.0.0".into(),
         hardware_version: "1.0".into(),
         messages_sent_by_accessory: ids(&sent),
-        messages_received_from_accessory: ids(RECEIVED),
+        messages_received_from_accessory: ids(&received),
         power_providing_capability: if wired {
             PowerProvidingCapability::Advanced
         } else {
@@ -205,5 +224,57 @@ pub fn build_identification(
                 max_lane_guidance_storage_capacity: None,
             }]
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iap2_csm::CsmMessage;
+
+    /// The lists of messages as they were before calls (fork t100 at 1498af94 and 09264412)
+    const SENT_BEFORE: &[u16] = &[
+        0xA101, 0x5703, 0x5000, 0x5002, 0x5003, 0x5200, 0x5203, 0xFFFB, 0xAE00, 0xAE02, 0x4157,
+        0x4159, 0x4154, 0x4156, 0x4301,
+    ];
+    const RECEIVED_BEFORE: &[u16] = &[
+        0xEA00, 0xEA01, 0xA100, 0xA102, 0x4E0D, 0x4E0E, 0x5702, 0x5001, 0x5201, 0x5202, 0xFFFA,
+        0xFFFC, 0xAE01, 0x4158, 0x4155, 0x4E0B, 0x4300,
+    ];
+
+    fn identity() -> Identity {
+        Identity {
+            name: "LIVI".into(),
+            ssid: "LIVI".into(),
+            bt_mac: [0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33],
+            fuels: Default::default(),
+            plugs: Default::default(),
+            theme: None,
+        }
+    }
+
+    #[test]
+    fn without_calls_the_identification_is_byte_for_byte_the_one_before() {
+        for (transport, power) in [
+            (Transport::Wireless, &[][..]),
+            (Transport::Wired, &[0xAE03][..]),
+        ] {
+            let id = identity();
+            let off = build_identification_with(&id, transport, &[], false);
+            assert_eq!(
+                off.messages_sent_by_accessory,
+                ids(&[SENT_BEFORE, power].concat())
+            );
+            assert_eq!(off.messages_received_from_accessory, ids(RECEIVED_BEFORE));
+            // the switch changes the lists of messages and nothing else
+            let mut on = build_identification_with(&id, transport, &[], true);
+            assert_ne!(on.encode(), off.encode());
+            on.messages_sent_by_accessory = off.messages_sent_by_accessory.clone();
+            on.messages_received_from_accessory = off.messages_received_from_accessory.clone();
+            assert_eq!(on.encode(), off.encode());
+            // refused lists: the identification goes back to the one without calls
+            let dropped = build_identification_with(&id, transport, &[CALL_MESSAGES], true);
+            assert_eq!(dropped.encode(), off.encode());
+        }
     }
 }
