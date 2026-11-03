@@ -56,6 +56,7 @@ fn config(path: &str) -> LiviSockConfig {
             on_cable: None,
             start_again: None,
             theme: None,
+            calls: false,
         },
         disconnect: None,
         targets: None,

@@ -276,6 +276,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         on_cable: None,
         start_again: None,
         theme: Theme::parse(&std::env::var("LIVI_CP_THEME").unwrap_or_default()),
+        calls: livi_runtime::calls::enabled(),
     };
     let pk = std::env::var("LIVI_CP_PK").unwrap_or_default();
     let pi = std::env::var("LIVI_CP_PI").unwrap_or_default();

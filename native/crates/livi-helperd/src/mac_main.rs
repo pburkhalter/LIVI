@@ -69,6 +69,7 @@ fn cp_config() -> (CpConfig, Identity) {
         on_cable: None,
         start_again: None,
         theme: Theme::parse(&env_s("LIVI_CP_THEME", "")),
+        calls: livi_runtime::calls::enabled(),
     };
     let identity = Identity {
         name: name.clone(),

@@ -36,15 +36,22 @@ fn masked(text: &str) -> String {
     }
 }
 
-/// A UTF-8 text ending in 0x00, with no other 0x00 and no control characters
+/// A UTF-8 text ending in 0x00, with no other 0x00 (control characters too: masked rather than shown)
 fn as_text(b: &[u8]) -> Option<&str> {
     let (last, body) = b.split_last()?;
     if *last != 0 || body.contains(&0) {
         return None;
     }
-    let text = std::str::from_utf8(body).ok()?;
-    (!text.chars().any(char::is_control)).then_some(text)
+    std::str::from_utf8(body).ok()
 }
+
+/// Bytes that read as letters: a text without its 0x00, never shown as a number
+fn looks_like_text(b: &[u8]) -> bool {
+    b.iter().all(|c| c.is_ascii_graphic() || *c == b' ')
+}
+
+/// Groups within groups the log goes into; deeper ones only by their length
+const DEPTH_MAX: usize = 3;
 
 /// Parameters within a parameter, when its bytes are exactly that
 fn as_group(b: &[u8]) -> Option<Vec<(u16, &[u8])>> {
@@ -53,22 +60,22 @@ fn as_group(b: &[u8]) -> Option<Vec<(u16, &[u8])>> {
     (b.len() >= 4 && used == b.len() && params.iter().all(|(id, _)| *id < 64)).then_some(params)
 }
 
-fn value(b: &[u8]) -> String {
+fn value(b: &[u8], depth: usize) -> String {
     let int = |n: usize| b.iter().take(n).fold(0u64, |v, x| (v << 8) | u64::from(*x));
     match b.len() {
         0 => "flag".into(),
         1 => format!("u8 {}", b[0]),
-        2 if as_text(b).is_none() => format!("u16 {}", int(2)),
+        2 if as_text(b).is_none() && !looks_like_text(b) => format!("u16 {}", int(2)),
         _ => {
             if let Some(t) = as_text(b) {
                 masked(t)
-            } else if let Some(group) = as_group(b) {
+            } else if let Some(group) = as_group(b).filter(|_| depth < DEPTH_MAX) {
                 let inner: Vec<String> = group
                     .iter()
-                    .map(|(id, p)| format!("{id} {}", value(p)))
+                    .map(|(id, p)| format!("{id} {}", value(p, depth + 1)))
                     .collect();
                 format!("{{{}}}", inner.join(", "))
-            } else if b.len() == 4 || b.len() == 8 {
+            } else if (b.len() == 4 || b.len() == 8) && !looks_like_text(b) {
                 format!("u{} {}", b.len() * 8, int(b.len()))
             } else {
                 format!("bytes<{}>", b.len())
@@ -86,7 +93,7 @@ pub fn describe(frame: &[u8]) -> Option<String> {
     }
     let params: Vec<String> = iap2_csm::split_params(payload)
         .iter()
-        .map(|(id, p)| format!("{id} {}", value(p)))
+        .map(|(id, p)| format!("{id} {}", value(p, 0)))
         .collect();
     Some(format!("0x{msg_id:04X}: {}", params.join(" | ")))
 }
@@ -143,7 +150,7 @@ fn on_off(word: Option<&str>) -> Result<bool, String> {
     match word {
         Some("on") => Ok(true),
         Some("off") => Ok(false),
-        other => Err(format!("on or off, not {other:?}")),
+        _ => Err("on or off".to_string()),
     }
 }
 
@@ -183,7 +190,7 @@ impl Order {
             ("hold", w) => on_off(w).map(Order::Hold),
             ("mute", w) => on_off(w).map(Order::Mute),
             ("swap", None) => Ok(Order::Swap),
-            _ => Err(format!("unknown call order {text:?}")),
+            _ => Err(format!("unknown call order {verb:?}")),
         }
     }
 
@@ -261,10 +268,11 @@ impl Order {
     }
 }
 
-/// The subscription to the lists: every field, one recent entry per number, as many as the phone gives
+/// The subscription to the lists, byte for byte the request a car got an answer to (iap2-csm tests/calls.rs): every
+/// field of an entry, at most 25 recents with calls in a row put together, the favourites
 pub fn start_lists() -> StartListUpdates {
     StartListUpdates {
-        recents_available: true,
+        recents_available: false,
         recents_properties: Some(RecentsListProperties {
             index: true,
             remote_id: true,
@@ -277,10 +285,10 @@ pub fn start_lists() -> StartListUpdates {
             duration: true,
             occurrences: true,
         }),
-        recents_count: true,
-        recents_max: Some(0),
+        recents_count: false,
+        recents_max: Some(25),
         recents_combine: Some(true),
-        favorites_available: true,
+        favorites_available: false,
         favorites_properties: Some(FavoritesListProperties {
             index: true,
             remote_id: true,
@@ -289,9 +297,14 @@ pub fn start_lists() -> StartListUpdates {
             address_book_id: true,
             service: true,
         }),
-        favorites_count: true,
+        favorites_count: false,
         favorites_max: Some(0),
     }
+}
+
+/// For the core when the phone refused the call messages of a session that wanted them: no calls through it
+pub fn refused_json() -> String {
+    json!({ "type": "callLists", "refused": true, "recents": [], "favorites": [] }).to_string()
 }
 
 /// The lists as the phone last sent them, put together from its messages: a count sets the length, an entry lands at
@@ -336,11 +349,12 @@ fn kind(e: &ListEntry) -> &'static str {
 
 fn entry_json(e: &ListEntry, recent: bool) -> Value {
     let number = e.remote_id.clone().unwrap_or_default();
-    // without a contact the phone sends the number written out as the name
+    // without a contact the phone sends the number written out as the name; a name that is no number stays, also
+    // beside an address that is none (FaceTime with an e-mail address, no number at all)
     let name = e
         .display_name
         .clone()
-        .filter(|n| dialable(n).as_deref() != dialable(&number).as_deref())
+        .filter(|n| dialable(n).is_none() || dialable(n) != dialable(&number))
         .unwrap_or_default();
     let mut o = json!({
         "number": number,
@@ -460,6 +474,19 @@ mod tests {
             None,
             "not a call message"
         );
+        // a text with a control character, texts without their 0x00, a group deeper than the log goes
+        assert_eq!(value(b"Ann\ta B\0", 0), "text<7>");
+        assert_eq!(value(b"Anna", 0), "bytes<4>");
+        assert_eq!(value(b"Anna Bea", 0), "bytes<8>");
+        assert_eq!(value(b"Al", 0), "bytes<2>");
+        let mut deep = b"Test\0".to_vec();
+        for id in 0..5u16 {
+            let mut outer = Vec::new();
+            iap2_csm::put_param(&mut outer, id, &deep);
+            deep = outer;
+        }
+        let line = value(&deep, 0);
+        assert!(!line.contains("Test") && line.contains("bytes<"), "{line}");
     }
 
     #[test]
@@ -555,14 +582,49 @@ mod tests {
     }
 
     #[test]
-    fn the_subscription_asks_for_every_field() {
-        let m = StartListUpdates::decode(&start_lists().encode()).unwrap();
-        assert!(m.recents_properties.unwrap().occurrences);
-        assert!(m.favorites_properties.unwrap().service);
+    fn the_subscription_is_the_request_a_car_got_an_answer_to() {
+        // iap2-csm tests/calls.rs, "verified_start" of ProManiFest2122/mhi2-k3346-carplay-vc
+        let verified: &[u8] = &[
+            0x00, 0x2c, 0x00, 0x01, //
+            0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00, 0x04,
+            0x00, 0x03, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x00, 0x05, 0x00, 0x04, 0x00, 0x06,
+            0x00, 0x04, 0x00, 0x07, 0x00, 0x04, 0x00, 0x08, 0x00, 0x04, 0x00, 0x09, //
+            0x00, 0x06, 0x00, 0x03, 0x00, 0x19, //
+            0x00, 0x05, 0x00, 0x04, 0x01, //
+            0x00, 0x1c, 0x00, 0x06, //
+            0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00, 0x04,
+            0x00, 0x03, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x00, 0x05, //
+            0x00, 0x06, 0x00, 0x08, 0x00, 0x00,
+        ];
+        let mut frame = vec![0x40, 0x40];
+        frame.extend_from_slice(&(verified.len() as u16 + 6).to_be_bytes());
+        frame.extend_from_slice(&0x4170u16.to_be_bytes());
+        frame.extend_from_slice(verified);
+        assert_eq!(start_lists().encode(), frame);
+    }
+
+    #[test]
+    fn a_name_stays_beside_an_address_that_is_no_number() {
+        let mut facetime = entry(0, "anna@example.org", "Anna", 1);
+        let json = entry_json(&facetime, true);
         assert_eq!(
-            (m.recents_max, m.favorites_max, m.recents_combine),
-            (Some(0), Some(0), Some(true))
+            (json["name"].as_str(), json["number"].as_str()),
+            (Some("Anna"), Some("anna@example.org"))
         );
+        facetime.remote_id = None;
+        assert_eq!(entry_json(&facetime, true)["name"], "Anna");
+        let written_out = entry(0, "+41790000002", "+41 79 000 00 02", 3);
+        assert_eq!(entry_json(&written_out, true)["name"], "");
+        let other_number = entry(0, "+41790000002", "+41 79 000 00 09", 3);
+        assert_eq!(entry_json(&other_number, true)["name"], "+41 79 000 00 09");
+    }
+
+    #[test]
+    fn a_refused_order_says_its_verb_and_nothing_of_a_number() {
+        for bad in ["call 0791234567", "mute 0791234567", "hold 0791234567"] {
+            let e = Order::parse(bad).unwrap_err();
+            assert!(!e.contains("079"), "{e}");
+        }
     }
 
     fn entry(index: u16, number: &str, name: &str, kind: u8) -> ListEntry {

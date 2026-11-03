@@ -98,6 +98,7 @@ fn cp_config() -> CpConfig {
         on_cable: None,
         start_again: None,
         theme: None,
+        calls: false,
     }
 }
 

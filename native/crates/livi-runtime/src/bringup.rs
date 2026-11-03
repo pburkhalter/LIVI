@@ -41,6 +41,9 @@ pub struct CpConfig {
     pub on_cable: Option<OnCable>,
     pub start_again: Option<Arc<Notify>>,
     pub theme: Option<Theme>,
+    /// Take part in calls (crate::calls, LIVI_CP_CALLS=1 as the helper read it): name their messages in the
+    /// identification, ask for the lists, take orders. Off: everything as before calls
+    pub calls: bool,
 }
 
 pub type AskOnAir = fn() -> Option<OnAir>;
@@ -64,11 +67,19 @@ pub fn accessory_id(cp: &CpConfig) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BringupEvent {
     Identified,
+    /// The session wanted calls, the phone refused the lists of messages that name them: CarPlay goes on without
+    /// calls (crate::calls)
+    CallsRefused,
     Authenticated,
     Subscribed,
     WifiConfigSent,
-    CarPlayStartSent { ip: String },
-    Incoming { msg_id: u16, frame: Vec<u8> },
+    CarPlayStartSent {
+        ip: String,
+    },
+    Incoming {
+        msg_id: u16,
+        frame: Vec<u8>,
+    },
     Failed(String),
     Closed,
 }
@@ -166,26 +177,29 @@ async fn recv<C: ControlChannel>(ch: &mut C) -> Result<Vec<u8>, BringupError> {
     ch.recv().await.ok_or(BringupError::Channel)
 }
 
+/// Whether the session takes part in calls after the phone accepted it: `calls`, unless the phone refused the lists
+/// of messages that name them
 async fn run_identification<C: ControlChannel>(
     ch: &mut C,
     id: &Identity,
     transport: Transport,
-) -> Result<(), BringupError> {
+    calls: bool,
+) -> Result<bool, BringupError> {
     let mut exclude: Vec<&str> = Vec::new();
     loop {
         let frame = recv(ch).await?;
         match frame_msg_id(&frame) {
             Some(0x1D00) => {
-                let ident = build_identification(id, transport, &exclude);
+                let ident = build_identification(id, transport, &exclude, calls);
                 ch.send(ident.encode())
                     .await
                     .map_err(|_| BringupError::Channel)?;
             }
-            Some(0x1D02) => return Ok(()),
+            Some(0x1D02) => return Ok(calls && !exclude.contains(&CALL_MESSAGES)),
             Some(0x1D03) => {
                 let rejected = IdentificationRejected::decode(&frame)
                     .map_err(|e| BringupError::Identification(e.to_string()))?;
-                let flagged = flagged_fields(&rejected, crate::calls::enabled());
+                let flagged = flagged_fields(&rejected, calls);
                 let drop: Vec<&str> = DROPPABLE
                     .iter()
                     .copied()
@@ -197,7 +211,7 @@ async fn run_identification<C: ControlChannel>(
                     )));
                 }
                 exclude.extend(drop);
-                let ident = build_identification(id, transport, &exclude);
+                let ident = build_identification(id, transport, &exclude, calls);
                 ch.send(ident.encode())
                     .await
                     .map_err(|_| BringupError::Channel)?;
@@ -435,11 +449,17 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
     events: mpsc::Sender<BringupEvent>,
     mut vehicle: VehicleFeed,
 ) {
-    if let Err(e) = run_identification(&mut ch, &id, cp.transport).await {
-        let _ = events.send(BringupEvent::Failed(e.to_string())).await;
-        return;
-    }
+    let calls = match run_identification(&mut ch, &id, cp.transport, cp.calls).await {
+        Ok(calls) => calls,
+        Err(e) => {
+            let _ = events.send(BringupEvent::Failed(e.to_string())).await;
+            return;
+        }
+    };
     let _ = events.send(BringupEvent::Identified).await;
+    if cp.calls && !calls {
+        let _ = events.send(BringupEvent::CallsRefused).await;
+    }
 
     if let Err(e) = run_auth(&mut ch, &mut auth).await {
         let _ = events.send(BringupEvent::Failed(e.to_string())).await;
@@ -459,7 +479,6 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
         }
     }
 
-    let calls = crate::calls::enabled();
     let call_log = crate::calls::log_enabled();
     for sub in subscriptions(calls, call_log) {
         if call_log && let Some(line) = crate::calls::describe(&sub) {
@@ -787,7 +806,7 @@ mod tests {
             theme,
         };
         for transport in [Transport::Wireless, Transport::Wired] {
-            let frame = build_identification(&id, transport, &[]).encode();
+            let frame = build_identification(&id, transport, &[], false).encode();
             let back = IdentificationInformation::decode(&frame).unwrap();
             let named = back
                 .wireless_car_play_transport_component
@@ -863,6 +882,7 @@ mod tests {
             on_cable: None,
             start_again: None,
             theme: None,
+            calls: false,
         }
     }
 

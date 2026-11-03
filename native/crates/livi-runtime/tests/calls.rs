@@ -1,5 +1,5 @@
-//! A session with LIVI_CP_CALLS=1 (crate::calls). Its own test binary: the switch is the process's environment, and
-//! the sessions in tests/bringup.rs must run without it.
+//! A session that takes part in calls (CpConfig::calls, LIVI_CP_CALLS=1 in the helper; crate::calls). The sessions in
+//! tests/bringup.rs run without.
 
 use tokio::sync::mpsc;
 
@@ -93,12 +93,8 @@ fn cp_config() -> CpConfig {
         on_cable: None,
         start_again: None,
         theme: None,
+        calls: true,
     }
-}
-
-fn calls_on() {
-    // every test of this binary wants the same value
-    unsafe { std::env::set_var("LIVI_CP_CALLS", "1") };
 }
 
 fn names(list: &[u8]) -> Vec<u16> {
@@ -129,6 +125,9 @@ async fn bring_up(
         .await
         .unwrap();
     assert_eq!(rx.recv().await, Some(BringupEvent::Identified));
+    if refuse {
+        assert_eq!(rx.recv().await, Some(BringupEvent::CallsRefused));
+    }
     phone
         .send(RequestAuthenticationCertificate {}.encode())
         .await
@@ -149,7 +148,6 @@ async fn bring_up(
 
 #[tokio::test]
 async fn the_phone_hears_of_call_control_and_is_asked_for_its_lists() {
-    calls_on();
     let (accessory, mut phone) = pair();
     let (tx, mut rx) = mpsc::channel(32);
     let vehicle = Vehicle::default();
@@ -180,7 +178,6 @@ async fn the_phone_hears_of_call_control_and_is_asked_for_its_lists() {
 
 #[tokio::test]
 async fn refused_lists_of_messages_leave_the_calls_out_and_carplay_goes_on() {
-    calls_on();
     let (accessory, mut phone) = pair();
     let (tx, mut rx) = mpsc::channel(32);
     let vehicle = Vehicle::default();
@@ -197,11 +194,25 @@ async fn refused_lists_of_messages_leave_the_calls_out_and_carplay_goes_on() {
     assert!(!again.contains(&0x415A) && !again.contains(&0x4170));
     assert!(again.contains(&0x4154), "the call state stays");
     assert!(!names(&ident[1].messages_received_from_accessory).contains(&0x4171));
+    // the subscriptions of a session without calls: no request for the lists
+    for expected in [0x5000, 0x5200, 0xAE00, 0x4157, 0x4154] {
+        phone.expect(expected).await;
+    }
+    assert_eq!(rx.recv().await, Some(BringupEvent::Subscribed));
+    // and no orders: the phone was never told of them
+    vehicle.push_call("- dial +41 79 000 00 01").unwrap();
+    vehicle.push_call("- end").unwrap();
+    let nothing =
+        tokio::time::timeout(std::time::Duration::from_millis(300), phone.rx.recv()).await;
+    assert!(
+        nothing.is_err(),
+        "sent after the refusal: {:?}",
+        nothing.ok().flatten().as_deref().and_then(frame_msg_id)
+    );
 }
 
 #[tokio::test]
 async fn orders_reach_the_phone_they_are_meant_for() {
-    calls_on();
     let (accessory, mut phone) = pair();
     let (tx, mut rx) = mpsc::channel(32);
     let vehicle = Vehicle::default();

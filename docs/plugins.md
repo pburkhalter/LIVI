@@ -210,8 +210,10 @@ page the focus on the settings' rows, with an entry of its own above them on the
 
 With `LIVI_CP_CALLS=1` in LIVI's environment a plugin can have a phone page of its own beside CarPlay: maps and music
 stay in CarPlay, the call goes through the phone's CarPlay session (iAP2 call control), over Wi-Fi as over the cable.
-Off by default: the identification then names the messages of call control and of the call lists, and a phone that
-refuses them gets an identification without them, and CarPlay goes on.
+Off by default. With it on, the identification names the messages of call control and of the call lists; a phone that
+refuses them gets an identification without them, and CarPlay goes on without calls: for that session `available`
+stays false and LIVI sends no call orders. The switch has to be in the environment of LIVI's helper as well (it reads
+it at its start).
 
 - `Livi.call`: `available` (the switch is on and a phone is connected over CarPlay), `state` (`idle`, `dialing`,
   `ringing` for a call coming in, `active`, `held`, `ending` for 2 s after the last call), `incoming`, `number`, `name`
@@ -228,8 +230,8 @@ refuses them gets an identification without them, and CarPlay goes on.
   `voicemail`, `accept` (holding a call in conversation), `accept end` (ending it), `reject` (the call that rings),
   `end` (the call in conversation, also while it dials), `end all`, `mute on|off`, `hold on|off`, `swap`, and
   `dtmf <key>` (`0`-`9`, `*`, `#`; as CarPlay's telephony keys), and `seen` (the page showed the missed calls). With
-  a call in conversation, `reject` declines the second call that rings and `end` ends the one in conversation. Without
-  the switch LIVI refuses it.
+  a call in conversation, `reject` declines the second call that rings and `end` ends the one in conversation; once no
+  call rings any more, `reject` does nothing. Without the switch LIVI refuses it.
 - `LIVI_IAP2_TRACE=1` (independent of the switch) writes every message of the phone's call state and communications
   to the helper's log, texts masked (length and last two digits), and asks for all their fields. It sends nothing else
   and names nothing more in the identification: for looking at what a phone sends.
