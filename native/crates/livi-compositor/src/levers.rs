@@ -21,7 +21,8 @@ pub static CAMERA_FIRST: LazyLock<bool> = LazyLock::new(|| {
         .as_deref())
 });
 
-/// LIVI_COMPOSITOR_UI_HOLE=1: the UI is not drawn where it is fully transparent (see `hole`).
+/// LIVI_COMPOSITOR_UI_HOLE=1: the UI is not drawn over a video where it says it is fully transparent (see `hole`,
+/// `transparent`); a client learns of it through the global of livi-transparent-region-v1, offered only then.
 pub static UI_HOLE: LazyLock<bool> =
     LazyLock::new(|| on(std::env::var("LIVI_COMPOSITOR_UI_HOLE").ok().as_deref()));
 

@@ -18,6 +18,7 @@ mod plugins;
 mod secondary;
 mod settings_ui;
 mod touch_ui;
+mod ui_hole;
 
 use std::cell::{Cell, RefCell};
 use std::os::unix::net::UnixStream;
@@ -108,6 +109,7 @@ fn window_ready(ui: &AppWindow) {
         eprintln!("[ui] the window has no native handle for the video");
     }
     cursor_ui::start(ui);
+    ui_hole::start(ui);
     if BASE_SCALE.get().is_none() {
         BASE_SCALE.set(Some(ui.window().scale_factor()));
         let weak = ui.as_weak();
@@ -120,6 +122,14 @@ fn window_ready(ui: &AppWindow) {
 }
 
 const BANDS: usize = 24;
+
+/// Pixels of the window's surface to a logical pixel of Slint: LIVI's zoom (the system's scale is the surface's own)
+pub(crate) fn surface_scale(window: &slint::Window) -> Option<f32> {
+    BASE_SCALE
+        .get()
+        .filter(|base| *base > 0.0)
+        .map(|base| window.scale_factor() / base)
+}
 
 pub(crate) fn apply_zoom(ui: &AppWindow) {
     let Some(base) = BASE_SCALE.get() else { return };

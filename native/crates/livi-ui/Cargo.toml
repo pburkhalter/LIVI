@@ -44,6 +44,13 @@ slint-interpreter = { version = "=1.18.1", default-features = false, features = 
 [target.'cfg(target_os = "macos")'.dependencies]
 livi-video-view.workspace = true
 
+# Lever "UI hole" (src/ui_hole.rs): LIVI's own protocol to its compositor (native/protocols), on the connection winit
+# opened; the versions are those winit brings
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-scanner = "0.31"
+
 [features]
 # Skia instead of FemtoVG for drawing; Slint picks Skia when both are built in (SLINT_BACKEND=winit-femtovg goes back).
 # Measured on a PowerVR GE8300 at 2400x900: about a quarter less GPU time a frame. Makes the binary

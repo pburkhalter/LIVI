@@ -37,6 +37,14 @@
 //
 // Every component LIVI shows from a plugin inherits Window: the interpreter builds only exported windows, and LIVI
 // embeds them into its own.
+//
+// Over a video (docs/plugins.md, "Over a video"): a component LIVI shows beside a video (a bar, the background, the
+// overlay, a camera frame) may say what it draws over it, so that LIVI's compositor need not blend the window over the
+// rest of the video with each of its frames:
+//   out property <[LiviCover]> covers: [...];
+// rectangles in the window's pixels, shadows and glows included, one for each part that shows (an empty one counts
+// for nothing). LIVI leaves a component's area to the compositor only where none of these lies; a component without
+// the property keeps all of the window drawn.
 
 export struct LiviPage {
     // "/plugin/<id>" for pages of the plugin, otherwise the path of a page of LIVI
@@ -253,6 +261,14 @@ export struct LiviNotice {
     minute: int,
     day: int,
     month: int,
+}
+
+// Something a component draws over a video, in the window's pixels (`covers` above)
+export struct LiviCover {
+    x: length,
+    y: length,
+    width: length,
+    height: length,
 }
 
 // The card the phone's picture shows in (settings projectionCard, videoCard*), or the camera's picture in the area the

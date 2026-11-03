@@ -30,6 +30,9 @@ thread_local! {
     static PLUGIN: RefCell<Option<Rc<Plugin>>> = const { RefCell::new(None) };
     // components on screen, to update their state
     static LIVE: RefCell<Vec<slint::Weak<ComponentInstance>>> = const { RefCell::new(Vec::new()) };
+    // the components beside the pages (bars, background, overlay, empty pages, camera frame): what may lie over a video
+    // (covers, lever "UI hole")
+    static AROUND: RefCell<Vec<slint::Weak<ComponentInstance>>> = const { RefCell::new(Vec::new()) };
     // the properties of the global Livi as last handed out
     static STATE: RefCell<Vec<(&'static str, Value)>> = const { RefCell::new(Vec::new()) };
     static ACTION: RefCell<Option<ActionHandler>> = const { RefCell::new(None) };
@@ -257,7 +260,42 @@ pub fn current_path(ui: &AppWindow) -> String {
     state::tab_path(ui.get_page(), &ui.get_plugin_page_id())
 }
 
-fn factory(component: ComponentDefinition) -> ComponentFactory {
+/// What the plugin's components beside the pages draw over a video, as they report it (property `covers`, window
+/// pixels): x, y, width, height. None when one of them on screen does not report it: then nothing is sure.
+pub fn covers() -> Option<Vec<[f32; 4]>> {
+    // taken out first: reading a property runs the plugin's bindings
+    let shown: Vec<ComponentInstance> = AROUND.with_borrow_mut(|around| {
+        around.retain(|w| w.upgrade().is_some());
+        around.iter().filter_map(slint::Weak::upgrade).collect()
+    });
+    let mut out = Vec::new();
+    for instance in shown {
+        let Ok(Value::Model(rows)) = instance.get_property("covers") else {
+            return None;
+        };
+        for row in slint::Model::iter(&rows) {
+            out.push(cover(&row)?);
+        }
+    }
+    Some(out)
+}
+
+fn cover(row: &Value) -> Option<[f32; 4]> {
+    let Value::Struct(s) = row else { return None };
+    let number = |name: &str| match s.get_field(name) {
+        Some(Value::Number(n)) if n.is_finite() => Some(*n as f32),
+        _ => None,
+    };
+    Some([
+        number("x")?,
+        number("y")?,
+        number("width")?,
+        number("height")?,
+    ])
+}
+
+/// `around`: a component beside the pages, which may lie over a video
+fn factory(component: ComponentDefinition, around: bool) -> ComponentFactory {
     ComponentFactory::new(move |ctx| {
         let instance = component
             .create_embedded(ctx)
@@ -299,6 +337,9 @@ fn factory(component: ComponentDefinition) -> ComponentFactory {
             }
         });
         LIVE.with_borrow_mut(|live| live.push(instance.as_weak()));
+        if around {
+            AROUND.with_borrow_mut(|a| a.push(instance.as_weak()));
+        }
         crate::debug::trace(&format!("plugin component {} created", component.name()));
         Some(instance)
     })
@@ -319,7 +360,7 @@ pub fn install(
         ui.set_intro_done(false);
     }
     for (slot, component) in &p.shell {
-        let f = factory(component.clone());
+        let f = factory(component.clone(), true);
         match *slot {
             "background" => {
                 ui.set_plugin_background(f);
@@ -349,7 +390,7 @@ pub fn install(
         }
     }
     for (page, component) in &p.empty {
-        let f = factory(component.clone());
+        let f = factory(component.clone(), true);
         match *page {
             "projection" => {
                 ui.set_plugin_no_phone(f);
@@ -363,7 +404,7 @@ pub fn install(
         }
     }
     if let Some(component) = p.frame.get("camera") {
-        ui.set_plugin_camera_frame(factory(component.clone()));
+        ui.set_plugin_camera_frame(factory(component.clone(), true));
         ui.set_has_plugin_camera_frame(true);
     }
     let views: Vec<PluginView> = p
@@ -371,7 +412,8 @@ pub fn install(
         .iter()
         .map(|page| PluginView {
             id: page.id.as_str().into(),
-            factory: factory(page.component.clone()),
+            // the pages are hidden while a video shows (app.slint)
+            factory: factory(page.component.clone(), false),
         })
         .collect();
     ui.set_plugin_pages(ModelRc::new(VecModel::from(views)));
@@ -443,6 +485,49 @@ mod tests {
         assert_eq!(field(&without_past("key", &key), "code"), state::s(""));
         let clock = state::s("12:00");
         assert_eq!(without_past("clock", &clock), clock);
+    }
+
+    #[test]
+    fn a_cover_is_read_by_its_fields_and_nothing_else_counts() {
+        let row = |fields: Vec<(&str, Value)>| {
+            Value::Struct(
+                fields
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v))
+                    .collect(),
+            )
+        };
+        let n = |v: f64| Value::Number(v);
+        let full = row(vec![
+            ("x", n(10.0)),
+            ("y", n(20.5)),
+            ("width", n(300.0)),
+            ("height", n(40.0)),
+        ]);
+        assert_eq!(cover(&full), Some([10.0, 20.5, 300.0, 40.0]));
+        // a field missing, not a number, not finite, not a struct: LIVI is not sure
+        assert_eq!(cover(&row(vec![("x", n(1.0)), ("y", n(1.0)), ("width", n(1.0))])), None);
+        assert_eq!(
+            cover(&row(vec![
+                ("x", n(1.0)),
+                ("y", n(1.0)),
+                ("width", state::s("wide")),
+                ("height", n(1.0))
+            ])),
+            None
+        );
+        assert_eq!(
+            cover(&row(vec![
+                ("x", n(f64::NAN)),
+                ("y", n(1.0)),
+                ("width", n(1.0)),
+                ("height", n(1.0))
+            ])),
+            None
+        );
+        assert_eq!(cover(&n(3.0)), None);
+        // nothing on screen beside the pages: nothing covers
+        assert_eq!(covers(), Some(Vec::new()));
     }
 
     #[test]

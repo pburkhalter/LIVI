@@ -12,6 +12,7 @@ mod render;
 mod shell;
 mod spawn;
 mod state;
+mod transparent;
 
 use std::time::Duration;
 

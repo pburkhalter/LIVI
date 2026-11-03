@@ -282,6 +282,33 @@ LIVI knowing what it is:
 [native/crates/livi-ui/plugin/example](../native/crates/livi-ui/plugin/example) has one page, a bar with a button
 per page and a settings page that draws LIVI's settings lists. The tests compile it.
 
+## Over a video
+
+While the phone's or the camera's picture shows, LIVI's compositor blends the whole window over it with each of its
+frames, although the window draws nothing over most of it. With `LIVI_COMPOSITOR_UI_HOLE=1` (DEBUGGING.md) it leaves
+the window out where LIVI says it is fully transparent: the card the picture shows in (all of the window on a full
+screen page), within the free area between the bars, without its round corners and the 2 pixels along its edges (where
+a background draws the card's rim), and without what lies on it. LIVI knows what it draws itself there (the button on
+the picture, the volume and phone overlays); for the plugin it asks the components that may lie over a video:
+
+- the bars, the background, the overlay, the components for empty pages and the camera frame. The plugin's pages are
+  hidden while a video shows and do not count;
+- each says what it draws over a video with a property `covers`, an array of rectangles in the window's pixels:
+  `out property <[LiviCover]> covers: [...];` (`LiviCover` from `@livi/api.slint`: `x`, `y`, `width`, `height`, all
+  lengths; a struct of the plugin's own with the same fields does as well, and keeps the plugin working with a LIVI
+  without this). A rectangle with no area counts for nothing, so an entry for each part with its condition is the easy
+  way;
+- shadows, glows and anything else drawn outside a part's own rectangle belong to it; `absolute-position` gives a
+  part's place in the window;
+- a component on screen without the property keeps the whole window drawn, as does a value LIVI cannot read. Getting a
+  rectangle wrong shows: the part disappears over the picture while the switch is on. When in doubt, cover the whole
+  window while the part shows;
+- a bar or a background that draws only in its own place, around the card, reports nothing: `covers: [];`.
+
+LIVI reads the rectangles after it has drawn a frame and hands them to the compositor with that frame (the protocol
+`livi-transparent-region-v1` in `native/protocols`), so a part that comes or goes is never shown a frame without its
+rectangle. Reading them brings no redraws: `covers` may read values that change many times a second. `LIVI_UI_HOLE_CHECK=1` reads each frame back and logs every pixel that was declared transparent and is not.
+
 ## Pictures as a card
 
 With bars of its own, a plugin can have the phone's picture (CarPlay) shown as a card in the free area between its

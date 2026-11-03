@@ -12,217 +12,80 @@ fn paint(pixels: &mut [u8], width: usize, [x, y, w, h]: [usize; 4], rgba: [u8; 4
     }
 }
 
-#[test]
-fn an_empty_buffer_is_clear_up_to_its_last_pixel() {
-    // neither side is a multiple of a square
-    assert_eq!(
-        largest_clear(&zeros(301, 299), 301, 299),
-        Some([0, 0, 301, 299])
-    );
+fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Logical> {
+    Rectangle::new((x, y).into(), (w, h).into())
 }
 
-#[test]
-fn a_full_buffer_has_no_hole_and_a_short_one_is_not_read() {
-    let mut pixels = zeros(400, 300);
-    paint(&mut pixels, 400, [0, 0, 400, 300], [9, 9, 9, 255]);
-    assert_eq!(largest_clear(&pixels, 400, 300), None);
-    assert_eq!(largest_clear(&pixels[..16], 400, 300), None);
-    assert_eq!(largest_clear(&[], 0, 0), None);
+fn pixels(rects: &[Rectangle<i32, Logical>]) -> i64 {
+    rects
+        .iter()
+        .map(|r| i64::from(r.size.w) * i64::from(r.size.h))
+        .sum()
 }
 
-#[test]
-fn a_hole_too_small_to_pay_is_none() {
-    let mut pixels = zeros(400, 300);
-    paint(&mut pixels, 400, [0, 0, 400, 300], [9, 9, 9, 255]);
-    paint(&mut pixels, 400, [16, 16, 248, 248], [0, 0, 0, 0]);
-    assert_eq!(largest_clear(&pixels, 400, 300), None);
-    paint(&mut pixels, 400, [16, 16, 256, 256], [0, 0, 0, 0]);
-    assert_eq!(largest_clear(&pixels, 400, 300), Some([16, 16, 256, 256]));
+/// The CarPlay card of the T100 as the compositor keeps what the UI reports: the middle, and the narrow parts beside
+/// the round corners
+fn card() -> Vec<Rectangle<i32, Logical>> {
+    vec![
+        rect(316, 18, 2016, 738),
+        rect(290, 44, 26, 686),
+        rect(2332, 44, 26, 686),
+    ]
 }
 
-#[test]
-fn only_a_pixel_of_zero_counts() {
-    for rgba in [[0, 0, 0, 1], [1, 0, 0, 0], [0, 0, 1, 0]] {
-        let mut pixels = zeros(600, 300);
-        paint(&mut pixels, 600, [300, 0, 1, 300], rgba);
-        let found = largest_clear(&pixels, 600, 300).unwrap();
-        assert!(found[0] + found[2] <= 300 || found[0] > 300, "{found:?}");
-    }
-}
-
-#[test]
-fn a_card_with_a_ring_loses_the_ring_and_the_square_it_touches() {
-    // alpha 1 of 255 around a card, as LIVI draws it, and one thin line on the card's edge
-    let mut pixels = zeros(800, 600);
-    paint(&mut pixels, 800, [0, 0, 800, 600], [0, 0, 0, 1]);
-    paint(&mut pixels, 800, [100, 80, 600, 440], [0, 0, 0, 0]);
-    let [x, y, w, h] = largest_clear(&pixels, 800, 600).unwrap();
-    assert_eq!([x, y, w, h], [104, 80, 592, 440]);
-}
-
-#[test]
-fn something_drawn_on_the_card_stays_outside_the_hole() {
-    let mut pixels = zeros(800, 480);
-    paint(&mut pixels, 800, [700, 20, 72, 72], [0, 0, 0, 140]);
-    let [x, y, w, h] = largest_clear(&pixels, 800, 480).unwrap();
-    assert_eq!([x, y, w, h], [0, 0, 696, 480]);
-}
-
-/// A generator with no crate: the same run every time
-fn next(seed: &mut u32) -> u32 {
-    *seed ^= *seed << 13;
-    *seed ^= *seed >> 17;
-    *seed ^= *seed << 5;
-    *seed
-}
-
-#[test]
-fn what_is_found_is_all_zero_and_nothing_larger_exists() {
-    const SIDE: usize = 512;
-    let tiles = SIDE / TILE;
-    let mut seed = 0x1234_5678;
-    for _ in 0..30 {
-        let mut pixels = zeros(SIDE, SIDE);
-        for _ in 0..1 + next(&mut seed) % 5 {
-            let x = next(&mut seed) as usize % SIDE;
-            let y = next(&mut seed) as usize % SIDE;
-            let w = (1 + next(&mut seed) as usize % 40).min(SIDE - x);
-            let h = (1 + next(&mut seed) as usize % 40).min(SIDE - y);
-            paint(&mut pixels, SIDE, [x, y, w, h], [0, 0, 0, 1]);
-        }
-        let Some([x, y, w, h]) = largest_clear(&pixels, SIDE, SIDE) else {
-            continue;
-        };
-        for row in y..y + h {
-            assert!(
-                pixels[(row * SIDE + x) * 4..][..w * 4]
-                    .iter()
-                    .all(|b| *b == 0)
-            );
-        }
-        // every rectangle of squares, by a sum over the squares that are not clear
-        let mut sum = vec![0_u32; (tiles + 1) * (tiles + 1)];
-        for ty in 0..tiles {
-            for tx in 0..tiles {
-                let mut any = 0;
-                for row in ty * TILE..(ty + 1) * TILE {
-                    any |= pixels[(row * SIDE + tx * TILE) * 4..][..TILE * 4]
-                        .iter()
-                        .fold(0, |a, b| a | b);
-                }
-                sum[(ty + 1) * (tiles + 1) + tx + 1] = u32::from(any != 0)
-                    + sum[ty * (tiles + 1) + tx + 1]
-                    + sum[(ty + 1) * (tiles + 1) + tx]
-                    - sum[ty * (tiles + 1) + tx];
-            }
-        }
-        let at = |x: usize, y: usize| sum[y * (tiles + 1) + x];
-        let mut largest = 0;
-        for y0 in 0..tiles {
-            for y1 in y0 + 1..=tiles {
-                for x0 in 0..tiles {
-                    for x1 in x0 + 1..=tiles {
-                        if at(x1, y1) + at(x0, y0) == at(x0, y1) + at(x1, y0) {
-                            largest = largest.max((x1 - x0) * (y1 - y0));
-                        }
-                    }
-                }
-            }
-        }
-        assert_eq!(w * h, largest * TILE * TILE);
-    }
-}
-
-fn commit(n: usize) -> CommitCounter {
-    let mut counter = CommitCounter::default();
-    for _ in 0..n {
-        counter.increment();
-    }
-    counter
-}
-
-fn cut() -> Option<Cut> {
-    Some(Cut {
-        window: (2400, 900).into(),
-        hole: Rectangle::new((1000, 24).into(), (1300, 720).into()),
-    })
-}
+const WINDOW: (i32, i32) = (2400, 900);
 
 #[test]
 fn a_new_window_draws_whole_as_without_the_lever() {
     assert!(Hole::default().strips((0, 0).into()).is_none());
 }
 
-fn area(w: i32) -> Rectangle<i32, Logical> {
-    Rectangle::new((982, 0).into(), (w, 748).into())
+#[test]
+fn without_a_region_or_without_a_video_nothing_is_left_out() {
+    let video = Some(rect(0, 0, 2400, 900));
+    assert!(holes_in(&[], WINDOW.into(), video).is_empty());
+    assert!(holes_in(&card(), WINDOW.into(), None).is_empty());
 }
 
 #[test]
-fn a_buffer_is_read_once_when_it_has_stood() {
-    let start = Instant::now();
-    let mut hole = Hole::default();
-    assert!(!hole.due(commit(1), area(1400), start), "just committed");
-    assert!(!hole.due(commit(1), area(1400), start + SETTLE / 2));
-    assert!(hole.due(commit(1), area(1400), start + SETTLE));
-    hole.read = Some(area(1400));
-    assert!(!hole.due(commit(1), area(1400), start + SETTLE * 2));
+fn only_what_lies_over_the_video_and_in_the_window_is_left_out() {
+    // the video of the MMI page reaches beyond the window at the top
+    let video = Some(rect(982, -43, 1406, 791));
+    let holes = holes_in(&[rect(1000, -10, 1400, 800)], WINDOW.into(), video);
+    assert_eq!(holes, vec![rect(1000, 0, 1388, 748)]);
 }
 
 #[test]
-fn a_video_that_grows_is_read_again_and_the_hole_stays_until_then() {
-    let start = Instant::now();
-    let mut hole = Hole::default();
-    hole.due(commit(1), area(640), start);
-    hole.read = Some(area(640));
-    hole.cut = cut();
-    assert!(hole.due(commit(1), area(1400), start + SETTLE));
-    assert!(hole.strips((0, 0).into()).is_some());
-}
-
-#[test]
-fn a_commit_ends_the_hole_before_its_frame() {
-    let start = Instant::now();
-    let mut hole = Hole::default();
-    hole.due(commit(1), area(1400), start);
-    hole.read = Some(area(1400));
-    hole.cut = cut();
-    assert!(hole.strips((0, 0).into()).is_some());
-    assert!(
-        !hole.due(commit(2), area(1400), start + SETTLE * 9),
-        "the new buffer stands from now on"
+fn parts_too_small_to_pay_stay_drawn() {
+    let video = Some(rect(0, 0, 2400, 900));
+    // the parts beside the round corners are too narrow
+    assert_eq!(
+        holes_in(&card(), WINDOW.into(), video),
+        vec![rect(316, 18, 2016, 738)]
     );
-    assert!(hole.strips((0, 0).into()).is_none());
-    assert!(hole.due(commit(2), area(1400), start + SETTLE * 10));
+    // all of it too small
+    assert!(holes_in(&[rect(0, 0, 200, 200)], WINDOW.into(), video).is_empty());
 }
 
 #[test]
-fn a_commit_ends_the_hole_also_when_no_video_shows() {
-    let start = Instant::now();
-    let mut hole = Hole::default();
-    hole.note(commit(1), start);
-    hole.read = Some(area(1400));
-    hole.cut = cut();
-    assert!(hole.note(commit(2), start + SETTLE));
-    assert!(hole.strips((0, 0).into()).is_none());
-}
-
-#[test]
-fn the_strips_and_the_hole_are_the_window_without_overlap() {
+fn the_strips_and_the_holes_are_the_window_without_overlap() {
     let at = Point::<i32, Physical>::from((7, 32));
-    let Cut { window, hole } = cut().unwrap();
-    let strips = around(at, window, hole);
-    assert!(strips.len() <= 4);
-    let hole = Rectangle::<i32, Physical>::new(
-        (at.x + hole.loc.x, at.y + hole.loc.y).into(),
-        (hole.size.w, hole.size.h).into(),
-    );
+    // the card without the button on it
+    let transparent = Rectangle::subtract_rects_many(card(), [rect(2236, 36, 76, 76)]);
+    let holes = holes_in(&transparent, WINDOW.into(), Some(rect(0, 0, 2400, 900)));
+    assert!(holes.len() >= 2, "{holes:?}");
+    let strips = around(at, WINDOW.into(), &holes).unwrap();
+    let holes: Vec<Rectangle<i32, Physical>> = holes
+        .iter()
+        .map(|h| Rectangle::new((at.x + h.loc.x, at.y + h.loc.y).into(), (h.size.w, h.size.h).into()))
+        .collect();
     let area = |r: &Rectangle<i32, Physical>| i64::from(r.size.w) * i64::from(r.size.h);
     assert_eq!(
-        strips.iter().map(area).sum::<i64>() + area(&hole),
+        strips.iter().chain(&holes).map(area).sum::<i64>(),
         2400 * 900
     );
     for (i, a) in strips.iter().enumerate() {
-        assert!(a.intersection(hole).is_none());
+        assert!(holes.iter().all(|h| a.intersection(*h).is_none()));
         assert!(a.loc.x >= at.x && a.loc.y >= at.y);
         assert!(a.loc.x + a.size.w <= at.x + 2400 && a.loc.y + a.size.h <= at.y + 900);
         for b in &strips[i + 1..] {
@@ -231,27 +94,39 @@ fn the_strips_and_the_hole_are_the_window_without_overlap() {
     }
 }
 
+#[test]
+fn a_hole_in_too_many_pieces_draws_the_window_whole() {
+    // a chessboard of holes
+    let holes: Vec<_> = (0..6)
+        .flat_map(|i| (0..3).map(move |j| rect(100 + i * 300, 100 + j * 250, 128, 128)))
+        .collect();
+    assert!(pixels(&holes) >= MIN_PIXELS);
+    assert!(around((0, 0).into(), WINDOW.into(), &holes).is_none());
+}
+
 /// With a real renderer on a software GPU, through Smithay's tracker like on the device: two buffers in turn, an output
 /// that is turned. Run with --include-ignored; needs an EGL device, Mesa's software one will do.
 mod gl {
+    use smithay::backend::allocator::Fourcc;
     use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
     use smithay::backend::renderer::damage::OutputDamageTracker;
     use smithay::backend::renderer::element::texture::TextureRenderElement;
     use smithay::backend::renderer::element::utils::CropRenderElement;
     use smithay::backend::renderer::element::{Element, Id, Kind as ElementKind, RenderElement};
-    use smithay::backend::renderer::gles::ffi;
-    use smithay::backend::renderer::utils::OpaqueRegions;
+    use smithay::backend::renderer::gles::{GlesError, GlesRenderer, GlesTexture};
+    use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
     use smithay::backend::renderer::{
         Bind, Color32F, ExportMem, FullDamage, ImportMem, Offscreen, Renderer, RendererSuper,
     };
-    use smithay::utils::Scale;
+    use smithay::utils::{Buffer as BufferCoords, Scale, Transform};
 
     use super::super::*;
-    use super::{paint, zeros};
+    use super::{paint, rect, zeros};
 
     const WIDTH: i32 = 800;
     const HEIGHT: i32 = 480;
     const CARD: [usize; 4] = [120, 40, 600, 380];
+    const RADIUS: usize = 24;
     const BUTTON: [usize; 4] = [660, 60, 40, 40];
     const BACKDROP: [u8; 4] = [20, 30, 40, 255];
     const MAGENTA: Color32F = Color32F::new(1.0, 0.0, 1.0, 1.0);
@@ -358,8 +233,9 @@ mod gl {
         }
     }
 
-    /// LIVI's window over a card: glass colours, alpha 1 around the card, round corners, a button on the card
-    fn ui_pixels() -> Vec<u8> {
+    /// LIVI's window over a card: glass colours, alpha 1 around the card, round corners, the card's edge, and on the
+    /// card a button when asked for
+    fn ui_pixels(button: bool) -> Vec<u8> {
         let (w, h) = (WIDTH as usize, HEIGHT as usize);
         let mut pixels = zeros(w, h);
         for y in 0..h {
@@ -369,7 +245,6 @@ mod gl {
             }
         }
         let [cx, cy, cw, ch] = CARD;
-        const RADIUS: usize = 24;
         for y in 0..ch {
             for x in 0..cw {
                 let near = |at: usize, side: usize| {
@@ -386,18 +261,38 @@ mod gl {
         for x in 0..cw {
             pixels[((cy + ch - 1) * w + cx + x) * 4..][..4].copy_from_slice(&[40, 40, 40, 46]);
         }
-        paint(&mut pixels, w, BUTTON, [0, 0, 0, 140]);
+        if button {
+            paint(&mut pixels, w, BUTTON, [0, 0, 0, 140]);
+        }
         pixels
     }
 
-    fn texture(
-        renderer: &mut GlesRenderer,
-        pixels: &[u8],
-        size: (i32, i32),
-        flipped: bool,
-    ) -> GlesTexture {
+    /// What the UI reports for it: the card 2 px inside its edges as a cross without the corners, without the button
+    fn reported(button: bool) -> Vec<Rectangle<i32, Logical>> {
+        let [cx, cy, cw, ch] = CARD.map(|v| v as i32);
+        let (x0, y0, x1, y1) = (cx + 2, cy + 2, cx + cw - 2, cy + ch - 2);
+        let r = RADIUS as i32;
+        let cross = [
+            rect(x0 + r, y0, x1 - x0 - 2 * r, y1 - y0),
+            rect(x0, y0 + r, x1 - x0, y1 - y0 - 2 * r),
+        ];
+        let [bx, by, bw, bh] = BUTTON.map(|v| v as i32);
+        let taken = if button {
+            vec![rect(bx - 1, by - 1, bw + 2, bh + 2)]
+        } else {
+            vec![]
+        };
+        let mut out: Vec<Rectangle<i32, Logical>> = Vec::new();
+        for part in cross {
+            let new = part.subtract_rects(out.iter().copied());
+            out.extend(new);
+        }
+        Rectangle::subtract_rects_many(out, taken)
+    }
+
+    fn texture(renderer: &mut GlesRenderer, pixels: &[u8], size: (i32, i32)) -> GlesTexture {
         renderer
-            .import_memory(pixels, Fourcc::Abgr8888, size.into(), flipped)
+            .import_memory(pixels, Fourcc::Abgr8888, size.into(), false)
             .expect("texture")
     }
 
@@ -440,13 +335,23 @@ mod gl {
         pixels
     }
 
-    fn with_hole(
+    const VIDEO_AT: (f64, f64) = (100.0, 20.0);
+
+    fn video_area() -> Option<Rectangle<i32, Logical>> {
+        Some(rect(100, 20, 680, 420))
+    }
+
+    /// The UI as the compositor draws it with what the UI reported
+    fn with_holes(
         renderer: &GlesRenderer,
         id: &Id,
         ui: &GlesTexture,
-        hole: Rectangle<i32, Logical>,
+        transparent: &[Rectangle<i32, Logical>],
     ) -> Vec<Test> {
-        around((0, 0).into(), (WIDTH, HEIGHT).into(), hole)
+        let holes = holes_in(transparent, (WIDTH, HEIGHT).into(), video_area());
+        assert!(!holes.is_empty());
+        around((0, 0).into(), (WIDTH, HEIGHT).into(), &holes)
+            .expect("strips")
             .into_iter()
             .filter_map(|strip| {
                 CropRenderElement::from_element(element(id, renderer, ui, (0.0, 0.0)), 1.0, strip)
@@ -456,39 +361,15 @@ mod gl {
     }
 
     #[test]
-    #[ignore = "needs an EGL device"]
-    fn the_hole_reads_what_the_window_shows() {
-        let mut renderer = renderer();
-        let pixels = ui_pixels();
-        let area = Rectangle::new((100, 20).into(), (680, 420).into());
-        for flipped in [false, true] {
-            let mut stored = pixels.clone();
-            if flipped {
-                let row = WIDTH as usize * 4;
-                stored = pixels.chunks_exact(row).rev().flatten().copied().collect();
-            }
-            let ui = texture(&mut renderer, &stored, (WIDTH, HEIGHT), flipped);
-            assert_eq!(ui.is_y_inverted(), flipped);
-            // as an imported dma-buf is: Smithay draws an inverted texture at negative coordinates, a texture from memory
-            // would stop at its edge
-            renderer
-                .with_context(|gl| unsafe {
-                    gl.BindTexture(ffi::TEXTURE_2D, ui.tex_id());
-                    gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_T, ffi::REPEAT as i32);
-                    gl.BindTexture(ffi::TEXTURE_2D, 0);
-                })
-                .unwrap();
-            let direct = largest_clear_in(&mut renderer, &ui, area).unwrap().unwrap();
-            let copied = read_a_copy(&mut renderer, &ui, area).unwrap().unwrap();
-            for hole in [direct, copied] {
-                // inside the card, beside the button, above its lower edge; the rows below are looked up in the window's
-                // picture, so that a buffer drawn upside down must come out at the same place
-                assert_eq!((hole.loc.x, hole.size.w), (132, 528), "{hole:?}");
-                assert!(hole.size.h >= 360, "{hole:?}");
-                for y in hole.loc.y..hole.loc.y + hole.size.h {
-                    let at = (y * WIDTH + hole.loc.x) as usize * 4;
-                    let row = &pixels[at..at + hole.size.w as usize * 4];
-                    assert!(row.iter().all(|b| *b == 0), "row {y}");
+    fn what_the_ui_reports_is_all_zero_in_its_pixels() {
+        for button in [false, true] {
+            let pixels = ui_pixels(button);
+            for r in reported(button) {
+                for y in r.loc.y..r.loc.y + r.size.h {
+                    for x in r.loc.x..r.loc.x + r.size.w {
+                        let at = (y * WIDTH + x) as usize * 4;
+                        assert_eq!(pixels[at..at + 4], [0, 0, 0, 0], "{x},{y} button {button}");
+                    }
                 }
             }
         }
@@ -499,32 +380,23 @@ mod gl {
     fn with_and_without_the_hole_the_picture_is_the_same() {
         let mut renderer = renderer();
         let ui_id = Id::new();
-        let ui = texture(&mut renderer, &ui_pixels(), (WIDTH, HEIGHT), false);
-        let area = Rectangle::new((100, 20).into(), (680, 420).into());
-        let hole = largest_clear_in(&mut renderer, &ui, area).unwrap().unwrap();
+        let ui = texture(&mut renderer, &ui_pixels(true), (WIDTH, HEIGHT));
         let videos = [0, 90, 200].map(|frame| {
             (
                 Id::new(),
-                texture(&mut renderer, &video_pixels(frame), (680, 420), false),
+                texture(&mut renderer, &video_pixels(frame), (680, 420)),
             )
         });
         let mut plain = Chain::new(&mut renderer, FullDamage::Keep);
         let mut holed = Chain::new(&mut renderer, FullDamage::Keep);
         for frame in 0..12 {
             let (id, video) = &videos[frame % videos.len()];
-            let video = Test::Whole(element(id, &renderer, video, (100.0, 20.0)));
             let whole = vec![
                 Test::Whole(element(&ui_id, &renderer, &ui, (0.0, 0.0))),
-                Test::Whole(element(
-                    id,
-                    &renderer,
-                    &videos[frame % videos.len()].1,
-                    (100.0, 20.0),
-                )),
+                Test::Whole(element(id, &renderer, video, VIDEO_AT)),
             ];
-            let mut cut = with_hole(&renderer, &ui_id, &ui, hole);
-            assert!(!cut.is_empty());
-            cut.push(video);
+            let mut cut = with_holes(&renderer, &ui_id, &ui, &reported(true));
+            cut.push(Test::Whole(element(id, &renderer, video, VIDEO_AT)));
             assert!(
                 plain.frame(&mut renderer, &whole) == holed.frame(&mut renderer, &cut),
                 "frame {frame}"
@@ -532,29 +404,68 @@ mod gl {
         }
     }
 
+    /// The region changes with the commits, as when a button or a hint comes and goes: each commit brings a new buffer
+    /// and its own region at once
     #[test]
     #[ignore = "needs an EGL device"]
-    fn a_hole_that_is_too_large_would_show_this_is_how_the_test_can_fail() {
+    fn a_hole_that_changes_with_each_commit_keeps_the_picture() {
+        let mut renderer = renderer();
+        let uis = [false, true].map(|button| {
+            (
+                button,
+                texture(&mut renderer, &ui_pixels(button), (WIDTH, HEIGHT)),
+            )
+        });
+        let videos = [0, 90, 200].map(|frame| {
+            (
+                Id::new(),
+                texture(&mut renderer, &video_pixels(frame), (680, 420)),
+            )
+        });
+        let mut plain = Chain::new(&mut renderer, FullDamage::Keep);
+        let mut holed = Chain::new(&mut renderer, FullDamage::Keep);
+        // a commit every few frames, at uneven distances so that both buffers see each change
+        let commits = [0, 3, 4, 9, 11, 16];
+        let mut ui_id = Id::new();
+        let mut shown = 0;
+        for frame in 0..20 {
+            if commits.contains(&frame) {
+                // a commit damages the whole window, as Slint's do: a new element
+                ui_id = Id::new();
+                shown = (frame / 2) % 2;
+            }
+            let (button, ui) = &uis[shown];
+            let (id, video) = &videos[frame % videos.len()];
+            let whole = vec![
+                Test::Whole(element(&ui_id, &renderer, ui, (0.0, 0.0))),
+                Test::Whole(element(id, &renderer, video, VIDEO_AT)),
+            ];
+            let mut cut = with_holes(&renderer, &ui_id, ui, &reported(*button));
+            cut.push(Test::Whole(element(id, &renderer, video, VIDEO_AT)));
+            assert!(
+                plain.frame(&mut renderer, &whole) == holed.frame(&mut renderer, &cut),
+                "frame {frame}, button {button}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs an EGL device"]
+    fn a_region_over_the_button_would_show_this_is_how_the_test_can_fail() {
         let mut renderer = renderer();
         let ui_id = Id::new();
-        let ui = texture(&mut renderer, &ui_pixels(), (WIDTH, HEIGHT), false);
+        let ui = texture(&mut renderer, &ui_pixels(true), (WIDTH, HEIGHT));
         let video_id = Id::new();
-        let video = texture(&mut renderer, &video_pixels(0), (680, 420), false);
-        // over the button
-        let hole = Rectangle::new((140, 50).into(), (560, 360).into());
+        let video = texture(&mut renderer, &video_pixels(0), (680, 420));
         let mut plain = Chain::new(&mut renderer, FullDamage::Keep);
         let mut holed = Chain::new(&mut renderer, FullDamage::Keep);
         let whole = vec![
             Test::Whole(element(&ui_id, &renderer, &ui, (0.0, 0.0))),
-            Test::Whole(element(&video_id, &renderer, &video, (100.0, 20.0))),
+            Test::Whole(element(&video_id, &renderer, &video, VIDEO_AT)),
         ];
-        let mut cut = with_hole(&renderer, &ui_id, &ui, hole);
-        cut.push(Test::Whole(element(
-            &video_id,
-            &renderer,
-            &video,
-            (100.0, 20.0),
-        )));
+        // the region without the button, the buffer with it
+        let mut cut = with_holes(&renderer, &ui_id, &ui, &reported(false));
+        cut.push(Test::Whole(element(&video_id, &renderer, &video, VIDEO_AT)));
         assert!(plain.frame(&mut renderer, &whole) != holed.frame(&mut renderer, &cut));
     }
 
@@ -565,11 +476,11 @@ mod gl {
     fn the_picture_does_not_depend_on_what_a_full_frame_does_first() {
         let mut renderer = renderer();
         let ui_ids = [Id::new(), Id::new()];
-        let ui = texture(&mut renderer, &ui_pixels(), (WIDTH, HEIGHT), false);
+        let ui = texture(&mut renderer, &ui_pixels(true), (WIDTH, HEIGHT));
         let videos = [0, 90, 200].map(|frame| {
             (
                 Id::new(),
-                texture(&mut renderer, &video_pixels(frame), (680, 420), false),
+                texture(&mut renderer, &video_pixels(frame), (680, 420)),
             )
         });
         for how in [FullDamage::Discard, FullDamage::Clear(MAGENTA)] {
@@ -582,7 +493,7 @@ mod gl {
                 let elements = |renderer: &GlesRenderer| {
                     vec![
                         Test::Whole(element(ui_id, renderer, &ui, (0.0, 0.0))),
-                        Test::Whole(element(id, renderer, video, (100.0, 20.0))),
+                        Test::Whole(element(id, renderer, video, VIDEO_AT)),
                     ]
                 };
                 let one = elements(&renderer);
