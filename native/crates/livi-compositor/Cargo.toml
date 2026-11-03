@@ -33,3 +33,5 @@ tiny-skia = "0.12"
 ab_glyph = "0.2"
 fontdb = "0.24"
 nix = { version = "0.31", features = ["signal", "process", "fs"] }
+# code for LIVI's own protocols (native/protocols), as wayland-protocols has it for the others
+wayland-scanner = "0.31"

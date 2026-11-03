@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="livi_transparent_region_v1">
+  <copyright>
+    Part of LIVI, GNU General Public License version 3 or later (LICENSE).
+  </copyright>
+
+  <description summary="where a surface draws nothing">
+    The counterpart of wl_surface.set_opaque_region: a client says where its surface is fully transparent, so that
+    the compositor may leave the surface out there instead of blending it over what lies below. LIVI's UI lies over
+    the video of a phone or a camera and draws nothing over most of it; blending it there costs a pass over the whole
+    video for each video frame.
+  </description>
+
+  <interface name="livi_transparent_region_manager_v1" version="1">
+    <description summary="gives surfaces a transparent region">
+      A global; the compositor offers it only when it uses what it is told.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="the regions made with it stay"/>
+    </request>
+
+    <enum name="error">
+      <entry name="already_exists" value="0" summary="the surface has a transparent region object already"/>
+    </enum>
+
+    <request name="get_transparent_region">
+      <description summary="the transparent region of a surface">
+        At most one for a surface; a second one is the protocol error already_exists.
+      </description>
+      <arg name="id" type="new_id" interface="livi_transparent_region_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="livi_transparent_region_v1" version="1">
+    <description summary="where a surface draws nothing">
+      Double-buffered state of a wl_surface, applied with the next wl_surface.commit, like the opaque region.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="the region goes away with the next commit"/>
+    </request>
+
+    <request name="set_region">
+      <description summary="where the surface is fully transparent">
+        The area of the surface, in surface-local coordinates, in which every pixel of the buffer committed with it
+        is zero in all four components. The compositor may leave the surface out there; a client that names a pixel
+        it draws on loses that pixel. The region stays until the next set_region. Null, as at the start, is none.
+        The region is copied: the wl_region may be destroyed right after.
+      </description>
+      <arg name="region" type="object" interface="wl_region" allow-null="true"/>
+    </request>
+  </interface>
+</protocol>

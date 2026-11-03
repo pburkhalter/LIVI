@@ -57,7 +57,7 @@ LIVI_GST_DEBUG=1 ./LIVI*.AppImage
 | `LIVI_DEBUG_BG=1` | Paint a magenta debug background in the compositor, to see the layout and video planes. |
 | `LIVI_NO_COMPOSITOR=1` | Start without the nested compositor. |
 | `LIVI_COMPOSITOR_EARLY_CALLBACK=1` | Display backend: frame callbacks when the GPU starts a frame, not when it has finished it, so that a client's next frame overlaps the GPU's work. More frames per second from a slow client, up to one frame more latency. |
-| `LIVI_COMPOSITOR_UI_HOLE=1` | Leave the UI out over a video where its pixels are zero. Reads the UI's buffer once it has stood for 500 ms and writes a `[hole]` line with the time this took. |
+| `LIVI_COMPOSITOR_UI_HOLE=1` | Leave the UI out over a video where the UI says it draws nothing: the card without what LIVI and the plugin report over it (docs/plugins.md, "Over a video"). The compositor offers the protocol `livi-transparent-region-v1` (native/protocols) only then; the UI tells it with each frame. `[hole]` lines in the compositor's log and `[ui] hole:` in the UI's say what is left out when it changes. |
 | `LIVI_COMPOSITOR_INVALIDATE=1` | A frame that draws everything anew starts with `glInvalidateFramebuffer`, so that a tile-based GPU need not load the old contents. `clear` starts it with a `glClear` to magenta instead, which shows if a frame leaves a pixel out. |
 
 ### UI
@@ -68,6 +68,7 @@ LIVI_GST_DEBUG=1 ./LIVI*.AppImage
 | `LIVI_UI_CMD=<command>` | Start this shell command as the UI instead. |
 | `LIVI_UI_SIZE=<w>x<h>` | Open the UI window at this size, e.g. `320x200`. |
 | `LIVI_UI_PAGE=<page>` | Open the UI on `projection`, `media`, `telemetry`, `camera`, `settings` or a plugin's page, `plugin/<id>`. Empty counts as not set. |
+| `LIVI_UI_HOLE_CHECK=1` | Read each frame back after drawing it and log every pixel the UI declares transparent for `LIVI_COMPOSITOR_UI_HOLE` that is not (`[ui] hole check:`). Also without LIVI's compositor, e.g. in a preview. Costly: one readback a frame. |
 | `LIVI_UI_PLUGIN=<folder>` | Load the UI plugin from this folder instead of `~/.config/LIVI/ui-plugin` (`docs/plugins.md`). `LIVI --check-plugin <folder>` only compiles it and reports its errors. |
 | `LIVI_UI_TRACE=1` | Print how long the steps of the UI's start take, up to the first frames. |
 | `LIVI_DEBUG_OVERLAY=1` | Show the debug overlay (frame rate, load, memory, page, plugin) in a corner, like the setting *System → Logs → Debug overlay*. |

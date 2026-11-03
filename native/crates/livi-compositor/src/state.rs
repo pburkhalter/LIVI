@@ -74,7 +74,7 @@ pub struct TopLevel {
     pub area: Option<[f64; 4]>,
     pub position: Point<i32, Logical>,
     pub clear: bool,
-    /// LIVI_COMPOSITOR_UI_HOLE: where a UI window leaves the video alone
+    /// LIVI_COMPOSITOR_UI_HOLE: what is left out of a UI window over a video
     pub hole: crate::hole::Hole,
     /// How often a video window has committed: LIVI_COMPOSITOR_CAMERA_FIRST waits for a few, not the first
     pub commits: u32,
@@ -181,6 +181,10 @@ impl LiviState {
         let dmabuf_state = DmabufState::new();
         let viewporter_state = ViewporterState::new::<Self>(&dh);
         let cursor_shape_state = CursorShapeManagerState::new::<Self>(&dh);
+        // lever 4: where LIVI's UI says it is transparent (hole.rs)
+        if *crate::levers::UI_HOLE {
+            crate::transparent::init(&dh);
+        }
 
         // a fixed name for programs beside LIVI that show in its window (docs/plugins.md, Apps in a card)
         let source = std::env::var("LIVI_WAYLAND_SOCKET")

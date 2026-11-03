@@ -32,6 +32,14 @@ export struct VideoCardData {
     button-hidden: bool,
 }
 
+// A rectangle in the window's pixels (lever "UI hole", ui_hole.rs)
+export struct CoverRect {
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+}
+
 // A page of the UI plugin, as the window shows it
 export struct PluginView {
     id: string,
@@ -157,6 +165,36 @@ export component AppWindow inherits Window {
         ? root.width - root.card-right - 20px - self.video-button-size : 20px;
     out property <length> video-button-y: root.video-card-shown ? root.card-top + 20px : 20px;
 
+    // Lever "UI hole" (ui_hole.rs): where the window is sure to draw nothing over a video, so that LIVI's compositor may
+    // leave it out there. The card of the phone's or the camera's picture, or all of the window on a full screen page;
+    // ui_hole.rs keeps it within the pages' place, leaves out the round corners and the rim, and takes off what covers
+    // it: LIVI's own (clear-covers) and what the plugin reports (docs/plugins.md). Not sure: nowhere.
+    out property <bool> clear-sure: root.video-shown && !intro.visible && !root.debug-shown && root.status == ""
+        && !(root.page == Page.projection && root.main-mask.shown);
+    out property <CoverRect> clear-card: root.video-card-shown
+        ? { x: root.card-left, y: root.card-top, width: root.width - root.card-left - root.card-right,
+            height: root.height - root.card-top - root.card-bottom }
+        : root.camera-framed ? { x: root.camera-x, y: root.camera-y, width: root.camera-width, height: root.camera-height }
+        : { x: 0px, y: 0px, width: root.width, height: root.height };
+    out property <length> clear-radius: root.video-card-shown ? root.card-radius
+        : root.camera-framed ? root.camera-radius : 0px;
+    out property <CoverRect> clear-pages: { x: pages.absolute-position.x, y: pages.absolute-position.y,
+        width: pages.width, height: pages.height };
+    // with their shadows (Card in overlays.slint: 22 px blur, 6 px down)
+    out property <[CoverRect]> clear-covers: [
+        root.cover(root.video-button-shown, root.video-button-x, root.video-button-y, root.video-button-size,
+            root.video-button-size, 2px),
+        root.cover(level.opacity > 0, level.x, level.y, level.width, level.height, 32px),
+        root.cover(phone-overlay.opacity > 0, phone-overlay.x, phone-overlay.y, phone-overlay.width,
+            phone-overlay.height, 32px),
+    ];
+    pure function cover(on: bool, x: length, y: length, width: length, height: length, margin: length) -> CoverRect {
+        if !on {
+            return { x: 0px, y: 0px, width: 0px, height: 0px };
+        }
+        return { x: x - margin, y: y - margin, width: width + 2 * margin, height: height + 2 * margin };
+    }
+
     public function wake-nav() {
         root.nav-asleep = false;
         DashState.dots-shown = true;
@@ -272,7 +310,7 @@ export component AppWindow inherits Window {
         if root.has-plugin-start && root.bars-shown: ComponentContainer {
             component-factory: root.plugin-start;
         }
-        Rectangle {
+        pages := Rectangle {
             horizontal-stretch: 1;
             for view in root.plugin-pages: ComponentContainer {
                 visible: root.page == Page.plugin && view.id == root.plugin-page-id;
@@ -408,12 +446,12 @@ export component AppWindow inherits Window {
         }
     }
 
-    LevelOverlay {
+    level := LevelOverlay {
         window-width: root.width;
         x: (root.width - self.width) / 2;
         y: 16px;
     }
-    PhoneOverlay {
+    phone-overlay := PhoneOverlay {
         window-width: root.width;
         x: root.width - self.width - 16px;
         y: 16px;
@@ -433,7 +471,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    Rectangle {
+    intro := Rectangle {
         background: #000000;
         opacity: root.intro-done ? 0 : 1;
         visible: self.opacity > 0;

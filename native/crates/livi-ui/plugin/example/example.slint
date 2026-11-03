@@ -1,7 +1,7 @@
 // Example UI plugin for LIVI (docs/plugins.md): one page, a bar at the bottom and a page for LIVI's settings. Copy the folder to
 // ~/.config/LIVI/ui-plugin (or point LIVI_UI_PLUGIN at it) and restart LIVI; check it with `LIVI --check-plugin <dir>`.
 
-import { Livi } from "@livi/api.slint";
+import { Livi, LiviCover } from "@livi/api.slint";
 
 // LIVI reaches the state only through a global the main file exports
 export { Livi }
@@ -105,6 +105,8 @@ export component Bar inherits Window {
     background: #000000;
     min-height: 72px;
     max-height: 72px;
+    // it draws only in its own place, nothing over a video (docs/plugins.md, "Over a video")
+    out property <[LiviCover]> covers: [];
 
     HorizontalLayout {
         alignment: center;
