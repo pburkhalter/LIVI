@@ -954,6 +954,38 @@ async fn a_call_or_siri_brings_the_projection_forward_and_back() {
 }
 
 #[tokio::test]
+async fn without_call_front_a_call_leaves_the_screen_to_the_plugin() {
+    let mut rig = Rig::new();
+    rig.p.cp_call_front = false;
+    rig.connect(1, true);
+    rig.drain();
+    assert_eq!(rig.front(), Front::Livi);
+    rig.p.on_event(CpEvent::Call {
+        id: 1,
+        phase: CallPhase::Ringing,
+    });
+    assert_eq!(rig.front(), Front::Livi);
+    rig.p.on_event(CpEvent::AudioActive {
+        id: 1,
+        profile: AudioProfile {
+            kind: AudioKind::Call,
+            label: "telephony".into(),
+        },
+        active: true,
+    });
+    assert_eq!(rig.front(), Front::Livi);
+    rig.p.on_event(CpEvent::SpeechActive {
+        id: 1,
+        active: true,
+    });
+    assert_eq!(
+        rig.front(),
+        Front::Projection,
+        "Siri still comes to the front"
+    );
+}
+
+#[tokio::test]
 async fn only_the_phone_in_front_moves_the_screen() {
     let mut rig = Rig::new();
     rig.connect(1, false);

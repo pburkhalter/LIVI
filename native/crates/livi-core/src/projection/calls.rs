@@ -7,6 +7,14 @@ use livi_core_proto::state::{Call, CallEntry};
 
 pub const ENV: &str = "LIVI_CP_CALLS";
 
+/// `LIVI_CP_CALL_FRONT=0`: a CarPlay call does not bring the phone's picture to the front, for a UI that shows calls
+/// itself (Livi.call). Default as before: it does
+pub const FRONT_ENV: &str = "LIVI_CP_CALL_FRONT";
+
+pub fn call_front() -> bool {
+    std::env::var(FRONT_ENV).map_or(true, |v| v != "0")
+}
+
 pub fn enabled() -> bool {
     std::env::var(ENV).is_ok_and(|v| v == "1")
 }
