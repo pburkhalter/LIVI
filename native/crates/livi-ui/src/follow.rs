@@ -138,6 +138,15 @@ impl Follow {
         let all = keys.is_none_or(|k| k.contains(""));
         let hit = |key: &str| all || keys.is_some_and(|k| k.contains(key));
         let mut out = Vec::new();
+        // the start page, once with the first whole state
+        let mut start = (keys.is_none()
+            && !std::mem::replace(&mut self.started, true)
+            && crate::wanted_page().is_none())
+        .then(|| {
+            self.start
+                .clone()
+                .unwrap_or_else(|| state["system"]["startPage"].as_str().unwrap_or("/").into())
+        });
         if hit("nowPlaying") || hit("sessions") {
             out.push(Update::Media(self.media.read(state)));
         }
@@ -163,6 +172,15 @@ impl Follow {
                 && self.front != Some(front)
             {
                 self.front = Some(front);
+                // a UI that starts while the core has the camera in front for reversing: the start page first, so
+                // that the camera page comes up over it and goes back to it with the camera (Update::Front in
+                // main.rs). After the camera the start page would cover the camera until the car stops reversing:
+                // the core keeps the camera in front and has no change to tell that could bring it back.
+                if front == Front::Camera
+                    && let Some(start) = start.take()
+                {
+                    out.push(Update::Open(start));
+                }
                 out.push(Update::Front(front));
             }
         }
@@ -248,14 +266,7 @@ impl Follow {
         {
             out.push(Update::PhoneName(name));
         }
-        if keys.is_none()
-            && !std::mem::replace(&mut self.started, true)
-            && crate::wanted_page().is_none()
-        {
-            let start = self
-                .start
-                .clone()
-                .unwrap_or_else(|| state["system"]["startPage"].as_str().unwrap_or("/").into());
+        if let Some(start) = start {
             out.push(Update::Open(start));
         }
         out
@@ -267,6 +278,41 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// The updates that choose a page, in their order
+    fn pages(updates: &[Update]) -> Vec<String> {
+        updates
+            .iter()
+            .filter_map(|u| match u {
+                Update::Open(path) => Some(format!("open {path}")),
+                Update::Front(front) => Some(format!("front {front:?}")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_ui_that_starts_while_reversing_opens_the_start_page_under_the_camera() {
+        let state = |front: &str| json!({ "front": { "main": front }, "system": { "startPage": "/media" } });
+        let mut follow = Follow::starting_at(Some("/plugin/home".into()));
+        assert_eq!(
+            pages(&follow.changed(None, &state("camera"))),
+            ["open /plugin/home", "front Camera"]
+        );
+        // the core again (a second whole state) opens nothing; the camera goes with a change of the front
+        assert!(pages(&follow.changed(None, &state("camera"))).is_empty());
+        let front = BTreeSet::from(["front".to_string()]);
+        assert_eq!(
+            pages(&follow.changed(Some(&front), &state("livi"))),
+            ["front Livi"]
+        );
+        // without the camera as before: the front, then the start page, LIVI's own without a plugin
+        let mut follow = Follow::starting_at(None);
+        assert_eq!(
+            pages(&follow.changed(None, &state("projection"))),
+            ["front Projection", "open /media"]
+        );
+    }
 
     #[test]
     fn the_wider_card_takes_the_place_of_the_card() {
