@@ -7,6 +7,8 @@ use livi_core_proto::runtime::runtime_dir;
 pub struct Paths {
     pub config: PathBuf,
     pub config_backup: PathBuf,
+    /// The system's defaults for the config, the most important first (config_file::ConfigFile::with_system)
+    pub system_config: Vec<PathBuf>,
     pub runtime: PathBuf,
 }
 
@@ -19,6 +21,7 @@ impl Paths {
         Ok(Self {
             config: user_data.join("config.json"),
             config_backup: backup_dir(&home, &user_data).join("config.json"),
+            system_config: system_config(),
             runtime: runtime_dir(std::env::var_os("XDG_RUNTIME_DIR"), uid),
         })
     }
@@ -40,6 +43,31 @@ fn user_data_dir(home: &Path) -> PathBuf {
 #[cfg(not(target_os = "macos"))]
 fn user_data_dir(home: &Path) -> PathBuf {
     xdg_dir(std::env::var_os("XDG_CONFIG_HOME"), home, ".config").join("LIVI")
+}
+
+/// LIVI/config.json in each of $XDG_CONFIG_DIRS (default /etc/xdg), in its order; relative ones are ignored as the
+/// XDG Base Directory Specification asks
+#[cfg(not(target_os = "macos"))]
+fn system_config() -> Vec<PathBuf> {
+    xdg_config_dirs(std::env::var_os("XDG_CONFIG_DIRS"))
+        .into_iter()
+        .map(|d| d.join("LIVI/config.json"))
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn system_config() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn xdg_config_dirs(value: Option<OsString>) -> Vec<PathBuf> {
+    let value = value
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "/etc/xdg".into());
+    std::env::split_paths(&value)
+        .filter(|d| d.is_absolute())
+        .collect()
 }
 
 #[cfg(target_os = "macos")]
@@ -78,6 +106,19 @@ mod tests {
         assert_eq!(
             xdg_dir(None, home, ".local/share"),
             PathBuf::from("/home/u/.local/share")
+        );
+    }
+
+    #[test]
+    fn system_config_dirs_keep_their_order_and_fall_back_to_etc_xdg() {
+        assert_eq!(
+            xdg_config_dirs(Some("/opt/x/xdg:rel/xdg::/etc/xdg".into())),
+            vec![PathBuf::from("/opt/x/xdg"), PathBuf::from("/etc/xdg")]
+        );
+        assert_eq!(xdg_config_dirs(None), vec![PathBuf::from("/etc/xdg")]);
+        assert_eq!(
+            xdg_config_dirs(Some("".into())),
+            vec![PathBuf::from("/etc/xdg")]
         );
     }
 }
