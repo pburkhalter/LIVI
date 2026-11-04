@@ -46,6 +46,11 @@ pub fn schema() -> Node {
                 "systemSounds",
                 "systemSoundsVolume",
             ),
+            Node::checkbox(
+                Label::new("settings.blinkerSound", "Turn Signal Sound"),
+                "blinkerSound",
+            )
+            .icon("blinkerSound"),
             Node::select(
                 Label::new("settings.audioOutputDevice", "Audio Output"),
                 "audioOutputDevice",

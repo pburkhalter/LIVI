@@ -137,6 +137,7 @@
     "navigation": "Навігація",
     "phoneCalls": "Телефонні дзвінки",
     "systemSounds": "Системні звуки",
+    "blinkerSound": "Звук поворотника",
     "samplingFrequency": "Частота дискретизації",
     "disableAudio": "Вимкнути аудіо",
     "audioOutputDevice": "Аудіовихід",

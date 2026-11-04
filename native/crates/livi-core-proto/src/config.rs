@@ -141,6 +141,9 @@ pub struct Config {
     pub call_volume: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_sounds_volume: Option<f64>,
+    /// A relay click while a turn signal or the hazards blink (telemetry turnSignal, hazards), at the system sounds'
+    /// volume; off: no click and no audio stream for it
+    pub blinker_sound: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_output_device: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -589,6 +592,7 @@ pub fn defaults() -> Config {
         voice_assistant_volume: 0.95,
         call_volume: 0.95,
         system_sounds_volume: Some(0.75),
+        blinker_sound: true,
         audio_output_device: empty(),
         audio_output_device_label: empty(),
         audio_input_device: empty(),
