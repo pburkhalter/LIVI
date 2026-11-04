@@ -137,6 +137,7 @@
     "navigation": "Navigation",
     "phoneCalls": "Anrufe",
     "systemSounds": "Systemklänge",
+    "blinkerSound": "Blinkerklang",
     "samplingFrequency": "Abtastfrequenz",
     "disableAudio": "Audio deaktivieren",
     "audioOutputDevice": "Audio-Ausgabe",

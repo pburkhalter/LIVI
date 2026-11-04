@@ -78,6 +78,7 @@ const SETTINGS: &[(&str, &str)] = &[
     ("voiceAssistant", "RecordVoiceOverOutlined"),
     ("phoneCalls", "CallOutlined"),
     ("systemSounds", "NotificationsNoneOutlined"),
+    ("blinkerSound", "SwapHorizOutlined"),
     ("audioOutput", "SpeakerOutlined"),
     ("audioInput", "MicNoneOutlined"),
     ("samplingFrequency", "EqualizerOutlined"),

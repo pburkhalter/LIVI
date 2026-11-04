@@ -137,6 +137,7 @@
     "navigation": "Navigation",
     "phoneCalls": "Appels",
     "systemSounds": "Sons Système",
+    "blinkerSound": "Son du clignotant",
     "samplingFrequency": "Fréquence de samplage",
     "disableAudio": "Audio désactivé",
     "audioOutputDevice": "Sortie Audio",

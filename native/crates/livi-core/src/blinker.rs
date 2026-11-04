@@ -2,6 +2,7 @@ use std::f64::consts::PI;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use livi_core_proto::config::Config;
 use livi_core_proto::state::State;
 use livi_media::gst_host::{AudioCodec, AudioOpts, GstHost};
 use tokio::sync::watch;
@@ -154,6 +155,14 @@ impl Clicks {
     }
 }
 
+/// Whether the click may sound: switched on, audio not disabled and a volume above 0. Otherwise no stream is opened,
+/// so nothing, not even silence, goes to the output.
+fn sounds(cfg: &Config) -> bool {
+    cfg.blinker_sound
+        && !cfg.disable_audio_output
+        && gain(cfg.system_sounds_volume.unwrap_or(DEFAULT_VOLUME)) > 0.0
+}
+
 fn blinking(state: &State) -> bool {
     let t = &state.telemetry;
     matches!(
@@ -204,7 +213,7 @@ pub async fn run(hub: Arc<Hub>, gst: GstHost) {
             let cfg = &s.config;
             (
                 blinking(&s),
-                cfg.disable_audio_output,
+                !sounds(cfg),
                 cfg.audio_output_device.clone().unwrap_or_default(),
                 cfg.system_sounds_volume.unwrap_or(DEFAULT_VOLUME),
             )
@@ -326,6 +335,33 @@ mod tests {
         let quiet = clicks.generate(10_000.0, false, 1.0);
         assert_eq!(quiet.len(), MAX_CATCHUP_FRAMES as usize * 4);
         assert!(quiet.iter().all(|b| *b == 0));
+    }
+
+    #[test]
+    fn the_switch_audio_off_or_no_volume_keep_it_quiet() {
+        let on = crate::config_file::defaults();
+        assert!(on.blinker_sound, "upstream clicks by default");
+        assert!(sounds(&on));
+        for off in [
+            Config {
+                blinker_sound: false,
+                ..on.clone()
+            },
+            Config {
+                disable_audio_output: true,
+                ..on.clone()
+            },
+            Config {
+                system_sounds_volume: Some(0.0),
+                ..on.clone()
+            },
+        ] {
+            assert!(!sounds(&off));
+        }
+        assert!(sounds(&Config {
+            system_sounds_volume: None,
+            ..on
+        }));
     }
 
     #[test]
