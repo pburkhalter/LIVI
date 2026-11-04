@@ -289,6 +289,8 @@ _Tested on Raspberry Pi OS, Ubuntu 26.04 and Fedora 44._
 > [!NOTE]
 > The Pi Zero 2 W, Pi 3, Pi 4, CM 4, Pi 5 and CM 5 require Trixie (Debian 13).
 
+A distribution or an installer can set its own defaults on Linux in `LIVI/config.json` below `$XDG_CONFIG_DIRS` (default `/etc/xdg`): the same keys as the user's `~/.config/LIVI/config.json`, as few as needed. A key the user's file lacks takes its value from there; LIVI then writes it into the user's file, so the user's own choice always wins and a later change of the system's file reaches only keys a user's file has yet to get.
+
 ## Linux (x86_64)
 
 This AppImage has been tested on Debian Trixie (13) with Wayland, Fedora 44 (GNOME) and Ubuntu 26.04.

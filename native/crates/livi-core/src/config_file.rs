@@ -19,11 +19,25 @@ pub struct HostFacts {
 pub struct ConfigFile {
     path: PathBuf,
     backup: PathBuf,
+    system: Vec<PathBuf>,
 }
 
 impl ConfigFile {
     pub fn new(path: PathBuf, backup: PathBuf) -> Self {
-        Self { path, backup }
+        Self {
+            path,
+            backup,
+            system: Vec::new(),
+        }
+    }
+
+    /// Defaults of the system (a distribution, an installer): files like the user's, any of its keys, the most
+    /// important first. A key the user's file lacks takes its value from the first of them that has it, else from
+    /// the host and LIVI's own defaults; the result is written to the user's file as always, so the user's choice
+    /// stays and a later change here only reaches keys a user's file has yet to get.
+    pub fn with_system(mut self, files: Vec<PathBuf>) -> Self {
+        self.system = files;
+        self
     }
 
     pub fn load(&self, host: &HostFacts) -> Config {
@@ -35,14 +49,16 @@ impl ConfigFile {
             println!("[core] config restored from the backup mirror");
         }
 
+        let system = current_names(&system_defaults(&self.system));
+        let named = |key: &str| file.get(key).is_some() || system.get(key).is_some();
         let mut defaults = defaults();
-        if file.get("carName").is_none()
+        if !named("carName")
             && let Some(name) = &host.car_name
         {
             defaults.car_name = name.clone();
         }
-        if file.get("projectionWidth").is_none()
-            && file.get("projectionHeight").is_none()
+        if !named("projectionWidth")
+            && !named("projectionHeight")
             && let Some((w, h)) = host.panel_px
         {
             let (w, h) = fit_720p(w, h);
@@ -53,6 +69,7 @@ impl ConfigFile {
             defaults.cluster_height = h;
         }
 
+        let defaults = merge(&system, &defaults);
         let mut config = merge(&current_names(&file), &defaults);
         if !WIFI_PASSWORD_LEN.contains(&config.wifi_password.chars().count()) {
             println!("[core] wifiPassword is no WPA passphrase, falling back to the default");
@@ -76,6 +93,24 @@ impl ConfigFile {
         }
         Ok(())
     }
+}
+
+/// The keys of all files of the system's defaults that are there, per key from the first file that has it
+fn system_defaults(files: &[PathBuf]) -> Value {
+    let mut out = Map::new();
+    for path in files.iter().filter(|p| p.exists()) {
+        match read_json(path) {
+            Some(Value::Object(keys)) => {
+                println!("[core] system defaults from {}", path.display());
+                for (key, value) in keys {
+                    out.entry(key).or_insert(value);
+                }
+            }
+            Some(_) => eprintln!("[core] {} is no JSON object, ignored", path.display()),
+            None => {}
+        }
+    }
+    Value::Object(out)
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -508,6 +543,86 @@ pub mod tests {
         let before = fs::read_to_string(&path).unwrap();
         file.load(&HostFacts::default());
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn the_system_sets_defaults_and_the_users_file_wins() {
+        let dir = TempDir::new();
+        fs::create_dir_all(dir.0.join("first/LIVI")).unwrap();
+        fs::create_dir_all(dir.0.join("second/LIVI")).unwrap();
+        fs::write(
+            dir.0.join("first/LIVI/config.json"),
+            json!({ "huVolume": 0.4, "darkMode": "no", "bindings": { "home": "KeyH" } })
+                .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            dir.0.join("second/LIVI/config.json"),
+            json!({ "huVolume": 0.1, "audioVolume": 0.3, "projectionWidth": 1920,
+                    "carName": "Fleet" })
+            .to_string(),
+        )
+        .unwrap();
+        let system = vec![
+            dir.0.join("first/LIVI/config.json"),
+            dir.0.join("none/LIVI/config.json"),
+            dir.0.join("second/LIVI/config.json"),
+        ];
+        let host = HostFacts {
+            car_name: Some("golf".into()),
+            panel_px: Some((1920, 1200)),
+        };
+
+        let fresh = file_in(&dir).with_system(system.clone()).load(&host);
+        assert_eq!(fresh.hu_volume, 0.4, "the first file that names a key wins");
+        assert_eq!(fresh.audio_volume, 0.3);
+        assert_eq!(
+            fresh.dark_mode,
+            defaults().dark_mode,
+            "a wrong type falls back"
+        );
+        assert_eq!(fresh.bindings.home, "KeyH");
+        assert_eq!(fresh.bindings.play_pause, defaults().bindings.play_pause);
+        assert_eq!(
+            fresh.car_name, "Fleet",
+            "the system's choice beats the host's"
+        );
+        assert_eq!(fresh.projection_width, 1920);
+        assert_eq!(written(&dir, "LIVI/config.json")["huVolume"], 0.4);
+
+        fs::write(
+            dir.0.join("LIVI/config.json"),
+            json!({ "huVolume": 0.9 }).to_string(),
+        )
+        .unwrap();
+        let user = file_in(&dir).with_system(system).load(&host);
+        assert_eq!(user.hu_volume, 0.9, "the user's file wins");
+        assert_eq!(
+            user.audio_volume, 0.3,
+            "a key the user's file lacks comes from the system"
+        );
+
+        let without = file_in(&dir).load(&host);
+        assert_eq!(without.hu_volume, 0.9);
+        assert_eq!(
+            without.audio_volume, 0.3,
+            "what was taken once stays in the user's file"
+        );
+    }
+
+    #[test]
+    fn a_broken_system_file_changes_nothing() {
+        let dir = TempDir::new();
+        fs::create_dir_all(dir.0.join("sys/LIVI")).unwrap();
+        fs::write(dir.0.join("sys/LIVI/config.json"), "{ nope").unwrap();
+        fs::write(dir.0.join("sys/LIVI/list.json"), "[1]").unwrap();
+        let config = file_in(&dir)
+            .with_system(vec![
+                dir.0.join("sys/LIVI/config.json"),
+                dir.0.join("sys/LIVI/list.json"),
+            ])
+            .load(&HostFacts::default());
+        assert_eq!(config, defaults());
     }
 
     #[test]

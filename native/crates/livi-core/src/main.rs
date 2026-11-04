@@ -154,7 +154,8 @@ async fn run() -> Result<Exit, String> {
         car_name: host::hostname().and_then(|h| host::car_name(&h, CAR_NAME_MAX)),
         panel_px: host::panel_native_px(),
     };
-    let config_file = ConfigFile::new(paths.config.clone(), paths.config_backup.clone());
+    let config_file = ConfigFile::new(paths.config.clone(), paths.config_backup.clone())
+        .with_system(paths.system_config.clone());
     let config = config_file.load(&host);
     let user_data = paths
         .config
