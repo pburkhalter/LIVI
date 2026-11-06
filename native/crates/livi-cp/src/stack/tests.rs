@@ -1254,6 +1254,53 @@ async fn a_verified_session_streams_and_takes_input() {
     ]);
     rig.phone.plist("POST", "/command", &call_state).await;
     assert_eq!(rig.event().await, StackEvent::SpeechActive(false));
+    // the phone's states as it sends them (call, speech, turn by turn); speechMode -1 comes as the largest integer
+    let modes = |call: u64, speech: u64| {
+        dict([
+            ("type", Value::String("modesChanged".into())),
+            (
+                "params",
+                dict([(
+                    "appStates",
+                    Value::Array(vec![
+                        dict([
+                            ("entity", Value::Int(call)),
+                            ("appStateID", Value::Int(2)),
+                        ]),
+                        dict([
+                            ("entity", Value::Int(u64::from(speech != u64::MAX))),
+                            ("speechMode", Value::Int(speech)),
+                            ("appStateID", Value::Int(1)),
+                        ]),
+                        dict([
+                            ("entity", Value::Int(0)),
+                            ("appStateID", Value::Int(3)),
+                        ]),
+                    ]),
+                )]),
+            ),
+        ])
+    };
+    let request_ui = dict([("type", Value::String("requestUI".into()))]);
+    // the call over; then the phone reads something out without having listened (a notification, an app's
+    // announcement): its picture does not come to the front, the next event is the marker's
+    rig.phone.plist("POST", "/command", &modes(0, u64::MAX)).await;
+    rig.phone.plist("POST", "/command", &modes(0, 1)).await;
+    rig.phone.plist("POST", "/command", &modes(0, u64::MAX)).await;
+    rig.phone.plist("POST", "/command", &request_ui).await;
+    assert_eq!(rig.event().await, StackEvent::HostUiRequested);
+    // Siri: it listens, answers and is done; speaking after listening keeps the picture in front
+    rig.phone.plist("POST", "/command", &modes(0, 2)).await;
+    assert_eq!(rig.event().await, StackEvent::SpeechActive(true));
+    rig.phone.plist("POST", "/command", &modes(0, 1)).await;
+    rig.phone.plist("POST", "/command", &modes(0, u64::MAX)).await;
+    assert_eq!(rig.event().await, StackEvent::SpeechActive(false));
+    // a reply to an announcement: speaking first, listening brings the picture
+    rig.phone.plist("POST", "/command", &modes(0, 1)).await;
+    rig.phone.plist("POST", "/command", &modes(0, 2)).await;
+    assert_eq!(rig.event().await, StackEvent::SpeechActive(true));
+    rig.phone.plist("POST", "/command", &modes(0, u64::MAX)).await;
+    assert_eq!(rig.event().await, StackEvent::SpeechActive(false));
     for cmd in [
         "requestUI",
         "disableBluetooth",
