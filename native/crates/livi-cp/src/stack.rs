@@ -331,6 +331,8 @@ struct Conn<M: Media> {
     audio_active: bool,
     call_active: bool,
     speech_active: bool,
+    /// The phone's last speechMode (modesChanged), for the log when it speaks without having listened
+    speech_mode: f64,
     video_player: video_playback::Playback,
     video_muted: Arc<AtomicBool>,
 }
@@ -601,6 +603,7 @@ pub async fn run<M: Media>(
         audio_active: false,
         call_active: false,
         speech_active: false,
+        speech_mode: -1.0,
         video_player: video_playback::Playback::default(),
         video_muted: Arc::new(AtomicBool::new(false)),
     };

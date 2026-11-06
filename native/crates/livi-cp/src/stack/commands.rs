@@ -101,6 +101,10 @@ impl<M: Media> Conn<M> {
         status(200)
     }
 
+    /// Siri's picture in front (SpeechActive): from the moment the phone listens (speechMode 2, recognizing) until its
+    /// speech is over. Speaking alone (speechMode 1) without having listened, when the phone reads out a notification or
+    /// an app's announcement, does not bring the phone's picture to the front: the screen would jump to the phone and
+    /// back for each of them. Within a turn that began with listening, speaking keeps it there (Siri's answer).
     pub(super) fn modes_changed(&mut self, params: &Value) {
         let Some(states) = params.get("appStates").and_then(Value::as_array) else {
             return;
@@ -121,7 +125,11 @@ impl<M: Media> Conn<M> {
                 continue;
             };
             let mode = number(Some(mode));
-            active = !in_call && (mode == 1.0 || mode == 2.0);
+            active = !in_call && (mode == 2.0 || (mode == 1.0 && self.speech_active));
+            if mode == 1.0 && !in_call && !active && self.speech_mode != 1.0 {
+                println!("[cpStack] the phone speaks without having listened: its picture stays where it is");
+            }
+            self.speech_mode = mode;
         }
         if in_call {
             active = false;
