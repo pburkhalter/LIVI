@@ -599,6 +599,11 @@ fn plugin_action(weak: &Weak<AppWindow>, verb: &str, argument: &str) {
                 c.act(Action::PhoneHome);
             }
         }),
+        ("call-front", on @ ("on" | "off")) => CLIENT.with_borrow(|c| {
+            if let Some(c) = c {
+                c.act(Action::CallFront { on: on == "on" });
+            }
+        }),
         ("media", "play-pause") => ui.invoke_play_pause(),
         ("media", "next") => ui.invoke_next(),
         ("media", "prev") => ui.invoke_prev(),
