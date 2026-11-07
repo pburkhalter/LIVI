@@ -380,6 +380,7 @@ mod tests {
             devices: Default::default(),
             telemetry: Default::default(),
             extensions: Default::default(),
+            extension_images: Default::default(),
             update: Default::default(),
             cluster: Default::default(),
             dab: Default::default(),

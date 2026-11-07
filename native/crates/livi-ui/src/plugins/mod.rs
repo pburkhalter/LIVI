@@ -336,6 +336,15 @@ fn factory(component: ComponentDefinition, around: bool) -> ComponentFactory {
                 _ => Value::String(Default::default()),
             }
         });
+        // a plugin written for a LIVI without pictures has no such callback: then this does nothing
+        let _ = instance.set_global_callback(GLOBAL, "find-image", |args| {
+            match (args.first(), args.get(1)) {
+                (Some(Value::Model(images)), Some(Value::String(key))) => {
+                    state::find_image(images, key)
+                }
+                _ => Value::Image(Default::default()),
+            }
+        });
         LIVE.with_borrow_mut(|live| live.push(instance.as_weak()));
         if around {
             // the ones gone first: components come and go with their pages, also without the lever

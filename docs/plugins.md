@@ -253,11 +253,18 @@ core, without LIVI knowing what they say:
 - The plugin sends the program **events** with `Livi.emit(topic, name, value)`; the value is text, `""` when there is
   nothing to say. LIVI hands each event to the programs that listen to the topic at that moment, and to no one
   otherwise; there is no answer.
+- Beside its state the program may publish **pictures** under the topic, e.g. the cover of what a player plays or a
+  station's logo; the plugin shows one with `Livi.extension-image(topic, key)`, an empty image (0 x 0) while there is
+  none. Each is a PNG or JPEG file; LIVI decodes it once, when it is new.
 
 ```slint
 // a button of a radio program: hidden while it publishes nothing
 if Livi.extension("radio", "station") != "": TouchArea {
     clicked => { Livi.emit("radio", "next", ""); }
+}
+// the station's logo, while there is one
+if Livi.extension-image("radio", "logo").width > 0: Image {
+    source: Livi.extension-image("radio", "logo");
 }
 ```
 
@@ -272,13 +279,14 @@ value many times a second (e.g. a level) makes the plugin redraw what reads it a
 |---|---|
 | `{"type":"hello","protocol":11,"client":"radio","subscribe":["radio"]}` | The first message; `subscribe` (may be left out) names the topics whose events the client wants. |
 | `{"type":"action","id":1,"action":{"kind":"setExtension","topic":"radio","value":{"station":"SRF 3"}}}` | Publishes the client's state under the topic: an object that replaces the one before, at most 4096 bytes as JSON; `null` takes it away. LIVI sends its clients only what changed (patches of `extensions`). |
+| `{"type":"action","id":2,"action":{"kind":"setExtensionImage","topic":"radio","key":"logo","data":"<base64>"}}` | A picture under the client's topic (its state published first): a PNG or JPEG file as base64, at most 256 KiB as base64, at most 8 per topic; a new one under the same key replaces it, `null` takes it away. Pictures go with the topic. In the state under `extensionImages`, each with a `serial` that grows with every new one. |
 | `{"type":"event","topic":"radio","name":"next","value":""}` | From LIVI: an event a plugin sent (`Livi.emit`). |
 | `{"type":"action","id":2,"action":{"kind":"emit","topic":"radio","name":"next","value":""}}` | Sends an event as a plugin does; the value may be any JSON here. |
 
 - A topic and an event's name have 1 to 64 letters, digits, `-` or `_`. A topic belongs to the client that published
   it first, until that client takes it away or disconnects; a client publishes at most 8. LIVI answers each action with
   a `reply`, with `error` when it refused it (another client's topic, too big, not an object).
-- Nothing is saved: when the client disconnects, its topics go from the state, and the plugin reads `""` again. A
+- Nothing is saved: when the client disconnects, its topics and their pictures go from the state, and the plugin reads `""` again. A
   program that starts again publishes its state anew.
 - The core checks nothing but the user id of a client. A program that should not reach the rest of LIVI's actions
   needs a gate of its own in between.
