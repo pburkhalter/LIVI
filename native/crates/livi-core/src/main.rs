@@ -185,6 +185,7 @@ async fn run() -> Result<Exit, String> {
         now_playing: Default::default(),
         telemetry: Default::default(),
         extensions: Default::default(),
+        extension_images: Default::default(),
         navigation: Default::default(),
         system: livi_core_proto::state::System {
             start_page: start,

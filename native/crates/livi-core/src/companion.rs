@@ -1,11 +1,16 @@
 //! The companion channel between UI plugins and programs beside LIVI (a voice assistant, a radio, a CAN reader):
 //! a client of the core socket publishes a small state of its own under a topic (Action::SetExtension, state
 //! `extensions`), which plugins read; plugins send it events (Action::Emit), which the core hands to the clients that
-//! subscribed the topic in their hello (FromCore::Event). Nothing of it is saved: a topic goes with the client that
-//! published it, and an event reaches only who listens at that moment.
+//! subscribed the topic in their hello (FromCore::Event). Beside its state a topic may have pictures (Action::
+//! SetExtensionImage, state `extension_images`), e.g. the cover of what a player plays. Nothing of it is saved: a topic
+//! goes with the client that published it, its pictures with it, and an event reaches only who listens at that moment.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use base64::Engine;
+use livi_core_proto::state::ExtensionImage;
 
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -18,6 +23,10 @@ pub const STATE_MAX: usize = 4096;
 pub const EVENT_MAX: usize = 4096;
 /// The most topics one client publishes
 pub const TOPICS_MAX: usize = 8;
+/// The most a picture may take as base64, in bytes (a cover of 640 px as JPEG takes about 150 KB)
+pub const IMAGE_MAX: usize = 256 * 1024;
+/// The most pictures one topic has
+pub const IMAGES_MAX: usize = 8;
 const NAME_MAX: usize = 64;
 /// Events a slow client may lag behind before it misses some
 const BACKLOG: usize = 32;
@@ -36,6 +45,8 @@ pub struct Companion {
     /// Who publishes each topic
     owners: Mutex<HashMap<String, ClientId>>,
     events: broadcast::Sender<Event>,
+    /// The serial of the last picture, so that a reader decodes one only when it changed
+    serial: AtomicU64,
 }
 
 /// A topic or an event's name: letters, digits, `-` and `_` (a plugin reads `<topic>.<key>`)
@@ -58,11 +69,32 @@ fn size(value: &Value) -> usize {
     serde_json::to_vec(value).map_or(usize::MAX, |v| v.len())
 }
 
+/// A picture as the plugins' side decodes it: base64 of a PNG or a JPEG file, by its first bytes
+fn check_picture(data: &str) -> Result<(), String> {
+    if data.len() > IMAGE_MAX {
+        return Err(format!(
+            "picture takes {} bytes as base64, at most {IMAGE_MAX}",
+            data.len()
+        ));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|_| "picture is not base64".to_string())?;
+    let png = bytes.starts_with(b"\x89PNG\r\n\x1a\n");
+    let jpeg = bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
+    if png || jpeg {
+        Ok(())
+    } else {
+        Err("picture is neither PNG nor JPEG".into())
+    }
+}
+
 impl Default for Companion {
     fn default() -> Self {
         Self {
             owners: Mutex::new(HashMap::new()),
             events: broadcast::channel(BACKLOG).0,
+            serial: AtomicU64::new(0),
         }
     }
 }
@@ -91,6 +123,7 @@ impl Companion {
                 if owners.remove(topic).is_some() {
                     hub.update(|s| {
                         s.extensions.remove(topic);
+                        s.extension_images.remove(topic);
                     });
                 }
                 Ok(())
@@ -133,8 +166,54 @@ impl Companion {
         hub.update(|s| {
             for topic in &gone {
                 s.extensions.remove(topic);
+                s.extension_images.remove(topic);
             }
         });
+    }
+
+    /// A picture under `key` beside the state of the client's topic (published before); None takes it away
+    pub fn publish_image(
+        &self,
+        hub: &Hub,
+        client: ClientId,
+        topic: &str,
+        key: &str,
+        data: Option<String>,
+    ) -> Result<(), String> {
+        check_name("topic", topic)?;
+        check_name("picture", key)?;
+        let owners = self.owners();
+        if owners.get(topic) != Some(&client) {
+            return Err(format!(
+                "topic {topic} is not this client's: publish its state first"
+            ));
+        }
+        let Some(data) = data else {
+            hub.update(|s| {
+                if let Some(pictures) = s.extension_images.get_mut(topic) {
+                    pictures.remove(key);
+                    if pictures.is_empty() {
+                        s.extension_images.remove(topic);
+                    }
+                }
+            });
+            return Ok(());
+        };
+        check_picture(&data)?;
+        let mut full = false;
+        let serial = self.serial.fetch_add(1, Ordering::Relaxed) + 1;
+        hub.update(|s| {
+            let pictures = s.extension_images.entry(topic.to_string()).or_default();
+            if !pictures.contains_key(key) && pictures.len() >= IMAGES_MAX {
+                full = true;
+                return;
+            }
+            pictures.insert(key.to_string(), ExtensionImage { serial, data });
+        });
+        if full {
+            return Err(format!("at most {IMAGES_MAX} pictures per topic"));
+        }
+        Ok(())
     }
 
     /// Hands an event to whoever listens to the topic now; nobody listening is no error
@@ -251,6 +330,97 @@ mod tests {
         )
         .unwrap();
         assert!(patches.try_recv().is_err());
+    }
+
+    fn pictures(hub: &Hub) -> Vec<(String, String, u64)> {
+        let state = hub.watch().borrow().clone();
+        state
+            .extension_images
+            .iter()
+            .flat_map(|(topic, keys)| {
+                keys.iter()
+                    .map(|(key, p)| (topic.clone(), key.clone(), p.serial))
+            })
+            .collect()
+    }
+
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+    const JPEG: &str = "/9j/4AAQSkZJRg==";
+
+    #[test]
+    fn a_picture_belongs_to_the_topic_and_goes_with_it() {
+        let (hub, c) = (hub(), Companion::default());
+        // the topic first
+        assert!(
+            c.publish_image(&hub, 1, "player", "cover", Some(PNG.into()))
+                .is_err()
+        );
+        c.publish(&hub, 1, "player", json!({ "title": "x" }))
+            .unwrap();
+        c.publish_image(&hub, 1, "player", "cover", Some(PNG.into()))
+            .unwrap();
+        assert_eq!(pictures(&hub), [("player".into(), "cover".into(), 1)]);
+        // a new picture under the same key: a new serial
+        c.publish_image(&hub, 1, "player", "cover", Some(JPEG.into()))
+            .unwrap();
+        assert_eq!(pictures(&hub), [("player".into(), "cover".into(), 2)]);
+        assert_eq!(
+            hub.watch().borrow().extension_images["player"]["cover"].data,
+            JPEG
+        );
+        // another client's topic
+        assert!(
+            c.publish_image(&hub, 2, "player", "logo", Some(PNG.into()))
+                .is_err()
+        );
+        // None takes it away, and the topic's empty map with it
+        c.publish_image(&hub, 1, "player", "cover", None).unwrap();
+        assert!(hub.watch().borrow().extension_images.is_empty());
+        // the topic's null and the client's going take its pictures
+        c.publish_image(&hub, 1, "player", "cover", Some(PNG.into()))
+            .unwrap();
+        c.publish(&hub, 1, "player", Value::Null).unwrap();
+        assert!(pictures(&hub).is_empty());
+        c.publish(&hub, 1, "player", json!({})).unwrap();
+        c.publish_image(&hub, 1, "player", "cover", Some(PNG.into()))
+            .unwrap();
+        c.leave(&hub, 1);
+        assert!(pictures(&hub).is_empty());
+        assert!(extensions(&hub).is_empty());
+    }
+
+    #[test]
+    fn a_picture_is_a_png_or_jpeg_of_limited_size() {
+        let (hub, c) = (hub(), Companion::default());
+        c.publish(&hub, 1, "player", json!({})).unwrap();
+        for bad in ["not base64!", "R0lGODlhAQABAAAAACw=", ""] {
+            assert!(
+                c.publish_image(&hub, 1, "player", "cover", Some(bad.into()))
+                    .is_err(),
+                "{bad:?}"
+            );
+        }
+        let big = format!("iVBORw0KGgo{}", "A".repeat(IMAGE_MAX));
+        assert!(
+            c.publish_image(&hub, 1, "player", "cover", Some(big))
+                .is_err()
+        );
+        assert!(
+            c.publish_image(&hub, 1, "player", "a.b", Some(PNG.into()))
+                .is_err()
+        );
+        for i in 0..IMAGES_MAX {
+            c.publish_image(&hub, 1, "player", &format!("p{i}"), Some(PNG.into()))
+                .unwrap();
+        }
+        assert!(
+            c.publish_image(&hub, 1, "player", "one-more", Some(PNG.into()))
+                .is_err()
+        );
+        // replacing one is fine when full
+        c.publish_image(&hub, 1, "player", "p0", Some(JPEG.into()))
+            .unwrap();
+        assert_eq!(pictures(&hub).len(), IMAGES_MAX);
     }
 
     #[test]

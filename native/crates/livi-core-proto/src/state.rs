@@ -22,6 +22,10 @@ pub struct State {
     /// (Action::SetExtension); kept while the client stays connected, never saved
     #[serde(default)]
     pub extensions: Map<String, Value>,
+    /// Companion channel: pictures a client publishes beside its topic's state (Action::SetExtensionImage), by
+    /// topic and key; they go with the topic
+    #[serde(default)]
+    pub extension_images: BTreeMap<String, BTreeMap<String, ExtensionImage>>,
     pub update: Update,
     pub cluster: Cluster,
     pub dab: Dab,
@@ -147,6 +151,15 @@ impl VideoMode {
             camera_area: None,
         }
     }
+}
+
+/// A picture of the companion channel: a PNG or JPEG file as base64, and a serial that grows with each new one, so that
+/// a reader decodes it only when it changed
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExtensionImage {
+    pub serial: u64,
+    pub data: String,
 }
 
 /// A notification after the freedesktop.org Desktop Notifications specification

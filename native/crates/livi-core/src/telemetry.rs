@@ -415,6 +415,7 @@ mod tests {
             now_playing: Default::default(),
             telemetry,
             extensions: Default::default(),
+            extension_images: Default::default(),
             navigation: Default::default(),
             system: Default::default(),
             devices: Default::default(),

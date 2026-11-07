@@ -184,6 +184,9 @@ impl Core {
             Action::SetExtension { topic, value } => {
                 self.companion.publish(&self.hub, client, &topic, value)
             }
+            Action::SetExtensionImage { topic, key, data } => self
+                .companion
+                .publish_image(&self.hub, client, &topic, &key, data),
             Action::Emit { topic, name, value } => self.companion.emit(&topic, &name, value),
             Action::Quit => {
                 self.quit_asked.store(true, Ordering::SeqCst);
@@ -596,6 +599,7 @@ mod tests {
             now_playing: Default::default(),
             telemetry: Default::default(),
             extensions: Default::default(),
+            extension_images: Default::default(),
             navigation: Default::default(),
             system: Default::default(),
             devices: Default::default(),

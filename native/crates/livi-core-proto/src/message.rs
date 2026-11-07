@@ -106,6 +106,14 @@ pub enum Action {
         topic: String,
         value: Value,
     },
+    /// Companion channel: a picture beside the client's state under `topic` (state extension_images), e.g. the cover
+    /// of what a player plays: a PNG or JPEG file as base64 under `key`; None takes it away, as do the topic and the
+    /// client going. The client has to publish the topic's state first
+    SetExtensionImage {
+        topic: String,
+        key: String,
+        data: Option<String>,
+    },
     /// Companion channel: an event for the clients that subscribed `topic` (FromCore::Event), e.g. a plugin's button
     Emit {
         topic: String,
@@ -360,6 +368,25 @@ mod tests {
         let wire = json!({ "type": "event", "topic": "radio", "name": "next", "value": "" });
         assert_eq!(serde_json::to_value(&event).unwrap(), wire);
         assert_eq!(serde_json::from_value::<FromCore>(wire).unwrap(), event);
+        let picture = json!({ "kind": "setExtensionImage", "topic": "radio", "key": "logo", "data": "iVBORw0KGgo=" });
+        assert_eq!(
+            serde_json::from_value::<Action>(picture).unwrap(),
+            Action::SetExtensionImage {
+                topic: "radio".into(),
+                key: "logo".into(),
+                data: Some("iVBORw0KGgo=".into()),
+            }
+        );
+        let gone =
+            json!({ "kind": "setExtensionImage", "topic": "radio", "key": "logo", "data": null });
+        assert_eq!(
+            serde_json::from_value::<Action>(gone).unwrap(),
+            Action::SetExtensionImage {
+                topic: "radio".into(),
+                key: "logo".into(),
+                data: None,
+            }
+        );
     }
 
     #[test]

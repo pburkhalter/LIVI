@@ -355,6 +355,7 @@ mod tests {
             now_playing: Default::default(),
             telemetry: telemetry.as_object().cloned().unwrap_or_default(),
             extensions: Default::default(),
+            extension_images: Default::default(),
             navigation: Default::default(),
             system: Default::default(),
             devices: Default::default(),

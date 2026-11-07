@@ -480,6 +480,62 @@ fn extensions(state: &Json) -> Value {
     values(rows.iter().map(|(k, v)| (k, v)))
 }
 
+thread_local! {
+    /// The pictures of the companion channel as decoded, by "<topic>.<key>", with the serial they came with: a picture
+    /// is decoded once, not with every state
+    static PICTURES: std::cell::RefCell<std::collections::HashMap<String, (u64, Image)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The pictures programs beside LIVI publish (state `extensionImages`), a row per picture: "<topic>.<key>" and the
+/// picture; one that does not decode is an empty image
+fn extension_images(state: &Json) -> Value {
+    PICTURES.with_borrow_mut(|cache| {
+        let mut rows = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (topic, keys) in state["extensionImages"].as_object().into_iter().flatten() {
+            for (key, picture) in keys.as_object().into_iter().flatten() {
+                let name = format!("{topic}.{key}");
+                let serial = picture["serial"].as_u64().unwrap_or(0);
+                let image = match cache.get(&name) {
+                    Some((known, image)) if *known == serial => image.clone(),
+                    _ => {
+                        let image = picture["data"]
+                            .as_str()
+                            .and_then(crate::media::decode)
+                            .map(Image::from_rgba8)
+                            .unwrap_or_default();
+                        cache.insert(name.clone(), (serial, image.clone()));
+                        image
+                    }
+                };
+                seen.insert(name.clone());
+                rows.push(record(vec![
+                    ("key", s(&name)),
+                    ("image", Value::Image(image)),
+                ]));
+            }
+        }
+        // what went goes from the cache as well
+        cache.retain(|name, _| seen.contains(name));
+        model(rows)
+    })
+}
+
+/// The picture under `key` among the extension images (LiviImage rows), an empty image when there is none:
+/// `Livi.extension-image(topic, key)`
+pub fn find_image(images: &ModelRc<Value>, key: &str) -> Value {
+    let field = |row: &Value, name: &str| match row {
+        Value::Struct(s) => s.get_field(name).cloned(),
+        _ => None,
+    };
+    images
+        .iter()
+        .find(|row| field(row, "key") == Some(s(key)))
+        .and_then(|row| field(&row, "image"))
+        .unwrap_or_else(|| Value::Image(Image::default()))
+}
+
 /// The value of `key` among the `other` values (LiviValue rows), "" when there is none: `Livi.value(key)`
 pub fn find(values: &ModelRc<Value>, key: &str) -> Value {
     let field = |row: &Value, name: &str| match row {
@@ -546,6 +602,7 @@ pub fn build(
         ("other", other(t)),
         ("can", can(t)),
         ("extensions", extensions(state)),
+        ("extension-images", extension_images(state)),
         ("notices", notices(state, &tm)),
         ("notices-critical", critical(state)),
         ("call", call(state)),
@@ -700,6 +757,39 @@ mod tests {
         assert_eq!(find(&rows, "radio.station"), s("SRF 3"));
         assert_eq!(find(&rows, "radio.song"), s(""));
         assert!(same(&extensions(&json!({})), &model(Vec::new())));
+    }
+
+    #[test]
+    fn a_picture_is_found_by_topic_and_key_and_decoded_once() {
+        // 2 x 1 pixels
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVR4nGM4Iafxn+uEzX8AEP0EGwTv4BYAAAAASUVORK5CYII=";
+        let state = |serial: u64, data: &str| {
+            json!({ "extensionImages": {
+                "player": { "cover": { "serial": serial, "data": data } },
+                "radio": { "logo": { "serial": 2, "data": "bm90IGEgcGljdHVyZQ==" } },
+            } })
+        };
+        let size = |v: &Value| match v {
+            Value::Image(i) => (i.size().width, i.size().height),
+            _ => panic!("not an image"),
+        };
+        let first = extension_images(&state(1, png));
+        let Value::Model(rows) = &first else {
+            panic!("not a model")
+        };
+        assert_eq!(size(&find_image(rows, "player.cover")), (2, 1));
+        // what does not decode, and what is not there: an empty image
+        assert_eq!(size(&find_image(rows, "radio.logo")), (0, 0));
+        assert_eq!(size(&find_image(rows, "player.logo")), (0, 0));
+        // the same serial: the same picture, so the state counts as unchanged
+        assert!(same(&first, &extension_images(&state(1, png))));
+        // a new serial is decoded again
+        let Value::Model(rows) = extension_images(&state(3, "")) else {
+            panic!("not a model")
+        };
+        assert_eq!(size(&find_image(&rows, "player.cover")), (0, 0));
+        assert!(same(&extension_images(&json!({})), &model(Vec::new())));
+        PICTURES.with_borrow(|cache| assert!(cache.is_empty()));
     }
 
     #[test]
