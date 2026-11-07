@@ -446,6 +446,23 @@ impl Projection {
             None => println!("[core] call: reject, but no call rings any more"),
         }
     }
+
+    /// Whether a CarPlay call brings the phone's picture to the front (Action::CallFront), for this run; a UI switches
+    /// between its own call view and the phone's without a restart. Off while a call holds the picture in front: the
+    /// screen goes back to what it showed before the call. On while a call goes on: from the next one
+    pub(super) fn set_call_front(&mut self, on: bool) {
+        if self.cp_call_front == on {
+            return;
+        }
+        println!(
+            "[core] a CarPlay call {} the phone's picture to the front",
+            if on { "brings" } else { "no longer brings" }
+        );
+        self.cp_call_front = on;
+        if !on {
+            self.attend(Attention::Call, false);
+        }
+    }
 }
 
 #[cfg(test)]

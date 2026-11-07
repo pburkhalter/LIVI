@@ -490,6 +490,8 @@ pub enum UiCommand {
     PhoneHome,
     /// Action::Call, with LIVI_CP_CALLS=1
     Call(String),
+    /// Action::CallFront
+    CallFront(bool),
 }
 
 fn kept_cluster(cfg: &Config, theme: Theme) -> Cluster {
@@ -714,6 +716,7 @@ impl Projection {
                     UiCommand::OpenApp(target) => self.open_app(&target),
                     UiCommand::PhoneHome => self.to_active(Do::Home),
                     UiCommand::Call(order) => self.call(&order),
+                    UiCommand::CallFront(on) => self.set_call_front(on),
                 },
                 Some(input) = asks.input.recv() => self.input(input),
                 Some(done) = asks.goodbye.recv() => self.goodbye(done),

@@ -146,6 +146,11 @@ pub enum Action {
     Call {
         order: String,
     },
+    /// Whether a CarPlay call brings the phone's picture to the front, for this run of LIVI: off for a UI that shows
+    /// the call itself (Calls in docs/plugins.md), on as LIVI does by default; LIVI_CP_CALL_FRONT is the start value
+    CallFront {
+        on: bool,
+    },
     SelectClusterLayout {
         layout: String,
     },

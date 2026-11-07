@@ -242,6 +242,10 @@ impl Core {
                 let _ = self.asks.commands.send(UiCommand::PhoneHome);
                 Ok(())
             }
+            Action::CallFront { on } => {
+                let _ = self.asks.commands.send(UiCommand::CallFront(on));
+                Ok(())
+            }
             Action::ImportMfi { file, path } => {
                 match crate::mfi::import(&self.mfi_dir, file, std::path::Path::new(&path)) {
                     Ok(()) => self.refresh_mfi().await,

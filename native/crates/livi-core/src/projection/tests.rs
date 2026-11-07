@@ -986,6 +986,60 @@ async fn without_call_front_a_call_leaves_the_screen_to_the_plugin() {
 }
 
 #[tokio::test]
+async fn the_call_front_switches_while_livi_runs() {
+    let mut rig = Rig::new();
+    rig.connect(1, true);
+    rig.drain();
+    assert_eq!(rig.front(), Front::Livi);
+    // off: the plugin shows the call itself
+    rig.p.set_call_front(false);
+    rig.p.on_event(CpEvent::Call {
+        id: 1,
+        phase: CallPhase::Ringing,
+    });
+    assert_eq!(rig.front(), Front::Livi);
+    rig.p.on_event(CpEvent::Call {
+        id: 1,
+        phase: CallPhase::Ended,
+    });
+    // on again: the next call brings the phone's picture, as LIVI does by default
+    rig.p.set_call_front(true);
+    rig.p.on_event(CpEvent::Call {
+        id: 1,
+        phase: CallPhase::Ringing,
+    });
+    assert_eq!(rig.front(), Front::Projection);
+    // off during that call: the screen goes back to what it showed before it
+    rig.p.set_call_front(false);
+    assert_eq!(rig.front(), Front::Livi);
+    // and the sound of the call does not bring it again
+    rig.p.on_event(CpEvent::AudioActive {
+        id: 1,
+        profile: AudioProfile {
+            kind: AudioKind::Call,
+            label: "telephony".into(),
+        },
+        active: true,
+    });
+    assert_eq!(rig.front(), Front::Livi);
+    rig.p.on_event(CpEvent::Call {
+        id: 1,
+        phase: CallPhase::Ended,
+    });
+    // Siri is not a call: it still comes to the front when the phone listens (P181's SpeechActive)
+    rig.p.on_event(CpEvent::SpeechActive {
+        id: 1,
+        active: true,
+    });
+    assert_eq!(rig.front(), Front::Projection);
+    rig.p.on_event(CpEvent::SpeechActive {
+        id: 1,
+        active: false,
+    });
+    assert_eq!(rig.front(), Front::Livi);
+}
+
+#[tokio::test]
 async fn only_the_phone_in_front_moves_the_screen() {
     let mut rig = Rig::new();
     rig.connect(1, false);

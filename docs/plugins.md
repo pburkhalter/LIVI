@@ -237,6 +237,10 @@ it at its start).
   and names nothing more in the identification: for looking at what a phone sends.
 - The sound of a call stays CarPlay's. CarPlay comes to the front when a call rings or its sound starts, unless
   `LIVI_CP_CALL_FRONT=0`: then the plugin shows the call itself (Siri still comes to the front).
+- `Livi.action("call-front", "on|off")` switches that while LIVI runs, e.g. when the driver chooses between the
+  plugin's own call view and the phone's: `off` from the next call on, and a call that holds the phone's picture in
+  front lets it go back to what showed before; `on` from the next call. `LIVI_CP_CALL_FRONT` is the value LIVI starts
+  with. A client of the companion channel sends `{"kind": "callFront", "on": false}`.
 
 ## Companion channel
 
