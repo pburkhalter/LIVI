@@ -753,7 +753,7 @@ pub fn request_frame(state: &mut LiviState, screen_idx: usize) {
 }
 
 /// A hidden app draws nothing: without callbacks it waits, and they stay for when it shows again
-fn wants_frames(embed: bool, visible: bool) -> bool {
+pub(crate) fn wants_frames(embed: bool, visible: bool) -> bool {
     !embed || visible
 }
 

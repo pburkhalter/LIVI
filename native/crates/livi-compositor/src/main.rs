@@ -2,6 +2,7 @@ mod cal;
 mod ctrl;
 mod deco;
 mod drm;
+mod fence;
 mod hole;
 mod host;
 mod input;

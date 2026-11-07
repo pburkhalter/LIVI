@@ -49,6 +49,11 @@ impl CompositorHandler for LiviState {
                     .acquire_point
                     .clone()
             });
+            // without an explicit sync point: the implicit fences of the buffer, if the switch is on (see `fence`)
+            if acquire.is_none() && *crate::levers::DMABUF_WAIT != crate::levers::DmabufWait::Off {
+                crate::fence::hold_until_drawn(state, surface, *crate::levers::DMABUF_WAIT);
+                return;
+            }
             let (Some(acquire), Some(client)) = (acquire, surface.client()) else {
                 return;
             };
