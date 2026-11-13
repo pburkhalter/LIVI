@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use livi_core_proto::state::LinkState;
+use tokio::sync::Notify;
 use zbus::message::Type;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::{MatchRule, Message, MessageStream};
@@ -174,7 +175,7 @@ fn publish(hub: &Hub, state: LinkState) {
 }
 
 /// Follows BlueZ until the connection to the system bus ends
-async fn watch(hub: &Hub, wait: &mut Duration) -> zbus::Result<()> {
+async fn watch(hub: &Hub, wait: &mut Duration, bluez_back: &Notify) -> zbus::Result<()> {
     let bus = zbus::Connection::system().await?;
     // the bus daemon matches the sender's well-known name: signals of whoever owns org.bluez
     let bluez = MatchRule::builder()
@@ -202,6 +203,12 @@ async fn watch(hub: &Hub, wait: &mut Duration) -> zbus::Result<()> {
                 let Some(msg) = msg else { return Ok(()) };
                 // bluetoothd started (again) or stopped: its objects are new or gone
                 let (_, _, new): (String, String, String) = msg?.body().deserialize()?;
+                if new_bluez(&new) {
+                    // a new bluetoothd has none of what the helper registered with the last one (profiles, agent,
+                    // player): the helper starts anew and registers them again (services.rs)
+                    println!("[core] bluetooth: BlueZ started again, the helper registers anew");
+                    bluez_back.notify_one();
+                }
                 radios = if new.is_empty() { Radios::default() } else { read(&bus).await };
             }
             msg = signals.next() => {
@@ -220,13 +227,18 @@ async fn watch(hub: &Hub, wait: &mut Duration) -> zbus::Result<()> {
     }
 }
 
+/// Whether a change of org.bluez's owner brings a bluetoothd (and not only takes one away)
+fn new_bluez(new_owner: &str) -> bool {
+    !new_owner.is_empty()
+}
+
 /// Follows Bluetooth's state as long as LIVI runs. The system bus may come up after LIVI: it tries again, less often the
 /// longer it fails; meanwhile Bluetooth reads off.
-pub async fn follow(hub: Arc<Hub>) {
+pub async fn follow(hub: Arc<Hub>, bluez_back: Arc<Notify>) {
     let mut wait = RETRY_FIRST;
     let mut told = String::new();
     loop {
-        let why = match watch(&hub, &mut wait).await {
+        let why = match watch(&hub, &mut wait, &bluez_back).await {
             Ok(()) => "the system bus closed".to_string(),
             Err(e) => e.to_string(),
         };
@@ -243,6 +255,13 @@ pub async fn follow(hub: Arc<Hub>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bluetoothd_that_comes_restarts_the_helper() {
+        // a crash: the old owner goes (no new one), then the new bluetoothd comes
+        assert!(!new_bluez(""));
+        assert!(new_bluez(":1.60"));
+    }
 
     const IPHONE: u32 = 0x7a020c;
     const SPEAKER: u32 = 0x240414;
