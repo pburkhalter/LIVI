@@ -1,5 +1,7 @@
 pub mod aa_sock;
 pub mod bluetoothd;
+#[cfg(target_os = "linux")]
+pub mod bluez_watch;
 pub mod bonjour;
 pub mod bringup;
 pub mod calls;

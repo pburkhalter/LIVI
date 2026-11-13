@@ -433,6 +433,19 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         let pairing = bt::Pairing::from_env(std::env::var("LIVI_BT_AGENT").ok().as_deref());
         let (conn, mut incoming, held) =
             bt::start(&adapter, &identity.name, wireless, pairing).await?;
+        // the profiles registered just now belong to this bluetoothd: after its restart they are gone
+        let bus = conn.clone();
+        tokio::spawn(async move {
+            match livi_runtime::bluez_watch::until_bluez_restarts(&bus).await {
+                Ok(()) => {
+                    println!(
+                        "[helperd] BlueZ started again without our profiles: the helper starts anew"
+                    );
+                    std::process::exit(75);
+                }
+                Err(e) => eprintln!("[helperd] cannot follow BlueZ: {e}"),
+            }
+        });
         bt::close_pairing_after(
             &conn,
             &adapter,
