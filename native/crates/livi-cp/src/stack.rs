@@ -260,6 +260,8 @@ struct EventConn {
     sealed: Vec<u8>,
     plain: Vec<u8>,
     cseq: u32,
+    /// What went out under which CSeq and has no answer yet, so that a refusal can say what it refuses
+    sent: std::collections::VecDeque<(u32, String)>,
 }
 
 struct Conn<M: Media> {

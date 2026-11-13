@@ -16,6 +16,7 @@ impl<M: Media> Conn<M> {
             sealed: Vec::new(),
             plain: Vec::new(),
             cseq: 0,
+            sent: std::collections::VecDeque::new(),
         });
     }
 
@@ -40,6 +41,9 @@ impl<M: Media> Conn<M> {
         for msg in messages {
             if msg.method.starts_with("RTSP/") || msg.method.starts_with("HTTP/") {
                 let cseq = msg.headers.get("cseq").and_then(|c| c.parse::<u32>().ok());
+                let what = answered(&mut ev.sent, cseq)
+                    .map(|kind| format!(" to {kind} (CSeq {})", cseq.unwrap_or_default()))
+                    .unwrap_or_default();
                 if cseq.is_some() && cseq == self.view_area_cseq {
                     self.view_area_cseq = None;
                     if msg.path != "200" {
@@ -57,7 +61,7 @@ impl<M: Media> Conn<M> {
                         Err(_) => format!(" ({}B non-plist body)", msg.body.len()),
                     };
                     println!(
-                        "[cpStack] event response {} {}{body}",
+                        "[cpStack] event response {} {}{what}{body}",
                         msg.path, msg.protocol
                     );
                 }
@@ -93,6 +97,7 @@ impl<M: Media> Conn<M> {
             return;
         };
         ev.cseq += 1;
+        remember(&mut ev.sent, ev.cseq, kind);
         let payload = bplist::encode(body);
         let mut msg = format!(
             "POST /command RTSP/1.0\r\nContent-Type: {PLIST}\r\nContent-Length: {}\r\nCSeq: {}\r\n{headers}\r\n",
@@ -230,5 +235,61 @@ impl<M: Media> Conn<M> {
             return;
         }
         self.activate_cluster_stream().await;
+    }
+}
+
+/// How many unanswered commands are kept: the phone answers each, a lost answer drops out at the front
+const SENT_KEPT: usize = 64;
+
+fn remember(sent: &mut std::collections::VecDeque<(u32, String)>, cseq: u32, kind: &str) {
+    if sent.len() == SENT_KEPT {
+        sent.pop_front();
+    }
+    sent.push_back((cseq, kind.to_string()));
+}
+
+/// The command an answer belongs to, taken off the list
+fn answered(
+    sent: &mut std::collections::VecDeque<(u32, String)>,
+    cseq: Option<u32>,
+) -> Option<String> {
+    let cseq = cseq?;
+    let at = sent.iter().position(|(n, _)| *n == cseq)?;
+    sent.remove(at).map(|(_, kind)| kind)
+}
+
+#[cfg(test)]
+mod sent_tests {
+    use std::collections::VecDeque;
+
+    use super::{SENT_KEPT, answered, remember};
+
+    #[test]
+    fn an_answer_names_its_command() {
+        let mut sent = VecDeque::new();
+        remember(&mut sent, 1, "setNightMode");
+        remember(&mut sent, 2, "setLimitedUI");
+        assert_eq!(
+            answered(&mut sent, Some(2)).as_deref(),
+            Some("setLimitedUI")
+        );
+        assert_eq!(answered(&mut sent, Some(2)), None);
+        assert_eq!(answered(&mut sent, None), None);
+        assert_eq!(
+            answered(&mut sent, Some(1)).as_deref(),
+            Some("setNightMode")
+        );
+        assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn unanswered_ones_drop_out() {
+        let mut sent = VecDeque::new();
+        for n in 1..=(SENT_KEPT as u32 + 3) {
+            remember(&mut sent, n, "hidSendReport");
+        }
+        assert_eq!(sent.len(), SENT_KEPT);
+        assert_eq!(answered(&mut sent, Some(1)), None);
+        assert!(answered(&mut sent, Some(SENT_KEPT as u32 + 3)).is_some());
     }
 }
