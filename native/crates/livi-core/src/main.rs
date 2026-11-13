@@ -227,7 +227,9 @@ async fn run() -> Result<Exit, String> {
     tokio::spawn(system_volume::follow(core.clone()));
     tokio::spawn(update::run(core.clone(), update_asks));
     tokio::spawn(notices::serve(core.clone()));
-    tokio::spawn(links::follow(core.hub.clone()));
+    // BlueZ started again: the helper registers its profiles anew (links.rs, services.rs)
+    let bluez_back = Arc::new(Notify::new());
+    tokio::spawn(links::follow(core.hub.clone(), bluez_back.clone()));
     state_files::start(&core, core.activity(), &user_data);
     let res = Resources::from_env();
     tokio::spawn(audio_devices::follow(
@@ -270,6 +272,7 @@ async fn run() -> Result<Exit, String> {
         inside,
         settings,
         resume_dab,
+        bluez_back,
     );
 
     tokio::select! {
