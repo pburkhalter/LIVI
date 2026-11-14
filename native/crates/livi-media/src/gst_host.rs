@@ -219,15 +219,8 @@ impl GstHost {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&launch.bin, std::fs::Permissions::from_mode(0o755));
         }
-        let (stdout, stderr) = match log_file(&launch.log) {
-            Some(f) => (
-                f.try_clone()
-                    .map(Stdio::from)
-                    .unwrap_or_else(|_| Stdio::inherit()),
-                Stdio::from(f),
-            ),
-            None => (Stdio::inherit(), Stdio::inherit()),
-        };
+        let (stdout, stderr) = crate::log_files::capped(&launch.log)
+            .unwrap_or_else(|| (Stdio::inherit(), Stdio::inherit()));
         let child = tokio::process::Command::new(&launch.bin)
             .arg(&self.inner.sock_path)
             .arg(&launch.crash)
@@ -641,10 +634,6 @@ impl GstHost {
     pub fn stop(&self, plane: u32) {
         self.send(frame(OP_STOP, plane, &[]));
     }
-}
-
-fn log_file(path: &std::path::Path) -> Option<std::fs::File> {
-    crate::log_files::fresh(path)
 }
 
 pub async fn probe_codecs(launch: &Launch) -> Option<serde_json::Value> {

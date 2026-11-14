@@ -132,15 +132,8 @@ pub fn start(bin: &Path, cfg: &Config, ctrl: &Path, log: &Path) -> Option<tokio:
     if std::env::var("LIVI_NO_COMPOSITOR").is_ok_and(|v| v == "1") || !bin.exists() {
         return None;
     }
-    let (stdout, stderr) = match crate::log_files::fresh(log) {
-        Some(f) => (
-            f.try_clone()
-                .map(Stdio::from)
-                .unwrap_or_else(|_| Stdio::inherit()),
-            Stdio::from(f),
-        ),
-        None => (Stdio::inherit(), Stdio::inherit()),
-    };
+    let (stdout, stderr) =
+        crate::log_files::capped(log).unwrap_or_else(|| (Stdio::inherit(), Stdio::inherit()));
     let mut cmd = tokio::process::Command::new(bin);
     cmd.envs(env(cfg, ctrl))
         .env(livi_core_proto::LIFELINE_ENV, "1")
