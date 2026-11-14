@@ -47,6 +47,7 @@ mod paths;
 mod power;
 mod privileged;
 mod projection;
+mod ready;
 mod resources;
 mod server;
 mod services;
@@ -80,6 +81,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // before the runtime's threads: it changes the environment
+    ready::take_socket();
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -133,7 +136,9 @@ fn restart(program: Option<PathBuf>) -> ExitCode {
     println!("[core] restarting");
     log_file::finish();
     let err = match program.map_or_else(std::env::current_exe, Ok) {
-        Ok(exe) => std::process::Command::new(exe).exec(),
+        Ok(exe) => std::process::Command::new(exe)
+            .envs(ready::for_exec())
+            .exec(),
         Err(e) => e,
     };
     eprintln!("[core] cannot restart: {err}");
@@ -226,7 +231,8 @@ async fn run() -> Result<Exit, String> {
     tokio::spawn(car_bridge::run(core.clone(), inside.clone()));
     tokio::spawn(system_volume::follow(core.clone()));
     tokio::spawn(update::run(core.clone(), update_asks));
-    tokio::spawn(notices::serve(core.clone()));
+    let (notice_name, notices_named) = tokio::sync::watch::channel(notices::Name::Asking);
+    tokio::spawn(notices::serve(core.clone(), notice_name));
     // BlueZ started again: the helper registers its profiles anew (links.rs, services.rs)
     let bluez_back = Arc::new(Notify::new());
     tokio::spawn(links::follow(core.hub.clone(), bluez_back.clone()));
@@ -274,6 +280,8 @@ async fn run() -> Result<Exit, String> {
         resume_dab,
         bluez_back,
     );
+    // the core listens: READY=1 for a service manager once the UI shows and the notifications are LIVI's
+    tokio::spawn(ready::announce(notices_named, services.ui_shown()));
 
     tokio::select! {
         _ = server::serve(core.clone(), listener) => {}

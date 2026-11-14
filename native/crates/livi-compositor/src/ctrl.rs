@@ -61,6 +61,9 @@ pub fn init(state: &mut LiviState, handle: &LoopHandle<'static, LiviState>) {
                     send_ui(state);
                     send_panels(state);
                     send_displays(state);
+                    if state.ui_shown {
+                        send(state, UI_SHOWN);
+                    }
                 }
                 Ok(PostAction::Continue)
             },
@@ -156,6 +159,18 @@ fn flush_out(state: &mut LiviState) {
             }
         }
     }
+}
+
+const UI_SHOWN: &str = "shown ui\n";
+
+/// The UI's first frame is on a display (the vblank after its flip; nested, its swap to the host's window): the core
+/// learns it once, and a core that connects later on connecting. It tells its service manager it is ready then.
+pub fn ui_shown(state: &mut LiviState) {
+    if std::mem::replace(&mut state.ui_shown, true) {
+        return;
+    }
+    log::info!("the UI's first frame is on the display");
+    send(state, UI_SHOWN);
 }
 
 fn send_ui(state: &mut LiviState) {

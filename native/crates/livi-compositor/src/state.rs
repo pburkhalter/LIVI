@@ -148,6 +148,8 @@ pub struct LiviState {
     pub ctrl_buf: String,
     pub ctrl_out: Vec<u8>,
     pub ctrl_path: Option<String>,
+    /// The UI's first frame is on a display: told to the core once (ctrl::ui_shown)
+    pub ui_shown: bool,
 
     pub startup_cmd: Option<String>,
     pub startup_pid: Option<nix::unistd::Pid>,
@@ -290,6 +292,7 @@ impl LiviState {
             ctrl_path: std::env::var("LIVI_COMPOSITOR_CTRL")
                 .ok()
                 .filter(|p| !p.is_empty()),
+            ui_shown: false,
             startup_cmd,
             startup_pid: None,
             full_restart: false,
