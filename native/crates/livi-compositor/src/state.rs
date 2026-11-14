@@ -187,12 +187,16 @@ impl LiviState {
         }
 
         // a fixed name for programs beside LIVI that show in its window (docs/plugins.md, Apps in a card)
-        let source = std::env::var("LIVI_WAYLAND_SOCKET")
-            .ok()
-            .filter(|name| !name.is_empty())
-            .and_then(|name| ListeningSocketSource::with_name(&name).ok())
-            .or_else(|| ListeningSocketSource::new_auto().ok())
-            .expect("wayland socket");
+        let fixed = std::env::var("LIVI_WAYLAND_SOCKET").ok();
+        let source = wayland_socket(
+            fixed.as_deref(),
+            ListeningSocketSource::with_name,
+            ListeningSocketSource::new_auto,
+        )
+        .unwrap_or_else(|e| {
+            log::error!("{e}");
+            std::process::exit(1)
+        });
         let ui_socket = source.socket_name().to_string_lossy().into_owned();
         let loop_handle = event_loop.handle();
         loop_handle
@@ -338,5 +342,56 @@ pub fn role_title(role: &str) -> &str {
         "cluster" => "Cluster",
         "aux" => "Auxiliary",
         other => other,
+    }
+}
+
+/// The compositor's Wayland socket: the name LIVI_WAYLAND_SOCKET gives, otherwise a free one. Programs beside LIVI look
+/// for it under that name only: under another name they would not find this compositor, and under the given one they
+/// would find whoever holds it. So a given name that cannot be had ends the compositor's start, LIVI's with it, which
+/// its service manager can start again once the old holder is gone (a compositor of an earlier LIVI); no other name.
+fn wayland_socket<S, E: std::fmt::Display>(
+    fixed: Option<&str>,
+    named: impl FnOnce(&str) -> Result<S, E>,
+    free: impl FnOnce() -> Result<S, E>,
+) -> Result<S, String> {
+    match fixed.filter(|name| !name.is_empty()) {
+        Some(name) => named(name).map_err(|e| {
+            format!("no Wayland socket {name} (LIVI_WAYLAND_SOCKET): {e}; programs look for it there, no other name")
+        }),
+        None => free().map_err(|e| format!("no Wayland socket: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wayland_socket;
+
+    #[test]
+    fn a_given_socket_name_is_that_name_or_none() {
+        let free = || Ok::<_, String>("wayland-1".to_string());
+        assert_eq!(
+            wayland_socket(Some("livi-0"), |n| Ok::<_, String>(n.to_string()), free),
+            Ok("livi-0".to_string())
+        );
+        // taken: no other name, and the error says which and why
+        let taken: Result<String, _> = wayland_socket(
+            Some("livi-0"),
+            |_| Err("the requested socket name is already in use".to_string()),
+            || panic!("a given name must not fall back to a free one"),
+        );
+        let e = taken.unwrap_err();
+        assert!(
+            e.contains("livi-0") && e.contains("LIVI_WAYLAND_SOCKET") && e.contains("in use"),
+            "{e}"
+        );
+        // not given, or empty: a free one as before
+        assert_eq!(
+            wayland_socket(None, |_| Err("unused".to_string()), free),
+            Ok("wayland-1".to_string())
+        );
+        assert_eq!(
+            wayland_socket(Some(""), |_| Err("unused".to_string()), free),
+            Ok("wayland-1".to_string())
+        );
     }
 }
