@@ -49,13 +49,6 @@ impl Drop for GlutinContext {
     }
 }
 
-/// LIVI: LIVI_UI_FINISH=1 waits with glFinish until the GPU has drawn a frame, before it is swapped. For drivers that
-/// pass the buffer on without a fence for drawing still under way: the compositor may then show it half drawn or the
-/// one before, and the picture flickers between two. Measured on a PowerVR GE8300 (DDK 1.11, Wayland), where it ends
-/// that at the same frame rate. Off by default: elsewhere it only makes the CPU wait.
-static FINISH_BEFORE_SWAP: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("LIVI_UI_FINISH").is_ok_and(|v| v == "1"));
-
 /// This surface type renders into the given window with OpenGL, using glutin and glow libraries.
 pub struct OpenGLSurface {
     fb_info: skia_safe::gpu::gl::FramebufferInfo,
@@ -146,11 +139,6 @@ impl super::Surface for OpenGLSurface {
         );
         skia_canvas.restore();
 
-        // LIVI: the callback has flushed Skia, its work is with the driver
-        if *FINISH_BEFORE_SWAP {
-            self.gl_finish();
-        }
-
         if let Some(pre_present_callback) = pre_present_callback.borrow_mut().as_mut() {
             pre_present_callback();
         }
@@ -228,23 +216,6 @@ impl super::Surface for OpenGLSurface {
 }
 
 impl OpenGLSurface {
-    /// LIVI_UI_FINISH: waits for the GPU. The context is current, render made it so.
-    fn gl_finish(&self) {
-        static ADDRESS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-        let address = *ADDRESS.get_or_init(|| {
-            let address = self.glutin_context.display().get_proc_address(c"glFinish") as usize;
-            if address == 0 {
-                eprintln!("[skia] the driver has no glFinish: LIVI_UI_FINISH does nothing");
-            }
-            address
-        });
-        if address != 0 {
-            // SAFETY: the address is the driver's glFinish, which takes nothing and returns nothing
-            let finish: unsafe extern "system" fn() = unsafe { std::mem::transmute(address) };
-            unsafe { finish() }
-        }
-    }
-
     pub fn new_with_config(
         window_handle: Arc<dyn raw_window_handle::HasWindowHandle>,
         display_handle: Arc<dyn raw_window_handle::HasDisplayHandle>,

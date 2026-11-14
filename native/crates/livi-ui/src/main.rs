@@ -7,6 +7,7 @@ mod debug;
 mod files_ui;
 mod follow;
 mod fullscreen;
+mod gpu_finish;
 mod icon_ui;
 mod icons;
 mod keys_ui;
@@ -75,41 +76,46 @@ fn settle_intro(ui: &AppWindow) {
     });
 }
 
-// The main window does without a rendering notifier for what can come from the window: the setup once the native
-// window exists, the frames from winit's RedrawRequested. Upstream's Skia renderer turns partial rendering
-// (SLINT_SKIA_PARTIAL_RENDERING) off for a window with a notifier; the vendored one keeps it (native/vendor/README.md),
-// so the lever "UI hole" (ui_hole.rs) can read after drawing. On macOS, where Slint draws from the display link
-// without that event, a notifier counts the frames (CGL reports no buffer age, partial rendering gains nothing there).
-
 /// After every frame of the main window: counts it (debug overlay, LIVI_UI_TRACE) and lets the start picture go.
 fn frame_drawn(ui: &AppWindow) {
     debug::frame_rendered();
     settle_intro(ui);
 }
 
-/// winit asks the main window to redraw (keys_ui.rs passes the event on). Slint draws the frame right after the
-/// event, so a zero timer runs once it is drawn. On Wayland every frame comes this way; on X11 the very first one is
-/// drawn when the window is shown, before any event.
-pub(crate) fn redraw_requested(ui: &AppWindow) {
-    if cfg!(target_os = "macos") {
-        return;
-    }
+/// What the lever "UI hole" does after each frame of the main window, once its native window is there (ui_hole.rs)
+pub(crate) type AfterFrame = Box<dyn FnMut(&slint::GraphicsAPI<'_>)>;
+
+/// The main window's one rendering notifier (Slint keeps one per window), after each frame: the UI hole, then
+/// LIVI_UI_FINISH's wait for the GPU (gpu_finish.rs), then the frame count. Upstream's Skia renderer turns partial
+/// rendering (SLINT_SKIA_PARTIAL_RENDERING) off for a window with a notifier; the vendored one keeps it
+/// (native/vendor/README.md).
+fn follow_frames(
+    ui: &AppWindow,
+    hole: Rc<RefCell<Option<AfterFrame>>>,
+) -> Result<(), slint::SetRenderingNotifierError> {
     let weak = ui.as_weak();
-    Timer::single_shot(Duration::ZERO, move || {
+    ui.window().set_rendering_notifier(move |state, api| {
+        if !matches!(state, slint::RenderingState::AfterRendering) {
+            return;
+        }
+        if let Some(after) = hole.borrow_mut().as_mut() {
+            after(api);
+        }
+        gpu_finish::wait(api);
         if let Some(ui) = weak.upgrade() {
             frame_drawn(&ui);
         }
-    });
+    })
 }
 
 /// Once the main window has its native window: the video goes into it, the cursor hides and the zoom applies.
-fn window_ready(ui: &AppWindow) {
+fn window_ready(ui: &AppWindow, hole: &RefCell<Option<AfterFrame>>) {
     debug::trace("native window ready");
     if !attach_video(ui.window(), "main") {
         eprintln!("[ui] the window has no native handle for the video");
     }
     cursor_ui::start(ui);
-    ui_hole::start(ui);
+    *hole.borrow_mut() = ui_hole::start(ui);
     if BASE_SCALE.get().is_none() {
         BASE_SCALE.set(Some(ui.window().scale_factor()));
         let weak = ui.as_weak();
@@ -937,25 +943,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let hole: Rc<RefCell<Option<AfterFrame>>> = Rc::default();
     slint::spawn_local({
         let weak = weak.clone();
+        let hole = hole.clone();
         async move {
             let Some(ui) = weak.upgrade() else { return };
             match ui.window().winit_window().await {
-                Ok(_) => window_ready(&ui),
+                Ok(_) => window_ready(&ui, &hole),
                 Err(e) => eprintln!("[ui] no native window: {e}"),
             }
         }
     })?;
-    #[cfg(target_os = "macos")]
-    ui.window().set_rendering_notifier({
-        let weak = weak.clone();
-        move |state, _| {
-            if let (slint::RenderingState::AfterRendering, Some(ui)) = (state, weak.upgrade()) {
-                frame_drawn(&ui);
-            }
-        }
-    })?;
+    follow_frames(&ui, hole)?;
     if let Some((w, h)) = std::env::var("LIVI_UI_SIZE")
         .ok()
         .and_then(|s| {
