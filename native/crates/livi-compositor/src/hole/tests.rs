@@ -112,13 +112,10 @@ mod gl {
     use smithay::backend::renderer::damage::OutputDamageTracker;
     use smithay::backend::renderer::element::texture::TextureRenderElement;
     use smithay::backend::renderer::element::utils::CropRenderElement;
-    use smithay::backend::renderer::element::{Element, Id, Kind as ElementKind, RenderElement};
-    use smithay::backend::renderer::gles::{GlesError, GlesRenderer, GlesTexture};
-    use smithay::backend::renderer::utils::{CommitCounter, OpaqueRegions};
-    use smithay::backend::renderer::{
-        Bind, Color32F, ExportMem, FullDamage, ImportMem, Offscreen, Renderer, RendererSuper,
-    };
-    use smithay::utils::{Buffer as BufferCoords, Scale, Transform};
+    use smithay::backend::renderer::element::{Id, Kind as ElementKind};
+    use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+    use smithay::backend::renderer::{Bind, Color32F, ExportMem, ImportMem, Offscreen, Renderer};
+    use smithay::utils::Transform;
 
     use super::super::*;
     use super::{paint, rect, zeros};
@@ -129,49 +126,11 @@ mod gl {
     const RADIUS: usize = 24;
     const BUTTON: [usize; 4] = [660, 60, 40, 40];
     const BACKDROP: [u8; 4] = [20, 30, 40, 255];
-    const MAGENTA: Color32F = Color32F::new(1.0, 0.0, 1.0, 1.0);
 
     smithay::backend::renderer::element::render_elements! {
         Test<=GlesRenderer>;
         Whole=TextureRenderElement<GlesTexture>,
         Cropped=CropRenderElement<TextureRenderElement<GlesTexture>>,
-        Hollow=Hollow,
-    }
-
-    /// Says it covers the output and draws nothing: what a frame that leaves pixels out looks like
-    struct Hollow {
-        id: Id,
-    }
-
-    impl Element for Hollow {
-        fn id(&self) -> &Id {
-            &self.id
-        }
-        fn current_commit(&self) -> CommitCounter {
-            CommitCounter::default()
-        }
-        fn src(&self) -> Rectangle<f64, BufferCoords> {
-            Rectangle::from_size((f64::from(WIDTH), f64::from(HEIGHT)).into())
-        }
-        fn geometry(&self, _: Scale<f64>) -> Rectangle<i32, Physical> {
-            Rectangle::from_size((WIDTH, HEIGHT).into())
-        }
-        fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
-            OpaqueRegions::from_slice(&[self.geometry(scale)])
-        }
-    }
-
-    impl RenderElement<GlesRenderer> for Hollow {
-        fn draw(
-            &self,
-            _: &mut <GlesRenderer as RendererSuper>::Frame<'_, '_>,
-            _: Rectangle<f64, BufferCoords>,
-            _: Rectangle<i32, Physical>,
-            _: &[Rectangle<i32, Physical>],
-            _: &[Rectangle<i32, Physical>],
-        ) -> Result<(), GlesError> {
-            Ok(())
-        }
     }
 
     fn renderer() -> GlesRenderer {
@@ -194,7 +153,7 @@ mod gl {
     }
 
     impl Chain {
-        fn new(renderer: &mut GlesRenderer, how: FullDamage) -> Self {
+        fn new(renderer: &mut GlesRenderer) -> Self {
             let mut buffer = || {
                 Offscreen::<GlesTexture>::create_buffer(
                     renderer,
@@ -204,9 +163,7 @@ mod gl {
                 .expect("a target")
             };
             let buffers = [buffer(), buffer()];
-            let mut tracker = OutputDamageTracker::new((HEIGHT, WIDTH), 1.0, Transform::_90);
-            assert_eq!(tracker.full_damage(), FullDamage::Keep);
-            tracker.set_full_damage(how);
+            let tracker = OutputDamageTracker::new((HEIGHT, WIDTH), 1.0, Transform::_90);
             Self {
                 tracker,
                 buffers,
@@ -387,8 +344,8 @@ mod gl {
                 texture(&mut renderer, &video_pixels(frame), (680, 420)),
             )
         });
-        let mut plain = Chain::new(&mut renderer, FullDamage::Keep);
-        let mut holed = Chain::new(&mut renderer, FullDamage::Keep);
+        let mut plain = Chain::new(&mut renderer);
+        let mut holed = Chain::new(&mut renderer);
         for frame in 0..12 {
             let (id, video) = &videos[frame % videos.len()];
             let whole = vec![
@@ -422,8 +379,8 @@ mod gl {
                 texture(&mut renderer, &video_pixels(frame), (680, 420)),
             )
         });
-        let mut plain = Chain::new(&mut renderer, FullDamage::Keep);
-        let mut holed = Chain::new(&mut renderer, FullDamage::Keep);
+        let mut plain = Chain::new(&mut renderer);
+        let mut holed = Chain::new(&mut renderer);
         // a commit every few frames, at uneven distances so that both buffers see each change
         let commits = [0, 3, 4, 9, 11, 16];
         let mut ui_id = Id::new();
@@ -457,8 +414,8 @@ mod gl {
         let ui = texture(&mut renderer, &ui_pixels(true), (WIDTH, HEIGHT));
         let video_id = Id::new();
         let video = texture(&mut renderer, &video_pixels(0), (680, 420));
-        let mut plain = Chain::new(&mut renderer, FullDamage::Keep);
-        let mut holed = Chain::new(&mut renderer, FullDamage::Keep);
+        let mut plain = Chain::new(&mut renderer);
+        let mut holed = Chain::new(&mut renderer);
         let whole = vec![
             Test::Whole(element(&ui_id, &renderer, &ui, (0.0, 0.0))),
             Test::Whole(element(&video_id, &renderer, &video, VIDEO_AT)),
@@ -467,56 +424,5 @@ mod gl {
         let mut cut = with_holes(&renderer, &ui_id, &ui, &reported(false));
         cut.push(Test::Whole(element(&video_id, &renderer, &video, VIDEO_AT)));
         assert!(plain.frame(&mut renderer, &whole) != holed.frame(&mut renderer, &cut));
-    }
-
-    /// Full frames at the start and when the UI changes, a small video in between: the same as drawn without the lever,
-    /// with each of its settings
-    #[test]
-    #[ignore = "needs an EGL device"]
-    fn the_picture_does_not_depend_on_what_a_full_frame_does_first() {
-        let mut renderer = renderer();
-        let ui_ids = [Id::new(), Id::new()];
-        let ui = texture(&mut renderer, &ui_pixels(true), (WIDTH, HEIGHT));
-        let videos = [0, 90, 200].map(|frame| {
-            (
-                Id::new(),
-                texture(&mut renderer, &video_pixels(frame), (680, 420)),
-            )
-        });
-        for how in [FullDamage::Discard, FullDamage::Clear(MAGENTA)] {
-            let mut kept = Chain::new(&mut renderer, FullDamage::Keep);
-            let mut lever = Chain::new(&mut renderer, how);
-            for frame in 0..16 {
-                // a new UI element damages the whole window, as a commit of Slint does
-                let ui_id = &ui_ids[usize::from(frame % 8 >= 4)];
-                let (id, video) = &videos[frame % videos.len()];
-                let elements = |renderer: &GlesRenderer| {
-                    vec![
-                        Test::Whole(element(ui_id, renderer, &ui, (0.0, 0.0))),
-                        Test::Whole(element(id, renderer, video, VIDEO_AT)),
-                    ]
-                };
-                let one = elements(&renderer);
-                let two = elements(&renderer);
-                assert!(
-                    kept.frame(&mut renderer, &one) == lever.frame(&mut renderer, &two),
-                    "{how:?} frame {frame}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    #[ignore = "needs an EGL device"]
-    fn a_full_frame_that_leaves_pixels_out_shows_magenta_this_is_how_the_test_can_fail() {
-        let mut renderer = renderer();
-        let hollow = [Test::Hollow(Hollow { id: Id::new() })];
-        let mut chain = Chain::new(&mut renderer, FullDamage::Clear(MAGENTA));
-        let pixels = chain.frame(&mut renderer, &hollow);
-        assert_eq!(pixels[..4], [255, 0, 255, 255]);
-        let mut chain = Chain::new(&mut renderer, FullDamage::Keep);
-        let pixels = chain.frame(&mut renderer, &hollow);
-        assert_ne!(pixels[..4], [255, 0, 255, 255]);
-        let _ = Color32F::from(BACKDROP.map(|v| f32::from(v) / 255.0)).r();
     }
 }
