@@ -437,7 +437,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
             pairing: bt::Pairing::from_env(std::env::var("LIVI_BT_AGENT").ok().as_deref()),
             pairing_seconds: env_or("LIVI_BT_PAIRING_SECONDS", 0),
         };
-        let (conn, mut incoming, held) = bt::start(&setup).await?;
+        let (conn, mut incoming, held, registry) = bt::start(&setup).await?;
         let mut dongle_iap = std::env::var("LIVI_BT_VIA_DONGLE")
             .is_ok_and(|v| v == "1" && wireless.carplay)
             .then(|| livi_link_host::accessory::sessions(|| true));
@@ -466,7 +466,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 
         let hfp = livi_runtime::hfp::Hfp::default();
         hfp.set_events(aa_events.clone());
-        if let Err(e) = bt::start_hfp(&conn, &adapter, hfp.clone()).await {
+        if let Err(e) = bt::start_hfp(&registry, hfp.clone()).await {
             eprintln!("[hfp] profile registration failed: {e}");
         }
         livi_runtime::sco::serve(aa_events.clone(), sco_sink.clone(), move |mac| {
@@ -481,7 +481,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
                 "{{\"event\":\"aa-session\",\"socket\":\"{socket}\",\"peer\":\"{peer}\",\"transport\":\"wifi\"}}"
             ));
             }));
-            match bt::start_aa(&conn, &adapter).await {
+            match bt::start_aa(&registry).await {
                 Ok(incoming) => {
                     let aa_cfg = crate::aa::AaConfig {
                         ssid: cp.ssid.clone(),
@@ -491,7 +491,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
                         ap_ip: std::env::var("LIVI_AP_IP").unwrap_or_else(|_| "10.10.0.1".into()),
                         port: aa_port,
                     };
-                    if let Err(e) = bt::start_ble_ad(&conn, &adapter, &identity.name).await {
+                    if let Err(e) = bt::start_ble_ad(&registry, &identity.name).await {
                         eprintln!("[aa] BLE advertisement failed: {e}");
                     }
                     tokio::spawn(crate::aa::watch(
@@ -507,13 +507,15 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let shared_events = Broadcaster::default();
-        let mpris = match bt::start_media_player(&conn, &adapter, shared_events.clone()).await {
+        let mpris = match bt::start_media_player(&registry, shared_events.clone()).await {
             Ok(handle) => Some(handle),
             Err(e) => {
                 eprintln!("[bt] media player failed: {e}");
                 None
             }
         };
+        // all of it again for a bluetoothd that starts anew (crash, restart by hand), in this process
+        tokio::spawn(registry.follow());
 
         {
             let bus = conn.clone();

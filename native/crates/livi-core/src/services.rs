@@ -125,7 +125,6 @@ impl Services {
         telemetry: mpsc::UnboundedSender<serde_json::Value>,
         settings: mpsc::UnboundedSender<serde_json::Value>,
         resume_dab: bool,
-        bluez_back: Arc<Notify>,
     ) -> Self {
         let state = hub.watch();
         let cfg = state.borrow().config.clone();
@@ -140,16 +139,6 @@ impl Services {
             .as_ref()
             .map(|l| livi_cp::net::local_port(l.local_addr()));
         let helper_restart = Arc::new(Notify::new());
-        {
-            // the helper's profiles live in bluetoothd: a new one has none of them, so the helper registers anew
-            let restart = helper_restart.clone();
-            tokio::spawn(async move {
-                loop {
-                    bluez_back.notified().await;
-                    restart.notify_one();
-                }
-            });
-        }
         let applied = hub.applied();
         let env_identity = identity.clone();
         let env_accessory = accessory.clone();

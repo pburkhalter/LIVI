@@ -15,7 +15,10 @@ base64.workspace = true
 serde_json.workspace = true
 socket2 = { workspace = true, features = ["all"] }
 zbus = { workspace = true, features = ["tokio"] }
+futures-util.workspace = true
 livi-hfp.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "time", "sync", "test-util"] }
+# a stand-in for bluetoothd over a socket pair (bluez_restart.rs)
+zbus = { workspace = true, features = ["tokio", "p2p"] }
