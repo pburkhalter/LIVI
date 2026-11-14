@@ -299,7 +299,8 @@ LIVI knowing what it is:
 - The program is a Wayland client of LIVI's compositor with the app_id `livi-embed:<name>`; `<name>` has 1 to 64
   letters, digits, `-` or `_`, and is not `main`, `video`, `camera` or `cluster-…`, the names of LIVI's own pictures.
   A program with one of those names stays an ordinary dialog. `LIVI_WAYLAND_SOCKET` gives the compositor's socket a
-  fixed name, so that the program finds it; started without it, the compositor picks a free one as before.
+  fixed name, so that the program finds it; started without it, the compositor picks a free one as before. A fixed
+  name another compositor holds ends the compositor's start with an error in its log, never another name.
 - A plugin shows it with `Livi.action("embed-area", "<name> <x> <y> <w> <h> [<radius>]")`, in the window's pixels, and
   hides it with `Livi.action("embed-area", "<name>")`. All pages of a plugin stay alive, so it is up to the page to
   hide the app when another page comes: a `changed` handler on `Livi.page` does. The action works before the program
