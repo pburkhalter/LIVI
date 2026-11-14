@@ -1,7 +1,9 @@
 //! systemd's readiness protocol (sd_notify(3)): a service manager that starts LIVI as `Type=notify` gives it
-//! NOTIFY_SOCKET. LIVI says `READY=1` there once it is of use: the core listens on its socket (in its folder below
-//! XDG_RUNTIME_DIR), it serves org.freedesktop.Notifications, and the UI's first frame is on the display. Until then
-//! `STATUS=` says what it waits for. Units ordered after LIVI start only then; one that never comes fails the start.
+//! NOTIFY_SOCKET. LIVI says `READY=1` there once it is of use: the UI's first frame is on the display, and the core
+//! listens on its socket (in its folder below XDG_RUNTIME_DIR; it does before it starts the compositor and the UI).
+//! Until then `STATUS=` says what it waits for. Units ordered after LIVI start only then; a READY=1 that never comes
+//! fails the start. The notifications do not hold LIVI back: whether org.freedesktop.Notifications is LIVI's yet, or
+//! another server holds it, or there is no session bus, `STATUS=` says, before READY=1 and after it as it changes.
 //! Without NOTIFY_SOCKET nothing of this happens.
 
 use std::ffi::{OsStr, OsString};
@@ -56,53 +58,74 @@ fn send_to(_socket: &OsStr, _state: &str) -> std::io::Result<()> {
     Err(std::io::Error::other("sd_notify is Linux's"))
 }
 
-/// What LIVI tells the service manager now: READY=1 with a status once all is there, otherwise what it waits for
-fn message(ui_shown: bool, notices: &Name) -> String {
-    let mut waiting = Vec::new();
-    if !ui_shown {
-        waiting.push("the UI's first frame".to_string());
-    }
+/// What the status says of the notification name
+fn notifications(notices: &Name) -> String {
     match notices {
-        Name::Owned => {}
-        Name::Asking => waiting.push("org.freedesktop.Notifications".into()),
+        Name::Owned => "notifications served".into(),
+        Name::Asking => "notifications: asking for org.freedesktop.Notifications".into(),
         Name::Queued => {
-            waiting.push("org.freedesktop.Notifications, which another server holds".into())
+            "notifications wait for org.freedesktop.Notifications, which another server holds"
+                .into()
         }
-        Name::Unserved(why) => waiting.push(format!(
-            "org.freedesktop.Notifications, which LIVI cannot serve ({why})"
-        )),
-    }
-    if waiting.is_empty() {
-        "READY=1\nSTATUS=LIVI is ready: the UI on the display, the core listening, notifications served".into()
-    } else {
-        format!("STATUS=Waiting for {}", waiting.join(" and "))
+        Name::Unserved(why) => format!("no notifications ({why})"),
     }
 }
 
-/// Tells the service manager how far LIVI is, until READY=1. Spawned once the core listens. `ui_shown` holds true
-/// when LIVI shows no picture of its own (no compositor of LIVI's, or no UI).
+/// What LIVI tells the service manager now: READY=1 once the UI's first frame is on the display, the status always
+fn message(ui_shown: bool, notices: &Name) -> String {
+    if ui_shown {
+        format!(
+            "READY=1\nSTATUS=LIVI is ready: the UI on the display, the core listening; {}",
+            notifications(notices)
+        )
+    } else {
+        format!(
+            "STATUS=Waiting for the UI's first frame; {}",
+            notifications(notices)
+        )
+    }
+}
+
+/// Whether nothing more of the notification name can change
+fn settled(notices: &Name) -> bool {
+    matches!(notices, Name::Owned | Name::Unserved(_))
+}
+
+/// Tells the service manager how far LIVI is: READY=1 with the UI's first frame, the status until the notification
+/// name is settled. Spawned once the core listens. `ui_shown` holds true when LIVI shows no picture of its own (no
+/// compositor of LIVI's, or no UI).
 pub async fn announce(mut notices: watch::Receiver<Name>, mut ui_shown: watch::Receiver<bool>) {
     let Some(socket) = socket() else { return };
     let mut told = String::new();
+    let mut ready = false;
     let (mut notices_open, mut ui_open) = (true, true);
     loop {
-        let now = message(*ui_shown.borrow_and_update(), &notices.borrow_and_update());
+        let shown = *ui_shown.borrow_and_update();
+        let name = notices.borrow_and_update().clone();
+        let mut now = message(shown, &name);
+        if ready {
+            // READY=1 once, then the status alone
+            now = now.replacen("READY=1\n", "", 1);
+        }
         if now != told {
-            match send_to(socket, &now) {
-                Ok(()) if now.starts_with("READY=1") => {
-                    println!("[core] ready: told the service manager");
-                    return;
-                }
-                Ok(()) => {}
-                Err(e) => {
-                    eprintln!("[core] the service manager cannot be told how far LIVI is: {e}");
-                    return;
-                }
+            if let Err(e) = send_to(socket, &now) {
+                eprintln!("[core] the service manager cannot be told how far LIVI is: {e}");
+                return;
+            }
+            if now.starts_with("READY=1") {
+                println!(
+                    "[core] ready: told the service manager ({})",
+                    notifications(&name)
+                );
+                ready = true;
             }
             told = now;
         }
+        if ready && settled(&name) {
+            return;
+        }
         if !notices_open && !ui_open {
-            // nothing more comes: the start times out, as it should
+            // nothing more comes; without READY=1 the start times out, as it should
             return;
         }
         tokio::select! {
@@ -117,21 +140,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ready_only_with_the_picture_and_the_notification_name() {
-        assert!(message(true, &Name::Owned).starts_with("READY=1\nSTATUS="));
+    fn ready_with_the_picture_whatever_the_notifications_do() {
         assert_eq!(
-            message(false, &Name::Owned),
-            "STATUS=Waiting for the UI's first frame"
+            message(true, &Name::Owned),
+            "READY=1\nSTATUS=LIVI is ready: the UI on the display, the core listening; notifications served"
         );
-        assert_eq!(
-            message(false, &Name::Asking),
-            "STATUS=Waiting for the UI's first frame and org.freedesktop.Notifications"
-        );
-        assert!(message(true, &Name::Queued).contains("another server holds"));
-        assert!(message(true, &Name::Unserved("no session bus".into())).contains("no session bus"));
-        for name in [Name::Asking, Name::Queued, Name::Unserved(String::new())] {
-            assert!(!message(true, &name).contains("READY"));
+        // CarPlay never waits for the notification server: READY=1 all the same, the status says why
+        for name in [
+            Name::Asking,
+            Name::Queued,
+            Name::Unserved("no session bus".into()),
+        ] {
+            assert!(message(true, &name).starts_with("READY=1\n"), "{name:?}");
         }
+        assert!(message(true, &Name::Queued).ends_with("which another server holds"));
+        assert!(message(true, &Name::Unserved("no session bus".into())).contains("no session bus"));
+        // only the picture holds it back
+        for name in [Name::Owned, Name::Asking, Name::Queued] {
+            let m = message(false, &name);
+            assert!(!m.contains("READY"), "{m}");
+            assert!(
+                m.starts_with("STATUS=Waiting for the UI's first frame; "),
+                "{m}"
+            );
+        }
+        assert!(settled(&Name::Owned) && settled(&Name::Unserved(String::new())));
+        assert!(!settled(&Name::Asking) && !settled(&Name::Queued));
     }
 
     #[cfg(target_os = "linux")]
