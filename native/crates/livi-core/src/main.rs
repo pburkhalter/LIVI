@@ -277,7 +277,7 @@ async fn run() -> Result<Exit, String> {
         settings,
         resume_dab,
     );
-    // the core listens: READY=1 for a service manager once the UI shows and the notifications are LIVI's
+    // the core listens: READY=1 for a service manager once the UI shows (the notifications only in its status)
     tokio::spawn(ready::announce(notices_named, services.ui_shown()));
 
     tokio::select! {

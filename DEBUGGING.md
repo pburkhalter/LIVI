@@ -23,11 +23,13 @@ LIVI_GST_DEBUG=1 ./LIVI*.AppImage
   Bluetooth, Wi-Fi and the access point for native Android Auto and CarPlay.
 
 Started by a service manager as `Type=notify` (systemd sets `NOTIFY_SOCKET`),
-core says `READY=1` once it listens on its socket, serves
-`org.freedesktop.Notifications` and the UI's first frame is on the display
-(LIVI's compositor tells it). Until then `systemctl status` shows in `Status:`
-what it waits for. Only core speaks to the service manager: it takes the
-variable out of its environment before it starts anything.
+core says `READY=1` once the UI's first frame is on the display (LIVI's
+compositor tells it); core listens on its socket before it starts the
+compositor. Until then `systemctl status` shows in `Status:` what it waits for.
+The notifications do not hold it back: whether `org.freedesktop.Notifications`
+is LIVI's yet, held by another server or not served, `Status:` says, also after
+`READY=1`. Only core speaks to the service manager: it takes the variable out of
+its environment before it starts anything.
 
 ## Where the logs go
 
