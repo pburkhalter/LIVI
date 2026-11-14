@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use livi_core_proto::state::Notice;
+use tokio::sync::watch;
 use zbus::fdo::RequestNameReply;
 use zbus::message::Type;
 use zbus::object_server::SignalEmitter;
@@ -35,6 +36,17 @@ const CLOSED: u32 = 3;
 const UNDEFINED: u32 = 4;
 
 static BUS: OnceLock<zbus::Connection> = OnceLock::new();
+
+/// How far LIVI is with the notification name (ready.rs tells the service manager)
+#[derive(Clone, Debug, PartialEq)]
+pub enum Name {
+    Asking,
+    /// another server has it, LIVI waits in the bus's queue
+    Queued,
+    Owned,
+    /// no session bus, or the bus refused: why
+    Unserved(String),
+}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -294,7 +306,7 @@ async fn connect(core: Arc<Core>) -> zbus::Result<zbus::Connection> {
 
 /// The name, from the bus's queue: RequestName neither takes it from the server that has it (no ReplaceExisting) nor
 /// gives up when it is taken (no DoNotQueue). Returns once the bus gave it, at once or later by NameAcquired
-async fn take_name(bus: &zbus::Connection) -> zbus::Result<()> {
+async fn take_name(bus: &zbus::Connection, name: &watch::Sender<Name>) -> zbus::Result<()> {
     let rule = MatchRule::builder()
         .msg_type(Type::Signal)
         .sender("org.freedesktop.DBus")?
@@ -311,7 +323,8 @@ async fn take_name(bus: &zbus::Connection) -> zbus::Result<()> {
         RequestNameReply::InQueue => {
             println!(
                 "[core] notifications: another server holds {NAME}, LIVI waits in the queue for it"
-            )
+            );
+            name.send_replace(Name::Queued);
         }
         RequestNameReply::Exists => return Err(zbus::Error::NameTaken),
     }
@@ -321,19 +334,26 @@ async fn take_name(bus: &zbus::Connection) -> zbus::Result<()> {
     }
 }
 
-/// Serves the notifications as long as LIVI runs, once the session bus gave LIVI the name
-pub async fn serve(core: Arc<Core>) {
+/// Serves the notifications as long as LIVI runs, once the session bus gave LIVI the name; `name` says how far it is
+pub async fn serve(core: Arc<Core>, name: watch::Sender<Name>) {
     let bus = match connect(core).await {
         Ok(bus) => bus,
         Err(e) => {
             eprintln!("[core] notifications: no session bus ({e}), {NAME} is not served");
+            name.send_replace(Name::Unserved(format!("no session bus: {e}")));
             return;
         }
     };
     let _ = BUS.set(bus.clone());
-    match take_name(&bus).await {
-        Ok(()) => println!("[core] notifications: {NAME} on the session bus"),
-        Err(e) => eprintln!("[core] notifications: {NAME} is not served ({e})"),
+    match take_name(&bus, &name).await {
+        Ok(()) => {
+            println!("[core] notifications: {NAME} on the session bus");
+            name.send_replace(Name::Owned);
+        }
+        Err(e) => {
+            eprintln!("[core] notifications: {NAME} is not served ({e})");
+            name.send_replace(Name::Unserved(e.to_string()));
+        }
     }
 }
 

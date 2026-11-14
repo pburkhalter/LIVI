@@ -374,6 +374,7 @@ pub fn render_screen(state: &mut LiviState, screen_idx: usize) {
     }
     w.needs_redraw = false;
 
+    let ui_in_frame = !state.ui_shown && crate::drm::ui_has_drawn(state, screen_idx);
     let parts = frame_parts(state, screen_idx);
     let mut tracker = OutputDamageTracker::new((width, height), 1.0, Transform::Flipped180);
 
@@ -407,6 +408,9 @@ pub fn render_screen(state: &mut LiviState, screen_idx: usize) {
             }
             if state.syncobj_state.is_some() {
                 let _ = sync.wait();
+            }
+            if ui_in_frame {
+                crate::ctrl::ui_shown(state);
             }
             crate::host::send_frame_callbacks(state);
         }

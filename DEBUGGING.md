@@ -22,6 +22,13 @@ LIVI_GST_DEBUG=1 ./LIVI*.AppImage
 - **helper** is `livi-helperd`, a native binary core runs as root. It sets up
   Bluetooth, Wi-Fi and the access point for native Android Auto and CarPlay.
 
+Started by a service manager as `Type=notify` (systemd sets `NOTIFY_SOCKET`),
+core says `READY=1` once it listens on its socket, serves
+`org.freedesktop.Notifications` and the UI's first frame is on the display
+(LIVI's compositor tells it). Until then `systemctl status` shows in `Status:`
+what it waits for. Only core speaks to the service manager: it takes the
+variable out of its environment before it starts anything.
+
 ## Where the logs go
 
 - **stdout / stderr**: everything is printed to the console, timestamped. When LIVI

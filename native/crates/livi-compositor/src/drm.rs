@@ -109,6 +109,8 @@ struct Output {
     /// implicit fences to dma-bufs (e.g. a V4L2 stateless decoder feeding a PowerVR GPU), so a buffer handed
     /// back to the client right after queue_frame can be overwritten while the GPU still samples it.
     held: Vec<Buffer>,
+    /// The queued frame holds the UI's first frame: its vblank says so (ctrl::ui_shown)
+    ui_due: bool,
 }
 
 impl Output {
@@ -614,6 +616,7 @@ fn light(
         direct: 0,
         needs_redraw: true,
         held: Vec::new(),
+        ui_due: false,
     };
     let (lw, lh) = output.logical();
     drm.outputs.push(output);
@@ -768,9 +771,13 @@ fn vblank(state: &mut LiviState, crtc: crtc::Handle) {
     }
     output.frame_pending = false;
     output.held.clear();
+    let ui_now = std::mem::take(&mut output.ui_due);
     let redraw = output.needs_redraw.then_some(output.screen_idx);
     if std::mem::take(&mut drm.marker_due) {
         mark_first_frame(state);
+    }
+    if ui_now {
+        crate::ctrl::ui_shown(state);
     }
     if let Some(idx) = redraw {
         render(state, idx);
@@ -870,7 +877,7 @@ fn mark_first_frame(state: &LiviState) {
 }
 
 /// Whether LIVI's UI window on this screen has a buffer to show
-fn ui_has_drawn(state: &LiviState, screen_idx: usize) -> bool {
+pub fn ui_has_drawn(state: &LiviState, screen_idx: usize) -> bool {
     state
         .toplevels
         .iter()
@@ -972,6 +979,7 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
     if keep_splash(state, screen_idx) {
         return;
     }
+    let ui_in_frame = !state.ui_shown && ui_has_drawn(state, screen_idx);
     let mut parts = crate::render::frame_parts(state, screen_idx);
     let held = attached_buffers(state, screen_idx);
     let screen_x = state.screens[screen_idx].x as f64;
@@ -1013,6 +1021,7 @@ pub fn render(state: &mut LiviState, screen_idx: usize) {
     {
         Ok(frame) if frame.is_empty => false,
         Ok(frame) => {
+            output.ui_due |= ui_in_frame;
             let direct = frame.overlay_elements.len()
                 + usize::from(matches!(
                     frame.primary_element,

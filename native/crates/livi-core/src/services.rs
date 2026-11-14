@@ -33,6 +33,7 @@ pub struct Services {
     helper: Option<HelperSupervisor>,
     compositor: Option<Watched>,
     ui: Option<UiSupervisor>,
+    ui_shown: watch::Receiver<bool>,
 }
 
 struct Watched {
@@ -185,6 +186,13 @@ impl Services {
         if ui.is_none() {
             println!("[core] running without a UI");
         }
+        // only LIVI's compositor sees the UI's frames reach the display: with another one, or without a UI, LIVI
+        // has nothing to wait for
+        let ui_shown = if compositor.is_some() && ui.is_some() {
+            ctrl.ui_shown()
+        } else {
+            watch::channel(true).1
+        };
         let compositor = compositor.map(|child| watch_compositor(child, quit));
         tokio::spawn(spectrum::follow(
             gst.clone(),
@@ -255,7 +263,13 @@ impl Services {
             helper: Some(helper),
             compositor,
             ui,
+            ui_shown,
         }
+    }
+
+    /// Whether the UI's first frame is on the display (ready.rs)
+    pub fn ui_shown(&self) -> watch::Receiver<bool> {
+        self.ui_shown.clone()
     }
 
     pub async fn stop(mut self) {

@@ -190,6 +190,7 @@ pub struct CompositorControl {
     panels: watch::Receiver<HashMap<String, Panel>>,
     ui: watch::Receiver<Option<Ui>>,
     displays: watch::Receiver<Option<Vec<Display>>>,
+    ui_shown: watch::Receiver<bool>,
     touches: broadcast::Sender<Input>,
     fullscreen: broadcast::Sender<(Screen, bool)>,
 }
@@ -200,6 +201,7 @@ impl CompositorControl {
         let (panels_tx, panels) = watch::channel(HashMap::new());
         let (ui_tx, ui) = watch::channel(None);
         let (displays_tx, displays) = watch::channel(None);
+        let (ui_shown_tx, ui_shown) = watch::channel(false);
         let (touches, _) = broadcast::channel(TOUCH_BACKLOG);
         let (fullscreen, _) = broadcast::channel(TOUCH_BACKLOG);
         tokio::spawn(
@@ -208,6 +210,7 @@ impl CompositorControl {
                 panels_tx,
                 ui_tx,
                 displays_tx,
+                ui_shown_tx,
                 touches.clone(),
                 fullscreen.clone(),
             )
@@ -218,9 +221,15 @@ impl CompositorControl {
             panels,
             ui,
             displays,
+            ui_shown,
             touches,
             fullscreen,
         }
+    }
+
+    /// Whether the UI's first frame is on a display (the compositor's "shown ui")
+    pub fn ui_shown(&self) -> watch::Receiver<bool> {
+        self.ui_shown.clone()
     }
 
     pub fn displays(&self) -> watch::Receiver<Option<Vec<Display>>> {
@@ -373,6 +382,7 @@ struct Actor {
     panels: watch::Sender<HashMap<String, Panel>>,
     ui: watch::Sender<Option<Ui>>,
     displays: watch::Sender<Option<Vec<Display>>>,
+    ui_shown: watch::Sender<bool>,
     incoming: Option<(usize, Vec<Display>)>,
     touches: broadcast::Sender<Input>,
     fullscreen: broadcast::Sender<(Screen, bool)>,
@@ -384,6 +394,7 @@ impl Actor {
         panels: watch::Sender<HashMap<String, Panel>>,
         ui: watch::Sender<Option<Ui>>,
         displays: watch::Sender<Option<Vec<Display>>>,
+        ui_shown: watch::Sender<bool>,
         touches: broadcast::Sender<Input>,
         fullscreen: broadcast::Sender<(Screen, bool)>,
     ) -> Self {
@@ -398,6 +409,7 @@ impl Actor {
             panels,
             ui,
             displays,
+            ui_shown,
             incoming: None,
             touches,
             fullscreen,
@@ -559,6 +571,10 @@ impl Actor {
                     list.push(display);
                 }
                 self.take_displays();
+            }
+            Some("shown") if words.next() == Some("ui") => {
+                self.ui_shown
+                    .send_if_modified(|shown| !std::mem::replace(shown, true));
             }
             Some("ui") => {
                 let (Some(display), node) = (words.next(), words.next()) else {
@@ -783,6 +799,20 @@ mod tests {
             .await
             .unwrap()
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_uis_first_frame_on_the_display_is_reported() {
+        let dir = TempDir::new();
+        let (comp, ctrl) = setup(&dir);
+        let mut shown = ctrl.ui_shown();
+        assert!(!*shown.borrow());
+        let (_rd, mut wr) = comp.accept().await;
+        wr.write_all(b"shown ui\n").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), shown.wait_for(|s| *s))
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
