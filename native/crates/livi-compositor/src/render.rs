@@ -376,7 +376,6 @@ pub fn render_screen(state: &mut LiviState, screen_idx: usize) {
 
     let parts = frame_parts(state, screen_idx);
     let mut tracker = OutputDamageTracker::new((width, height), 1.0, Transform::Flipped180);
-    tracker.set_full_damage(*crate::levers::FULL_DAMAGE);
 
     let res = {
         let renderer = state.renderer.as_mut().unwrap();

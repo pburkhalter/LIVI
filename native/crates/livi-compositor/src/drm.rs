@@ -590,7 +590,7 @@ fn light(
         scale: Scale::from(1.0),
         transform,
     };
-    let mut surface = DrmCompositor::new(
+    let surface = DrmCompositor::new(
         source,
         surface,
         None,
@@ -602,7 +602,6 @@ fn light(
         Some(drm.gbm.clone()),
     )
     .map_err(|e| e.to_string())?;
-    surface.set_full_damage(*crate::levers::FULL_DAMAGE);
     let output = Output {
         screen_idx,
         connector: name.to_string(),
