@@ -430,15 +430,14 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
             if wireless.carplay { "on" } else { "off" },
             if wireless.android_auto { "on" } else { "off" }
         );
-        let pairing = bt::Pairing::from_env(std::env::var("LIVI_BT_AGENT").ok().as_deref());
-        let (conn, mut incoming, held) =
-            bt::start(&adapter, &identity.name, wireless, pairing).await?;
-        bt::close_pairing_after(
-            &conn,
-            &adapter,
-            env_or("LIVI_BT_PAIRING_SECONDS", 0),
-            pairing,
-        );
+        let setup = bt::Setup {
+            adapter: adapter.clone(),
+            alias: identity.name.clone(),
+            wireless,
+            pairing: bt::Pairing::from_env(std::env::var("LIVI_BT_AGENT").ok().as_deref()),
+            pairing_seconds: env_or("LIVI_BT_PAIRING_SECONDS", 0),
+        };
+        let (conn, mut incoming, held) = bt::start(&setup).await?;
         let mut dongle_iap = std::env::var("LIVI_BT_VIA_DONGLE")
             .is_ok_and(|v| v == "1" && wireless.carplay)
             .then(|| livi_link_host::accessory::sessions(|| true));
