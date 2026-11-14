@@ -62,12 +62,16 @@ fn open(main: &AppWindow, client: &Client, spec: &Secondary) -> Option<Secondary
     }
     let weak = w.as_weak();
     let screen = name(spec.screen);
-    let _ = window.set_rendering_notifier(move |state, _| {
-        if let (slint::RenderingState::RenderingSetup, Some(w)) = (state, weak.upgrade())
-            && !crate::attach_video(w.window(), screen)
-        {
-            eprintln!("[ui] the {screen} window has no native handle for the video");
+    let _ = window.set_rendering_notifier(move |state, api| match state {
+        slint::RenderingState::RenderingSetup => {
+            if let Some(w) = weak.upgrade()
+                && !crate::attach_video(w.window(), screen)
+            {
+                eprintln!("[ui] the {screen} window has no native handle for the video");
+            }
         }
+        slint::RenderingState::AfterRendering => crate::gpu_finish::wait(api),
+        _ => {}
     });
     w.show().ok()?;
     Some(w)

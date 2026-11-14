@@ -214,18 +214,16 @@ fn describe(rects: &[Px]) -> String {
     format!("{pixels} px in {}: {}", rects.len(), list.join(", "))
 }
 
-/// Starts telling the compositor, once the window has its native surface; nothing when the compositor does not offer
-/// the protocol and no check is wanted
+/// What to do after each frame to tell the compositor, once the window has its native surface (main.rs puts it into
+/// the window's rendering notifier); nothing when the compositor does not offer the protocol and no check is wanted
 #[cfg(target_os = "linux")]
-pub fn start(ui: &AppWindow) {
-    use std::cell::RefCell;
-
+pub fn start(ui: &AppWindow) -> Option<crate::AfterFrame> {
     use slint::ComponentHandle;
 
     let check = std::env::var("LIVI_UI_HOLE_CHECK").as_deref() == Ok("1");
     let link = wayland::Link::new(ui.window());
     if link.is_none() && !check {
-        return;
+        return None;
     }
     println!(
         "[ui] hole: {}{}",
@@ -238,20 +236,15 @@ pub fn start(ui: &AppWindow) {
         last: Option<Vec<Px>>,
         log: Pace,
     }
-    let run = RefCell::new(Run {
+    let mut run = Run {
         link,
         check: check.then(check::Check::default),
         last: None,
         log: Pace::default(),
-    });
+    };
     let weak = ui.as_weak();
-    let set = ui.window().set_rendering_notifier(move |state, api| {
+    Some(Box::new(move |api| {
         let Some(ui) = weak.upgrade() else { return };
-        let mut run = run.borrow_mut();
-        let run = &mut *run;
-        if !matches!(state, slint::RenderingState::AfterRendering) {
-            return;
-        }
         let scale = crate::surface_scale(ui.window());
         let rects = scale.map(|scale| region(&ui, scale)).unwrap_or_default();
         let changed = run.last.as_ref() != Some(&rects);
@@ -274,14 +267,13 @@ pub fn start(ui: &AppWindow) {
             let height = ui.window().size().height as i32;
             check.frame(get_proc_address, height, &rects, changed);
         }
-    });
-    if let Err(e) = set {
-        eprintln!("[ui] hole: no rendering notifier: {e}");
-    }
+    }))
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn start(_: &AppWindow) {}
+pub fn start(_: &AppWindow) -> Option<crate::AfterFrame> {
+    None
+}
 
 /// LIVI_UI_HOLE_CHECK: what the region claims, read back from the frame just drawn
 #[cfg(target_os = "linux")]
