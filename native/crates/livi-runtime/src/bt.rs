@@ -136,6 +136,7 @@ struct Found {
     discoverable: bool,
     pairable: bool,
     discoverable_timeout: u32,
+    pairable_timeout: u32,
 }
 
 /// Who answers pairing requests on LIVI's controller. By default LIVI's own agent, which accepts every pairing;
@@ -159,21 +160,52 @@ impl Pairing {
         }
     }
 
-    /// What `close_pairing_after` ends on LIVI's controller
-    fn closed_after_a_while(self) -> &'static [&'static str] {
-        match self {
-            Pairing::Livi => &["Discoverable", "Pairable"],
-            Pairing::Other => &["Discoverable"],
-        }
-    }
-
-    /// What `let_go` puts back on a controller; `ours` is LIVI's own
+    /// What `let_go` puts back on a controller; `ours` is LIVI's own. A timeout before its switch: BlueZ starts the
+    /// timer when the switch goes on
     fn put_back(self, ours: bool) -> &'static [&'static str] {
         match (self, ours) {
             (Pairing::Other, true) => &["Alias", "DiscoverableTimeout", "Discoverable"],
-            _ => &["Alias", "DiscoverableTimeout", "Discoverable", "Pairable"],
+            (Pairing::Livi, true) => &[
+                "Alias",
+                "DiscoverableTimeout",
+                "Discoverable",
+                "PairableTimeout",
+                "Pairable",
+            ],
+            (_, false) => &["Alias", "DiscoverableTimeout", "Discoverable", "Pairable"],
         }
     }
+}
+
+/// How the helper sets up LIVI's controller
+#[derive(Clone, Debug, PartialEq)]
+pub struct Setup {
+    pub adapter: String,
+    pub alias: String,
+    pub wireless: Wireless,
+    pub pairing: Pairing,
+    /// LIVI_BT_PAIRING_SECONDS: new devices can find and pair with LIVI this long after the start, 0 always; paired
+    /// devices connect regardless. BlueZ ends both itself (`DiscoverableTimeout`, `PairableTimeout`); the kernel takes
+    /// at most 65535 s for discovery
+    pub pairing_seconds: u32,
+}
+
+/// The settings of LIVI's controller in the order they are made; `rfkill unblock` comes before `Powered`. The timeouts
+/// come before their switches: BlueZ starts the timer when the switch goes on. With pairing left to another program
+/// (`Pairing::Other`) nothing about pairing
+fn controller_settings(setup: &Setup) -> Vec<(&'static str, Value<'static>)> {
+    let seconds = setup.pairing_seconds.min(u32::from(u16::MAX));
+    let mut settings = vec![("Alias", Value::from(setup.alias.clone()))];
+    if setup.wireless.any() {
+        settings.push(("DiscoverableTimeout", Value::from(seconds)));
+    }
+    settings.push(("Powered", Value::from(true)));
+    settings.push(("Discoverable", Value::from(setup.wireless.any())));
+    if setup.pairing == Pairing::Livi {
+        settings.push(("PairableTimeout", Value::from(seconds)));
+        settings.push(("Pairable", Value::from(true)));
+    }
+    settings
 }
 
 #[derive(Default)]
@@ -224,6 +256,9 @@ async fn controllers(conn: &Connection) -> Result<Vec<(String, Found)>, Box<dyn 
                 discoverable_timeout: value("DiscoverableTimeout")
                     .and_then(|v| u32::try_from(v).ok())
                     .unwrap_or(0),
+                pairable_timeout: value("PairableTimeout")
+                    .and_then(|v| u32::try_from(v).ok())
+                    .unwrap_or(0),
             },
         ));
     }
@@ -271,6 +306,7 @@ pub async fn let_go(conn: &Connection, adapter: &str, held: &Held) {
                 "Alias" => Value::from(back.alias.as_str()),
                 "DiscoverableTimeout" => Value::from(back.discoverable_timeout),
                 "Discoverable" => Value::from(back.discoverable),
+                "PairableTimeout" => Value::from(back.pairable_timeout),
                 _ => Value::from(back.pairable),
             };
             if let Err(e) = set_prop_within(conn, &path, prop, value, LET_GO_WAIT).await {
@@ -321,11 +357,14 @@ async fn register_profile(
 }
 
 pub async fn start(
-    adapter: &str,
-    alias: &str,
-    wireless: Wireless,
-    pairing: Pairing,
+    setup: &Setup,
 ) -> Result<(Connection, mpsc::UnboundedReceiver<IncomingConn>, Held), Box<dyn Error>> {
+    let (adapter, alias, wireless, pairing) = (
+        setup.adapter.as_str(),
+        setup.alias.as_str(),
+        setup.wireless,
+        setup.pairing,
+    );
     let conn = Connection::system().await?;
     let (tx, rx) = mpsc::unbounded_channel();
 
@@ -365,51 +404,31 @@ pub async fn start(
     let adapter_path = format!("/org/bluez/{adapter}");
     wait_for_adapter(&conn, &adapter_path).await?;
     let held = hold(&conn, adapter, alias, pairing).await;
-    set_prop(&conn, &adapter_path, "Alias", Value::from(alias)).await?;
-    if wireless.any() {
-        set_prop(
-            &conn,
-            &adapter_path,
-            "DiscoverableTimeout",
-            Value::from(0u32),
-        )
-        .await?;
-    }
-    let _ = std::process::Command::new(crate::sys::tool("rfkill"))
-        .args(["unblock", "bluetooth"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    set_prop(&conn, &adapter_path, "Powered", Value::from(true)).await?;
-    set_prop(
-        &conn,
-        &adapter_path,
-        "Discoverable",
-        Value::from(wireless.any()),
-    )
-    .await?;
-    if pairing == Pairing::Livi {
-        set_prop(&conn, &adapter_path, "Pairable", Value::from(true)).await?;
-    }
+    configure(&conn, setup).await?;
 
     Ok((conn, rx, held))
 }
 
-/// Ends discovery and pairing after `seconds`; paired devices still connect. 0 leaves both open. With pairing left to
-/// another program (`Pairing::Other`) only discovery.
-pub fn close_pairing_after(conn: &Connection, adapter: &str, seconds: u64, pairing: Pairing) {
-    if seconds == 0 {
-        return;
-    }
-    let (conn, path) = (conn.clone(), format!("/org/bluez/{adapter}"));
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
-        for &prop in pairing.closed_after_a_while() {
-            if let Err(e) = set_prop(&conn, &path, prop, Value::from(false)).await {
-                eprintln!("[bt] {prop} stays on: {e}");
-            }
+/// Sets up LIVI's controller (`controller_settings`)
+async fn configure(conn: &Connection, setup: &Setup) -> Result<(), Box<dyn Error>> {
+    let path = format!("/org/bluez/{}", setup.adapter);
+    for (name, value) in controller_settings(setup) {
+        if name == "Powered" {
+            let _ = std::process::Command::new(crate::sys::tool("rfkill"))
+                .args(["unblock", "bluetooth"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
         }
-    });
+        set_prop(conn, &path, name, value).await?;
+    }
+    if setup.pairing_seconds > 0 && setup.wireless.any() {
+        println!(
+            "[bt] new devices find and pair with LIVI for {} s, BlueZ ends it",
+            setup.pairing_seconds.min(u32::from(u16::MAX))
+        );
+    }
+    Ok(())
 }
 
 async fn start_carplay(
@@ -1051,6 +1070,7 @@ mod tests {
             discoverable,
             pairable: true,
             discoverable_timeout: 180,
+            pairable_timeout: 0,
         }
     }
 
@@ -1089,18 +1109,78 @@ mod tests {
         assert_eq!(Pairing::default(), Pairing::Livi);
     }
 
+    fn setup(pairing: Pairing, wireless: bool, seconds: u32) -> Setup {
+        Setup {
+            adapter: "hci0".into(),
+            alias: "LIVI".into(),
+            wireless: Wireless {
+                carplay: wireless,
+                android_auto: false,
+            },
+            pairing,
+            pairing_seconds: seconds,
+        }
+    }
+
+    fn names(settings: &[(&'static str, Value<'static>)]) -> Vec<&'static str> {
+        settings.iter().map(|(name, _)| *name).collect()
+    }
+
     #[test]
     fn with_pairing_left_to_another_program_pairable_is_never_touched() {
-        assert_eq!(
-            Pairing::Livi.closed_after_a_while(),
-            ["Discoverable", "Pairable"]
-        );
-        assert_eq!(Pairing::Other.closed_after_a_while(), ["Discoverable"]);
+        let other = controller_settings(&setup(Pairing::Other, true, 120));
+        assert!(!names(&other).iter().any(|n| n.starts_with("Pairable")));
         assert!(Pairing::Livi.put_back(true).contains(&"Pairable"));
+        assert!(Pairing::Livi.put_back(true).contains(&"PairableTimeout"));
         assert!(!Pairing::Other.put_back(true).contains(&"Pairable"));
+        assert!(!Pairing::Other.put_back(true).contains(&"PairableTimeout"));
         // another controller LIVI held goes back as it was found, whoever pairs on LIVI's
         assert!(Pairing::Other.put_back(false).contains(&"Pairable"));
         assert!(Pairing::Other.put_back(true).contains(&"Discoverable"));
+    }
+
+    #[test]
+    fn bluez_ends_the_pairing_window_its_timeouts_come_before_their_switches() {
+        let livi = controller_settings(&setup(Pairing::Livi, true, 120));
+        assert_eq!(
+            names(&livi),
+            [
+                "Alias",
+                "DiscoverableTimeout",
+                "Powered",
+                "Discoverable",
+                "PairableTimeout",
+                "Pairable"
+            ]
+        );
+        let value = |name: &str| {
+            livi.iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(value("DiscoverableTimeout"), Some(Value::from(120u32)));
+        assert_eq!(value("PairableTimeout"), Some(Value::from(120u32)));
+        assert_eq!(value("Discoverable"), Some(Value::from(true)));
+        // 0: open for good, as BlueZ takes a timeout of 0
+        let open = controller_settings(&setup(Pairing::Livi, true, 0));
+        assert!(open.contains(&("DiscoverableTimeout", Value::from(0u32))));
+        assert!(open.contains(&("PairableTimeout", Value::from(0u32))));
+        // the kernel takes 16 bits for discovery
+        let long = controller_settings(&setup(Pairing::Livi, true, 100_000));
+        assert!(long.contains(&("DiscoverableTimeout", Value::from(65_535u32))));
+        // nothing wireless: not discoverable, no discovery timeout
+        let wired = controller_settings(&setup(Pairing::Livi, false, 120));
+        assert_eq!(
+            names(&wired),
+            [
+                "Alias",
+                "Powered",
+                "Discoverable",
+                "PairableTimeout",
+                "Pairable"
+            ]
+        );
+        assert!(wired.contains(&("Discoverable", Value::from(false))));
     }
 
     #[test]
