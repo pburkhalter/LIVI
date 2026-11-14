@@ -2,10 +2,13 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::os::fd::OwnedFd;
 
+use crate::bluez_restart::{Part, Registry, Restarts};
 use crate::shared_sock::Track;
+use futures_util::StreamExt;
 use tokio::sync::mpsc;
-use zbus::Connection;
+use zbus::message::Type;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::{Connection, MatchRule, MessageStream};
 
 pub use crate::bluetoothd::Wireless;
 
@@ -31,7 +34,10 @@ pub const CARPLAY_SERVICE_UUID: &str = "ec884348-cd41-40a2-9727-575d50bf1fd3";
 pub const IAP_CHANNEL: u16 = 3;
 
 const ADAPTER_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
-const ADAPTER_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+pub(crate) const ADAPTER1: &str = "org.bluez.Adapter1";
+pub(crate) const MEDIA1: &str = "org.bluez.Media1";
+pub(crate) const ADVERTISING1: &str = "org.bluez.LEAdvertisingManager1";
+const BUSY_AGAIN: std::time::Duration = std::time::Duration::from_millis(200);
 const LET_GO_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 const IAP_SERVER_PATH: &str = "/livi/cp/iap_server";
@@ -208,7 +214,7 @@ fn controller_settings(setup: &Setup) -> Vec<(&'static str, Value<'static>)> {
     settings
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Held(Vec<(String, Found)>, Pairing);
 
 fn to_put_back(found: Found, alias: &str) -> Found {
@@ -223,7 +229,9 @@ fn to_put_back(found: Found, alias: &str) -> Found {
     }
 }
 
-async fn controllers(conn: &Connection) -> Result<Vec<(String, Found)>, Box<dyn Error>> {
+type Objects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
+
+async fn managed_objects(conn: &Connection) -> Result<Objects, Box<dyn Error>> {
     let reply = conn
         .call_method(
             Some("org.bluez"),
@@ -233,8 +241,11 @@ async fn controllers(conn: &Connection) -> Result<Vec<(String, Found)>, Box<dyn 
             &(),
         )
         .await?;
-    let objects: HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>> =
-        reply.body().deserialize()?;
+    Ok(reply.body().deserialize()?)
+}
+
+async fn controllers(conn: &Connection) -> Result<Vec<(String, Found)>, Box<dyn Error>> {
+    let objects = managed_objects(conn).await?;
     let mut out = Vec::new();
     for (path, interfaces) in objects {
         let Some(props) = interfaces.get("org.bluez.Adapter1") else {
@@ -274,11 +285,20 @@ async fn hold(conn: &Connection, adapter: &str, alias: &str, pairing: Pairing) -
             return Held(Vec::new(), pairing);
         }
     };
-    let held: Vec<(String, Found)> = found
-        .into_iter()
-        .map(|(name, found)| (name, to_put_back(found, alias)))
-        .collect();
-    for (name, back) in &held {
+    let held = Held(
+        found
+            .into_iter()
+            .map(|(name, found)| (name, to_put_back(found, alias)))
+            .collect(),
+        pairing,
+    );
+    hold_others(conn, adapter, &held).await;
+    held
+}
+
+/// The other controllers neither carry LIVI's name nor take new devices while LIVI runs
+pub(crate) async fn hold_others(conn: &Connection, adapter: &str, held: &Held) {
+    for (name, back) in &held.0 {
         if name == adapter {
             continue;
         }
@@ -294,7 +314,6 @@ async fn hold(conn: &Connection, adapter: &str, alias: &str, pairing: Pairing) -
             }
         }
     }
-    Held(held, pairing)
 }
 
 pub async fn let_go(conn: &Connection, adapter: &str, held: &Held) {
@@ -356,57 +375,119 @@ async fn register_profile(
     Ok(())
 }
 
+/// Registers LIVI with the system's bluetoothd and sets up its controller. The registry carries what it registered, and
+/// what the later `start_*` add, to a bluetoothd that starts anew (`Registry::follow`)
 pub async fn start(
     setup: &Setup,
-) -> Result<(Connection, mpsc::UnboundedReceiver<IncomingConn>, Held), Box<dyn Error>> {
-    let (adapter, alias, wireless, pairing) = (
-        setup.adapter.as_str(),
-        setup.alias.as_str(),
-        setup.wireless,
-        setup.pairing,
-    );
-    let conn = Connection::system().await?;
-    let (tx, rx) = mpsc::unbounded_channel();
+) -> Result<
+    (
+        Connection,
+        mpsc::UnboundedReceiver<IncomingConn>,
+        Held,
+        Registry,
+    ),
+    Box<dyn Error>,
+> {
+    start_on(Connection::system().await?, setup).await
+}
 
-    let ours = || adapter.to_string();
+/// `start` on a connection of the caller's (the tests' stand-in for bluetoothd)
+pub async fn start_on(
+    conn: Connection,
+    setup: &Setup,
+) -> Result<
+    (
+        Connection,
+        mpsc::UnboundedReceiver<IncomingConn>,
+        Held,
+        Registry,
+    ),
+    Box<dyn Error>,
+> {
+    let (adapter, alias, pairing) = (setup.adapter.as_str(), setup.alias.as_str(), setup.pairing);
+    // followed before the first registration: a bluetoothd that comes after it is told everything again
+    let restarts = Restarts::follow(&conn).await?;
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut parts = Vec::new();
+
     if pairing == Pairing::Livi {
         conn.object_server()
-            .at(AGENT_PATH, Agent { adapter: ours() })
+            .at(
+                AGENT_PATH,
+                Agent {
+                    adapter: adapter.to_string(),
+                },
+            )
             .await?;
     }
-    if wireless.carplay {
-        start_carplay(&conn, adapter, tx).await?;
+    if setup.wireless.carplay {
+        export_carplay(&conn, adapter, tx).await?;
+        register_carplay(&conn).await?;
+        parts.push(Part::CarPlay);
     }
 
     if pairing == Pairing::Livi {
-        conn.call_method(
-            Some("org.bluez"),
-            "/org/bluez",
-            Some("org.bluez.AgentManager1"),
-            "RegisterAgent",
-            &(ObjectPath::try_from(AGENT_PATH)?, "KeyboardDisplay"),
-        )
-        .await?;
-        conn.call_method(
-            Some("org.bluez"),
-            "/org/bluez",
-            Some("org.bluez.AgentManager1"),
-            "RequestDefaultAgent",
-            &(ObjectPath::try_from(AGENT_PATH)?,),
-        )
-        .await?;
+        register_agent(&conn).await?;
+        parts.push(Part::Agent);
     } else {
         println!(
             "[bt] pairing is left to another program (LIVI_BT_AGENT=0): no agent, Pairable untouched"
         );
     }
 
-    let adapter_path = format!("/org/bluez/{adapter}");
-    wait_for_adapter(&conn, &adapter_path).await?;
+    let path = format!("/org/bluez/{adapter}");
+    adapter_ready(&conn, &path, &[ADAPTER1], Some(ADAPTER_WAIT)).await?;
     let held = hold(&conn, adapter, alias, pairing).await;
     configure(&conn, setup).await?;
 
-    Ok((conn, rx, held))
+    let registry = Registry::new(conn.clone(), setup.clone(), held.clone(), parts, restarts);
+    Ok((conn, rx, held, registry))
+}
+
+async fn register_agent(conn: &Connection) -> Result<(), Box<dyn Error>> {
+    conn.call_method(
+        Some("org.bluez"),
+        "/org/bluez",
+        Some("org.bluez.AgentManager1"),
+        "RegisterAgent",
+        &(ObjectPath::try_from(AGENT_PATH)?, "KeyboardDisplay"),
+    )
+    .await?;
+    conn.call_method(
+        Some("org.bluez"),
+        "/org/bluez",
+        Some("org.bluez.AgentManager1"),
+        "RequestDefaultAgent",
+        &(ObjectPath::try_from(AGENT_PATH)?,),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Registers a part again with a bluetoothd that started anew (`Registry::follow`)
+pub(crate) async fn register_part(
+    conn: &Connection,
+    adapter: &str,
+    part: &Part,
+) -> Result<(), Box<dyn Error>> {
+    match part {
+        Part::Agent => register_agent(conn).await,
+        Part::CarPlay => register_carplay(conn).await,
+        Part::Hfp => register_hfp(conn).await,
+        Part::AndroidAuto => register_aa(conn).await,
+        Part::Advertisement => register_ble_ad(conn, adapter).await,
+        Part::Player { status, track } => register_player(conn, adapter, status, track).await,
+    }
+}
+
+/// Sets up LIVI's controller again for a bluetoothd that started anew: the other controllers as at the start, then LIVI's
+pub(crate) async fn configure_again(
+    conn: &Connection,
+    setup: &Setup,
+    held: &Held,
+) -> Result<(), Box<dyn Error>> {
+    hold_others(conn, &setup.adapter, held).await;
+    configure(conn, setup).await
 }
 
 /// Sets up LIVI's controller (`controller_settings`)
@@ -431,7 +512,7 @@ async fn configure(conn: &Connection, setup: &Setup) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-async fn start_carplay(
+async fn export_carplay(
     conn: &Connection,
     adapter: &str,
     tx: mpsc::UnboundedSender<IncomingConn>,
@@ -464,7 +545,12 @@ async fn start_carplay(
             },
         )
         .await?;
+    Ok(())
+}
 
+/// The iAP2 server profile (RFCOMM channel 3), which a CarPlay phone needs; the client profile and the record that
+/// announces CarPlay only with a line when BlueZ refuses them
+async fn register_carplay(conn: &Connection) -> Result<(), Box<dyn Error>> {
     let mut iap_opts: HashMap<&str, Value> = HashMap::new();
     iap_opts.insert("Role", Value::from("server"));
     iap_opts.insert("Channel", Value::from(IAP_CHANNEL));
@@ -493,26 +579,69 @@ async fn start_carplay(
     Ok(())
 }
 
-async fn wait_for_adapter(conn: &Connection, path: &str) -> Result<(), Box<dyn Error>> {
-    let deadline = std::time::Instant::now() + ADAPTER_WAIT;
-    loop {
-        let asked = conn
-            .call_method(
-                Some("org.bluez"),
-                path,
-                Some("org.freedesktop.DBus.Properties"),
-                "Get",
-                &("org.bluez.Adapter1", "Address"),
-            )
-            .await;
-        match asked {
-            Ok(_) => return Ok(()),
-            Err(e) if std::time::Instant::now() >= deadline => {
-                return Err(format!("BlueZ never published {path}: {e}").into());
+/// Waits until bluetoothd shows the controller at `path` with all of `needs`, at most `patience` (None: as long as it
+/// takes). ObjectManager's InterfacesAdded, followed before a look at what is there already, so that nothing slips
+/// between the two
+pub(crate) async fn adapter_ready(
+    conn: &Connection,
+    path: &str,
+    needs: &[&str],
+    patience: Option<std::time::Duration>,
+) -> Result<(), Box<dyn Error>> {
+    let rule = MatchRule::builder()
+        .msg_type(Type::Signal)
+        .sender("org.bluez")?
+        .interface("org.freedesktop.DBus.ObjectManager")?
+        .member("InterfacesAdded")?
+        .build();
+    let mut added = MessageStream::for_match_rule(rule, conn, None).await?;
+    let objects = managed_objects(conn).await?;
+    let there = objects
+        .iter()
+        .find(|(p, _)| p.as_str() == path)
+        .map(|(_, i)| i);
+    let mut missing = still_missing(needs, there.map(|i| i.keys().map(String::as_str).collect()));
+    if !missing.is_empty() {
+        println!(
+            "[bt] waiting for BlueZ to show {path} ({})",
+            missing.join(", ")
+        );
+    }
+    let deadline = patience.map(|p| tokio::time::Instant::now() + p);
+    while !missing.is_empty() {
+        let next = async {
+            match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, added.next()).await,
+                None => Ok(added.next().await),
             }
-            Err(_) => tokio::time::sleep(ADAPTER_POLL).await,
+        };
+        let msg = match next.await {
+            Ok(Some(msg)) => msg?,
+            Ok(None) => return Err("the system bus closed".into()),
+            Err(_) => {
+                return Err(
+                    format!("BlueZ never published {path} with {}", missing.join(", ")).into(),
+                );
+            }
+        };
+        let (object, interfaces): (
+            OwnedObjectPath,
+            HashMap<String, HashMap<String, OwnedValue>>,
+        ) = msg.body().deserialize()?;
+        if object.as_str() == path {
+            missing = still_missing(
+                &missing,
+                Some(interfaces.keys().map(String::as_str).collect()),
+            );
         }
     }
+    Ok(())
+}
+
+/// Which of `needs` an object does not have (all, when it is not there)
+fn still_missing<'a>(needs: &[&'a str], has: Option<Vec<&str>>) -> Vec<&'a str> {
+    let has = has.unwrap_or_default();
+    needs.iter().copied().filter(|n| !has.contains(n)).collect()
 }
 
 async fn set_prop(
@@ -546,7 +675,7 @@ async fn set_prop_within(
             Ok(_) => return Ok(()),
             Err(e) if busy(&e) && std::time::Instant::now() < deadline => {
                 println!("[bt] {path} is still busy, offering {name} again");
-                tokio::time::sleep(ADAPTER_POLL).await;
+                tokio::time::sleep(BUSY_AGAIN).await;
             }
             Err(e) => return Err(e.into()),
         }
@@ -582,29 +711,33 @@ fn busy_answer(name: &str, message: Option<&str>) -> bool {
 }
 
 pub async fn start_aa(
-    conn: &Connection,
-    adapter: &str,
+    registry: &Registry,
 ) -> Result<mpsc::UnboundedReceiver<IncomingConn>, Box<dyn Error>> {
+    let conn = registry.conn();
     let (tx, rx) = mpsc::unbounded_channel();
     conn.object_server()
         .at(
             AA_PATH,
             Profile {
                 tx,
-                adapter: adapter.to_string(),
+                adapter: registry.adapter().to_string(),
             },
         )
         .await?;
+    register_aa(conn).await?;
+    registry.add(Part::AndroidAuto);
+    println!("[aa] profile registered (RFCOMM ch {AA_CHANNEL})");
+    Ok(rx)
+}
 
+async fn register_aa(conn: &Connection) -> Result<(), Box<dyn Error>> {
     let mut opts: HashMap<&str, Value> = HashMap::new();
     opts.insert("Role", Value::from("server"));
     opts.insert("Channel", Value::from(AA_CHANNEL));
     opts.insert("ServiceRecord", Value::from(AA_RECORD));
     opts.insert("RequireAuthentication", Value::from(false));
     opts.insert("RequireAuthorization", Value::from(false));
-    register_profile(conn, AA_PATH, AA_UUID, opts).await?;
-    println!("[aa] profile registered (RFCOMM ch {AA_CHANNEL})");
-    Ok(rx)
+    register_profile(conn, AA_PATH, AA_UUID, opts).await
 }
 
 pub const HFP_HF_UUID: &str = "0000111e-0000-1000-8000-00805f9b34fb";
@@ -637,20 +770,30 @@ impl HfpProfile {
     fn release(&self) {}
 }
 
-pub async fn start_hfp(
-    conn: &Connection,
-    adapter: &str,
-    hfp: crate::hfp::Hfp,
-) -> Result<(), Box<dyn Error>> {
+/// The hands-free profile, if no other program has it (the audio daemon, oFono): only then does a bluetoothd that
+/// starts anew get it from LIVI again, so that the program that had it at the start keeps it
+pub async fn start_hfp(registry: &Registry, hfp: crate::hfp::Hfp) -> Result<(), Box<dyn Error>> {
+    let conn = registry.conn();
     conn.object_server()
         .at(
             HFP_PATH,
             HfpProfile {
                 hfp,
-                adapter: adapter.to_string(),
+                adapter: registry.adapter().to_string(),
             },
         )
         .await?;
+    match register_hfp(conn).await {
+        Ok(()) => {
+            registry.add(Part::Hfp);
+            println!("[hfp] HF profile registered")
+        }
+        Err(e) => println!("[hfp] HF profile held by the audio daemon ({e})"),
+    }
+    Ok(())
+}
+
+async fn register_hfp(conn: &Connection) -> Result<(), Box<dyn Error>> {
     let mut opts: HashMap<&str, Value> = HashMap::new();
     opts.insert("Name", Value::from("HFP Hands-Free"));
     opts.insert("Role", Value::from("client"));
@@ -658,11 +801,7 @@ pub async fn start_hfp(
     opts.insert("RequireAuthorization", Value::from(false));
     opts.insert("Features", Value::from(0x009cu16));
     opts.insert("Version", Value::from(0x0108u16));
-    match register_profile(conn, HFP_PATH, HFP_HF_UUID, opts).await {
-        Ok(()) => println!("[hfp] HF profile registered"),
-        Err(e) => println!("[hfp] HF profile held by the audio daemon ({e})"),
-    }
-    Ok(())
+    register_profile(conn, HFP_PATH, HFP_HF_UUID, opts).await
 }
 
 struct BleAd {
@@ -689,25 +828,28 @@ impl BleAd {
     }
 }
 
-pub async fn start_ble_ad(
-    conn: &Connection,
-    adapter: &str,
-    name: &str,
-) -> Result<(), Box<dyn Error>> {
+pub async fn start_ble_ad(registry: &Registry, name: &str) -> Result<(), Box<dyn Error>> {
+    let conn = registry.conn();
     conn.object_server()
         .at(BLE_AD_PATH, BleAd { name: name.into() })
         .await?;
+    register_ble_ad(conn, registry.adapter()).await?;
+    registry.add(Part::Advertisement);
+    println!("[aa] BLE advertisement registered");
+    Ok(())
+}
+
+async fn register_ble_ad(conn: &Connection, adapter: &str) -> Result<(), Box<dyn Error>> {
     let path = format!("/org/bluez/{adapter}");
     let opts: HashMap<&str, Value> = HashMap::new();
     conn.call_method(
         Some("org.bluez"),
         path.as_str(),
-        Some("org.bluez.LEAdvertisingManager1"),
+        Some(ADVERTISING1),
         "RegisterAdvertisement",
         &(ObjectPath::try_from(BLE_AD_PATH)?, opts),
     )
     .await?;
-    println!("[aa] BLE advertisement registered");
     Ok(())
 }
 
@@ -957,10 +1099,10 @@ impl MprisPlayer {
 }
 
 pub async fn start_media_player(
-    conn: &Connection,
-    adapter: &str,
+    registry: &Registry,
     events: crate::livi_sock::Broadcaster,
 ) -> Result<MediaPlayerHandle, Box<dyn Error>> {
+    let conn = registry.conn();
     let status = std::sync::Arc::new(std::sync::Mutex::new("Playing".to_string()));
     let track = std::sync::Arc::new(std::sync::Mutex::new(Track::default()));
     conn.object_server().at(PLAYER_PATH, MprisRoot).await?;
@@ -974,9 +1116,24 @@ pub async fn start_media_player(
             },
         )
         .await?;
+    register_player(conn, registry.adapter(), &status, &track).await?;
+    registry.add(Part::Player {
+        status: status.clone(),
+        track: track.clone(),
+    });
+    println!("[aa] media player registered at {PLAYER_PATH}");
+    Ok(MediaPlayerHandle {
+        conn: conn.clone(),
+        status,
+        track,
+    })
+}
 
-    let mut props: HashMap<&str, Value> = HashMap::new();
-    props.insert("PlaybackStatus", Value::from("Playing"));
+/// What BlueZ learns of the player when it is registered; later changes come as PropertiesChanged. A bluetoothd that
+/// starts anew gets what plays now
+fn player_properties(status: &str, track: &Track) -> HashMap<&'static str, Value<'static>> {
+    let mut props: HashMap<&'static str, Value<'static>> = HashMap::new();
+    props.insert("PlaybackStatus", Value::from(status.to_string()));
     props.insert("LoopStatus", Value::from("None"));
     props.insert("Rate", Value::from(1.0f64));
     props.insert("Shuffle", Value::from(false));
@@ -990,22 +1147,33 @@ pub async fn start_media_player(
     props.insert("CanPause", Value::from(true));
     props.insert("CanSeek", Value::from(false));
     props.insert("CanControl", Value::from(true));
+    let metadata = track_metadata(track);
+    if !metadata.is_empty() {
+        props.insert("Metadata", Value::from(metadata));
+    }
+    props
+}
 
+async fn register_player(
+    conn: &Connection,
+    adapter: &str,
+    status: &std::sync::Mutex<String>,
+    track: &std::sync::Mutex<Track>,
+) -> Result<(), Box<dyn Error>> {
+    let props = {
+        let (status, track) = (status.lock().unwrap(), track.lock().unwrap());
+        player_properties(&status, &track)
+    };
     let path = format!("/org/bluez/{adapter}");
     conn.call_method(
         Some("org.bluez"),
         path.as_str(),
-        Some("org.bluez.Media1"),
+        Some(MEDIA1),
         "RegisterPlayer",
         &(ObjectPath::try_from(PLAYER_PATH)?, props),
     )
     .await?;
-    println!("[aa] media player registered at {PLAYER_PATH}");
-    Ok(MediaPlayerHandle {
-        conn: conn.clone(),
-        status,
-        track,
-    })
+    Ok(())
 }
 
 pub async fn adapter_address(conn: &Connection, adapter: &str) -> Result<[u8; 6], Box<dyn Error>> {

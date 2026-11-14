@@ -22,6 +22,8 @@ pub mod vehicle;
 pub mod wifi_ap;
 
 #[cfg(target_os = "linux")]
+pub mod bluez_restart;
+#[cfg(target_os = "linux")]
 pub mod bt;
 pub mod mfi_async;
 

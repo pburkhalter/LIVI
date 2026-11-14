@@ -245,10 +245,11 @@ mod linux {
             let _ = std::process::Command::new(crate::sys::tool("systemctl"))
                 .arg("daemon-reload")
                 .status();
+            // returns once bluetoothd owns its name (bluetooth.service is Type=dbus); bt::start then waits for the
+            // controller by its InterfacesAdded
             let _ = std::process::Command::new(crate::sys::tool("systemctl"))
                 .args(["restart", "bluetooth"])
                 .status();
-            std::thread::sleep(std::time::Duration::from_secs(5));
         }
     }
 }
