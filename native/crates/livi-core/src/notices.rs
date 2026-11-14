@@ -1,16 +1,21 @@
 //! LIVI as the notification server of the session it runs in: org.freedesktop.Notifications on the session bus
 //! (Desktop Notifications Specification 1.2). Programs notify with the usual tools (notify-send, libnotify, busctl);
-//! their notices land in the state for the UI, where the user closes them (Action::DismissNotice). Without a session
-//! bus, or while another notification server holds the name, LIVI tries again now and then.
+//! their notices land in the state for the UI, where the user closes them (Action::DismissNotice). While another
+//! notification server holds the name, LIVI waits in the bus's queue for it and serves once the bus hands it over
+//! (NameAcquired). Without a session bus there are no notifications, and LIVI says so once.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures_util::StreamExt;
 use livi_core_proto::state::Notice;
+use zbus::fdo::RequestNameReply;
+use zbus::message::Type;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::OwnedValue;
+use zbus::{MatchRule, MessageStream};
 
 use crate::server::Core;
 
@@ -23,9 +28,6 @@ const SUMMARY_MAX: usize = 200;
 const BODY_MAX: usize = 2000;
 /// How long a transient notice without its own timeout stays
 const TRANSIENT_MS: u64 = 8000;
-/// Waits between attempts to get the name on the bus
-const RETRY_FIRST: Duration = Duration::from_secs(2);
-const RETRY_MAX: Duration = Duration::from_secs(60);
 /// Reasons of NotificationClosed
 const EXPIRED: u32 = 1;
 const DISMISSED: u32 = 2;
@@ -278,40 +280,60 @@ impl Server {
     ) -> zbus::Result<()>;
 }
 
+/// LIVI's notification server on the session bus, without the name yet
 async fn connect(core: Arc<Core>) -> zbus::Result<zbus::Connection> {
     let server = Server {
         core,
         counters: Counters::new(first_id()),
     };
     zbus::connection::Builder::session()?
-        .name(NAME)?
         .serve_at(PATH, server)?
         .build()
         .await
 }
 
-/// Serves the notifications as long as LIVI runs. The session bus may come up after LIVI, and another server may
-/// hold the name for a while: it tries again, less often the longer it fails.
-pub async fn serve(core: Arc<Core>) {
-    let mut wait = RETRY_FIRST;
-    let mut told = String::new();
-    loop {
-        match connect(core.clone()).await {
-            Ok(bus) => {
-                println!("[core] notifications: {NAME} on the session bus");
-                let _ = BUS.set(bus);
-                return;
-            }
-            Err(e) => {
-                let why = e.to_string();
-                if why != told {
-                    println!("[core] notifications: not served yet ({why}), trying again");
-                    told = why;
-                }
-            }
+/// The name, from the bus's queue: RequestName neither takes it from the server that has it (no ReplaceExisting) nor
+/// gives up when it is taken (no DoNotQueue). Returns once the bus gave it, at once or later by NameAcquired
+async fn take_name(bus: &zbus::Connection) -> zbus::Result<()> {
+    let rule = MatchRule::builder()
+        .msg_type(Type::Signal)
+        .sender("org.freedesktop.DBus")?
+        .interface("org.freedesktop.DBus")?
+        .member("NameAcquired")?
+        .add_arg(NAME)?
+        .build();
+    let mut acquired = MessageStream::for_match_rule(rule, bus, None).await?;
+    match bus
+        .request_name_with_flags(NAME, Default::default())
+        .await?
+    {
+        RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner => return Ok(()),
+        RequestNameReply::InQueue => {
+            println!(
+                "[core] notifications: another server holds {NAME}, LIVI waits in the queue for it"
+            )
         }
-        tokio::time::sleep(wait).await;
-        wait = (wait * 2).min(RETRY_MAX);
+        RequestNameReply::Exists => return Err(zbus::Error::NameTaken),
+    }
+    match acquired.next().await {
+        Some(msg) => msg.map(|_| ()),
+        None => Err(zbus::Error::Failure("the session bus closed".into())),
+    }
+}
+
+/// Serves the notifications as long as LIVI runs, once the session bus gave LIVI the name
+pub async fn serve(core: Arc<Core>) {
+    let bus = match connect(core).await {
+        Ok(bus) => bus,
+        Err(e) => {
+            eprintln!("[core] notifications: no session bus ({e}), {NAME} is not served");
+            return;
+        }
+    };
+    let _ = BUS.set(bus.clone());
+    match take_name(&bus).await {
+        Ok(()) => println!("[core] notifications: {NAME} on the session bus"),
+        Err(e) => eprintln!("[core] notifications: {NAME} is not served ({e})"),
     }
 }
 
