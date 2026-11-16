@@ -889,6 +889,7 @@ async fn a_call_or_siri_brings_the_projection_forward_and_back() {
     rig.want(Front::Livi);
     assert_eq!(rig.front(), Front::Livi);
 
+    // the voice mode of an app: telephony sound without a call of the phone stays behind
     let call = AudioProfile {
         kind: AudioKind::Call,
         label: "telephony".into(),
@@ -898,15 +899,38 @@ async fn a_call_or_siri_brings_the_projection_forward_and_back() {
         profile: call.clone(),
         active: true,
     });
-    assert_eq!(rig.front(), Front::Projection);
-    rig.want(Front::Projection);
-    rig.want(Front::Livi);
     assert_eq!(rig.front(), Front::Livi);
+    rig.p.on_event(CpEvent::AudioActive {
+        id: 1,
+        profile: call.clone(),
+        active: false,
+    });
+    assert_eq!(rig.front(), Front::Livi);
+
+    // a call of the phone with its sound: the call brings the picture, its end takes it back, the sound changes nothing
+    rig.p.on_event(CpEvent::Call {
+        id: 1,
+        phase: CallPhase::Ringing,
+    });
+    rig.p.on_event(CpEvent::AudioActive {
+        id: 1,
+        profile: call.clone(),
+        active: true,
+    });
+    assert_eq!(rig.front(), Front::Projection);
     rig.p.on_event(CpEvent::AudioActive {
         id: 1,
         profile: call,
         active: false,
     });
+    assert_eq!(rig.front(), Front::Projection);
+    rig.p.on_event(CpEvent::Call {
+        id: 1,
+        phase: CallPhase::Ended,
+    });
+    assert_eq!(rig.front(), Front::Livi);
+    rig.want(Front::Projection);
+    rig.want(Front::Livi);
     assert_eq!(rig.front(), Front::Livi);
 
     rig.want(Front::Projection);
