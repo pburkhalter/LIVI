@@ -40,12 +40,9 @@ impl Projection {
                 if self.is_active(Link::Cp(id)) {
                     self.activity(|a| a.stream(profile.kind, active));
                 }
-                if profile.kind == AudioKind::Call
-                    && self.is_active(Link::Cp(id))
-                    && self.cp_call_front
-                {
-                    self.attend(Attention::Call, active);
-                }
+                // The sound of a call alone does not bring the phone's picture to the front: the voice mode of an
+                // app (a VoIP call over CallKit) opens the same telephony stream without being a call of the
+                // phone, and the phone then shows its map, not a call. A call the phone reports (Call below) does.
             }
             CpEvent::Duck {
                 id,
