@@ -18,16 +18,25 @@ pub struct HelperState {
     bt_next: AtomicU64,
 }
 
-/// A Bluetooth iAP2 link of the helper's. `close`: the link's socket shuts down (driver `spawn_link_closable`). `id`
-/// tells it from a later link to the same phone
+/// A Bluetooth iAP2 link of the helper's. `again`: the session offers CarPlay once more (bringup `start_again`),
+/// `close`: the link's socket shuts down (driver `spawn_link_closable`). `id` tells it from a later link to the same phone
 #[derive(Clone, Default)]
 pub struct BtLink {
     pub id: u64,
+    pub again: Arc<Notify>,
     pub close: Arc<Notify>,
 }
 
 struct BtEntry {
     link: BtLink,
+    asked: bool,
+}
+
+/// What `start_bt_again` did: `offered` false when the link heard the start once more already
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BtStart {
+    pub link: u64,
+    pub offered: bool,
 }
 
 struct Wired {
@@ -117,7 +126,10 @@ impl HelperState {
         };
         self.bt.lock().unwrap().insert(
             mac.to_uppercase(),
-            BtEntry { link: link.clone() },
+            BtEntry {
+                link: link.clone(),
+                asked: false,
+            },
         );
         link
     }
@@ -133,6 +145,21 @@ impl HelperState {
 
     pub fn bt_link_active(&self, mac: &str) -> bool {
         self.bt.lock().unwrap().contains_key(&mac.to_uppercase())
+    }
+
+    /// The session on the Bluetooth link to `mac` offers CarPlay once more, at most once per link. None: no link
+    pub fn start_bt_again(&self, mac: &str) -> Option<BtStart> {
+        let mut bt = self.bt.lock().unwrap();
+        let entry = bt.get_mut(&mac.to_uppercase())?;
+        let offered = !entry.asked;
+        if offered {
+            entry.asked = true;
+            entry.link.again.notify_one();
+        }
+        Some(BtStart {
+            link: entry.link.id,
+            offered,
+        })
     }
 
     /// The Bluetooth iAP2 link to `mac` shuts down, only the one with `link` when named; false: there is none
@@ -266,6 +293,38 @@ mod tests {
 
         state.wired_ended("00008120");
         assert!(!state.reset_wired("00008120"));
+    }
+
+    #[tokio::test]
+    async fn a_bluetooth_link_hears_the_start_once_more_only_once() {
+        let state = HelperState::default();
+        assert_eq!(state.start_bt_again("78:3f:4d:62:0f:84"), None);
+        let link = state.bt_link_started("78:3F:4D:62:0F:84");
+        assert!(state.bt_link_active("78:3f:4d:62:0f:84"));
+        let once = state.start_bt_again("78:3f:4d:62:0f:84");
+        assert_eq!(
+            once,
+            Some(BtStart {
+                link: link.id,
+                offered: true
+            })
+        );
+        link.again.notified().await;
+        assert_eq!(
+            state.start_bt_again("78:3F:4D:62:0F:84"),
+            Some(BtStart {
+                link: link.id,
+                offered: false
+            })
+        );
+
+        // a new link to the same phone may hear it once more again
+        state.bt_link_ended("78:3f:4d:62:0f:84", &link);
+        assert!(!state.bt_link_active("78:3F:4D:62:0F:84"));
+        let next = state.bt_link_started("78:3f:4d:62:0f:84");
+        assert_ne!(next.id, link.id);
+        assert!(state.start_bt_again("78:3f:4d:62:0f:84").unwrap().offered);
+        next.again.notified().await;
     }
 
     #[tokio::test]

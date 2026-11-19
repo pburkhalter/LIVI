@@ -598,9 +598,9 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
                     let (channel, art_rx) = spawn_link_stream(session.stream, cfg, false);
                     let (tx, rx) = tokio::sync::mpsc::channel(64);
                     let mac = session.peer.to_string();
-                    // the helper may end the session (livi_runtime::bredr after disableBluetooth)
+                    // LIVI may ask the session for the start once more, or end it (livi_sock start-bt, drop-bt)
                     let link = state.bt_link_started(&mac);
-                    let cp = CpConfig { on_cable: Some(crate::link::dongle_on_cable(state.clone())), ..session_cp(&cp, dongle_ap) };
+                    let cp = CpConfig { on_cable: Some(crate::link::dongle_on_cable(state.clone())), start_again: Some(link.again.clone()), ..session_cp(&cp, dongle_ap) };
                     let accessory = run_accessory(channel, auth, identity.clone(), cp, tx, state.vehicle_feed());
                     let links = state.clone();
                     tokio::spawn(async move {
@@ -627,11 +627,11 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
                     println!("[helperd] phone connected mac={}", conn.peer_mac);
                     let cfg = LinkConfig { max_outgoing: 4, control_version: 2, ..LinkConfig::default() };
                     let mac = conn.peer_mac.clone();
-                    // the helper may shut the link (livi_runtime::bredr after disableBluetooth)
+                    // LIVI may ask the session for the start once more, or shut the link (livi_sock start-bt, drop-bt)
                     let link = state.bt_link_started(&mac);
                     let (channel, art_rx) = spawn_link_closable(conn.fd, cfg, false, link.close.clone());
                     let (tx, rx) = tokio::sync::mpsc::channel(64);
-                    let cp = CpConfig { on_cable: Some(bt::on_cable(state.clone(), &bus, &adapter)), ..session_cp(&cp, dongle_ap) };
+                    let cp = CpConfig { on_cable: Some(bt::on_cable(state.clone(), &bus, &adapter)), start_again: Some(link.again.clone()), ..session_cp(&cp, dongle_ap) };
                     let accessory = run_accessory(channel, auth, identity.clone(), cp, tx, state.vehicle_feed());
                     let links = state.clone();
                     tokio::spawn(async move {

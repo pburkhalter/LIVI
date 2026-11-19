@@ -17,6 +17,14 @@ pub const SOCK_PATH: &str = "/tmp/cp-bt.sock";
 const TIMEOUT: Duration = Duration::from_secs(8);
 const RESUBSCRIBE: Duration = Duration::from_secs(1);
 
+/// What the helper's `start-bt` did: the link it went to, and whether that link offered the start now (false: it did once
+/// more already)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BtStart {
+    pub link: u64,
+    pub offered: bool,
+}
+
 #[derive(Clone)]
 pub struct HelperSock {
     sock: LineSock,
@@ -96,6 +104,23 @@ impl HelperSock {
 
     pub async fn disconnect_bt(&self, mac: &str) -> Result<(), String> {
         self.request_ok(&format!("disconnect {mac}"))
+            .await
+            .map(drop)
+    }
+
+    /// The session on the phone's Bluetooth iAP2 link offers CarPlay once more (at most once per link, the helper
+    /// keeps count)
+    pub async fn start_bt(&self, mac: &str) -> Result<BtStart, String> {
+        let res = self.request_ok(&format!("start-bt {mac}")).await?;
+        Ok(BtStart {
+            link: res.get("link").and_then(Value::as_u64).unwrap_or(0),
+            offered: res.get("again").and_then(Value::as_bool).unwrap_or(false),
+        })
+    }
+
+    /// The phone's Bluetooth iAP2 link `link` (from `start_bt`) shuts down, not a later one
+    pub async fn drop_bt(&self, mac: &str, link: u64) -> Result<(), String> {
+        self.request_ok(&format!("drop-bt {mac} {link}"))
             .await
             .map(drop)
     }
@@ -317,6 +342,7 @@ pub(crate) mod tests {
             .unwrap();
         helper.seek(61000, Some("AA:BB")).await.unwrap();
         helper.seek(0, None).await.unwrap();
+        helper.drop_bt("AA:BB", 3).await.unwrap();
         assert_eq!(
             seen.lock().unwrap().as_slice(),
             [
@@ -326,8 +352,36 @@ pub(crate) mod tests {
                 "reconnect-targets [[\"AA\",\"u\"],[\"BB\",null]]",
                 "seek 61000 AA:BB",
                 "seek 0",
+                "drop-bt AA:BB 3",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_start_over_bluetooth_names_its_link() {
+        let dir = Dir::new();
+        let path = dir.0.join("cp.sock");
+        serve(&path, |line| match line {
+            "start-bt AA:BB" => Some("{\"ok\":true,\"link\":4,\"again\":true}\n".into()),
+            "start-bt CC:DD" => Some("{\"ok\":true,\"link\":5,\"again\":false}\n".into()),
+            _ => Some("{\"ok\":false,\"error\":\"no link\"}\n".into()),
+        });
+        let helper = HelperSock::new(&path);
+        assert_eq!(
+            helper.start_bt("AA:BB").await,
+            Ok(BtStart {
+                link: 4,
+                offered: true
+            })
+        );
+        assert_eq!(
+            helper.start_bt("CC:DD").await,
+            Ok(BtStart {
+                link: 5,
+                offered: false
+            })
+        );
+        assert_eq!(helper.start_bt("EE:FF").await, Err("no link".into()));
     }
 
     #[tokio::test]

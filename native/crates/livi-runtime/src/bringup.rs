@@ -508,7 +508,13 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
                     continue;
                 }
                 println!("[cp] the phone hears the start once more");
-                if !send_start(&mut ch, &cp, None, mutual, &events, None).await {
+                // over Bluetooth with the network on air now, as the first start
+                let live = if cp.transport == Transport::Wired {
+                    None
+                } else {
+                    on_air(&cp).await
+                };
+                if !send_start(&mut ch, &cp, live, mutual, &events, None).await {
                     break;
                 }
                 continue;

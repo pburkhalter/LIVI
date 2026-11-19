@@ -21,6 +21,13 @@ const STUCK_AFTER: Duration = Duration::from_secs(8);
 const KEEPALIVE_IDLE: Duration = Duration::from_secs(3);
 const PENDING_MAX: usize = 8;
 const HISTORY_KEPT: usize = 10;
+/// How long a phone may take to open a session after the start once more over Bluetooth (a session normally follows
+/// the start within half a second)
+const BT_IGNORED_AFTER: Duration = if cfg!(test) {
+    Duration::from_millis(500)
+} else {
+    Duration::from_secs(10)
+};
 
 pub type SessionId = u64;
 
@@ -198,6 +205,8 @@ struct Session {
     usb_udid: String,
     controller_id: Option<String>,
     connected: bool,
+    /// The phone said disableBluetooth: CarPlay left its Bluetooth link
+    bt_disabled: bool,
 }
 
 impl Session {
@@ -223,6 +232,13 @@ impl Session {
                 .is_some_and(|u| !u.is_empty() && u == self.usb_udid)
             || matches!((&ids.controller_id, &self.controller_id), (Some(a), Some(b)) if !a.is_empty() && a == b)
     }
+}
+
+/// The start once more over Bluetooth went unanswered (`offered`), or the link had heard it already
+struct BtIgnored {
+    mac: String,
+    link: u64,
+    offered: bool,
 }
 
 fn str_of(ev: &Value, key: &str) -> String {
@@ -251,6 +267,8 @@ struct Manager<M: Media> {
     cabled: HashSet<SessionId>,
     cable_addrs: HashMap<String, String>,
     to_cable: HashMap<String, JoinHandle<()>>,
+    bt_again: HashMap<String, JoinHandle<()>>,
+    bt_ignored: mpsc::UnboundedSender<BtIgnored>,
     awaiting: HashMap<String, JoinHandle<()>>,
     reset_once: HashSet<String>,
     initial_night_mode: Option<bool>,
@@ -280,6 +298,7 @@ async fn run<M: Media>(
     let (stack_events, mut stack_rx) = mpsc::unbounded_channel();
     let (ticks, mut tick_rx) = mpsc::unbounded_channel();
     let (stuck, mut stuck_rx) = mpsc::unbounded_channel();
+    let (bt_ignored, mut bt_ignored_rx) = mpsc::unbounded_channel();
     let mut m = Manager {
         ctx,
         events,
@@ -295,6 +314,8 @@ async fn run<M: Media>(
         cabled: HashSet::new(),
         cable_addrs: HashMap::new(),
         to_cable: HashMap::new(),
+        bt_again: HashMap::new(),
+        bt_ignored,
         awaiting: HashMap::new(),
         reset_once: HashSet::new(),
         initial_night_mode: None,
@@ -318,6 +339,7 @@ async fn run<M: Media>(
             Some((id, ev)) = stack_rx.recv() => m.on_stack_event(id, ev),
             Some((udid, attempt)) = tick_rx.recv() => m.start_tick(&udid, attempt),
             Some(udid) = stuck_rx.recv() => m.stuck_tick(&udid),
+            Some(ignored) = bt_ignored_rx.recv() => m.bt_ignored_tick(ignored),
             cmd = cmds.recv() => match cmd {
                 Some(cmd) => m.on_cmd(cmd),
                 None => break,
@@ -327,7 +349,12 @@ async fn run<M: Media>(
     for id in m.sessions.keys().copied().collect::<Vec<_>>() {
         m.close(id);
     }
-    for (_, timer) in m.to_cable.drain().chain(m.awaiting.drain()) {
+    for (_, timer) in m
+        .to_cable
+        .drain()
+        .chain(m.awaiting.drain())
+        .chain(m.bt_again.drain())
+    {
         timer.abort();
     }
 }
@@ -436,6 +463,7 @@ impl<M: Media> Manager<M> {
                 }
                 s.wifi_mac = wifi_mac;
                 let (bt_mac, wifi_mac) = (s.bt_mac.clone(), s.wifi_mac.clone());
+                self.phone_back(&bt_mac);
                 self.adopt_pending(id);
                 self.presence(
                     id,
@@ -456,7 +484,13 @@ impl<M: Media> Manager<M> {
                 self.supersede(id);
                 self.presence(id, Presence::Active { ip });
             }
-            StackEvent::Closed { .. } => self.close(id),
+            StackEvent::Closed { .. } => {
+                let stuck = self.ended_before_main_screen(id);
+                self.close(id);
+                if let Some(mac) = stuck {
+                    self.offer_bt_again(mac);
+                }
+            }
             StackEvent::VideoCodec { cluster, codec } => {
                 self.emit(CpEvent::VideoCodec { id, cluster, codec });
             }
@@ -517,6 +551,9 @@ impl<M: Media> Manager<M> {
                 if mac.is_empty() {
                     return;
                 }
+                if let Some(s) = self.sessions.get_mut(&id) {
+                    s.bt_disabled = true;
+                }
                 let helper = self.ctx.helper.clone();
                 tokio::spawn(async move {
                     match helper.disconnect_bt(&mac).await {
@@ -552,6 +589,87 @@ impl<M: Media> Manager<M> {
             self.live = self.sessions.keys().max().copied();
         }
         self.emit(CpEvent::Disconnected { id });
+    }
+
+    /// A wireless session that the phone closed before the main screen, without disableBluetooth: the phone's
+    /// Bluetooth iAP2 link stays up and waits for a start that went out already (P209). The phone's Bluetooth
+    /// address, lower case
+    fn ended_before_main_screen(&self, id: SessionId) -> Option<String> {
+        let s = self.sessions.get(&id)?;
+        let mac = s.bt_mac.to_lowercase();
+        let wireless =
+            s.usb_udid.is_empty() && !self.is_wired(id) && !self.wired.contains_key(&mac);
+        (wireless && !mac.is_empty() && !s.connected && !s.bt_disabled).then_some(mac)
+    }
+
+    /// The Bluetooth iAP2 link hears the start once more. A phone that opens no session within BT_IGNORED_AFTER, or a
+    /// link that heard the start once more already, loses that link once (`bt_ignored_tick`); the phone then connects
+    /// anew, as after Bluetooth off and on
+    fn offer_bt_again(&mut self, mac: String) {
+        if let Some(old) = self.bt_again.remove(&mac) {
+            old.abort();
+        }
+        let helper = self.ctx.helper.clone();
+        let ignored = self.bt_ignored.clone();
+        let key = mac.clone();
+        let task = tokio::spawn(async move {
+            let start = match helper.start_bt(&key).await {
+                Ok(start) => start,
+                Err(e) => {
+                    println!(
+                        "[CpManager] {key}: the session ended before the main screen, no start once more over Bluetooth: {e}"
+                    );
+                    return;
+                }
+            };
+            if start.offered {
+                println!(
+                    "[CpManager] {key}: the session ended before the main screen, CarPlay is offered once more over Bluetooth"
+                );
+                tokio::time::sleep(BT_IGNORED_AFTER).await;
+            }
+            let _ = ignored.send(BtIgnored {
+                mac: key,
+                link: start.link,
+                offered: start.offered,
+            });
+        });
+        self.bt_again.insert(mac, task);
+    }
+
+    fn bt_ignored_tick(&mut self, ignored: BtIgnored) {
+        let BtIgnored { mac, link, offered } = ignored;
+        if self.bt_again.remove(&mac).is_none() {
+            return;
+        }
+        if offered {
+            println!(
+                "[CpManager] {mac} opened no session within {} s of the start once more, its Bluetooth iAP2 link goes",
+                BT_IGNORED_AFTER.as_secs_f32()
+            );
+        } else {
+            println!(
+                "[CpManager] {mac}: a session ended before the main screen again on the same Bluetooth iAP2 link, the link goes"
+            );
+        }
+        let helper = self.ctx.helper.clone();
+        tokio::spawn(async move {
+            if let Err(e) = helper.drop_bt(&mac, link).await {
+                println!("[CpManager] {mac}: the Bluetooth iAP2 link did not go: {e}");
+            }
+        });
+    }
+
+    /// A session of the phone came after the start once more over Bluetooth: its link stays
+    fn phone_back(&mut self, mac: &str) {
+        if mac.is_empty() {
+            return;
+        }
+        let mac = mac.to_lowercase();
+        if let Some(timer) = self.bt_again.remove(&mac) {
+            timer.abort();
+            println!("[CpManager] {mac} came back after the start once more over Bluetooth");
+        }
     }
 
     fn start_again(&mut self, udid: &str, attempt: u32) {
@@ -653,9 +771,12 @@ impl<M: Media> Manager<M> {
         let Some(s) = self.sessions.get_mut(&id) else {
             return;
         };
+        let mut back = None;
         if let Some(mac) = ids.bt_mac.as_ref().filter(|m| !m.is_empty()) {
             s.bt_mac = mac.clone();
             s.send(StackCmd::PhoneBtMac(mac.clone()));
+            // a session the phone opened, not one LIVI made up for metadata
+            back = s.stack.is_some().then(|| mac.clone());
         }
         if let Some(udid) = ids.usb_udid.as_ref().filter(|u| !u.is_empty()) {
             s.usb_udid = udid.clone();
@@ -673,6 +794,9 @@ impl<M: Media> Manager<M> {
             model: String::new(),
         };
         self.presence(id, presence);
+        if let Some(mac) = back {
+            self.phone_back(&mac);
+        }
     }
 
     fn adopt_pending(&mut self, id: SessionId) {
@@ -1142,8 +1266,14 @@ mod tests {
                         *sub.lock().await = Some(wr);
                         continue;
                     }
+                    // a Bluetooth link that offers the start once more, as the helper does the first time
+                    let answer: &[u8] = if line.starts_with("start-bt ") {
+                        b"{\"ok\":true,\"link\":7,\"again\":true}\n"
+                    } else {
+                        b"{\"ok\":true}\n"
+                    };
                     log.lock().unwrap().push(line);
-                    let _ = wr.write_all(b"{\"ok\":true}\n").await;
+                    let _ = wr.write_all(answer).await;
                 }
             });
             Self { lines, subscriber }
@@ -1158,6 +1288,15 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             panic!("nobody subscribed");
+        }
+
+        fn got(&self, prefix: &str) -> Vec<String> {
+            let lines = self.lines.lock().unwrap();
+            lines
+                .iter()
+                .filter(|l| l.starts_with(prefix))
+                .cloned()
+                .collect()
         }
 
         async fn saw(&self, line: &str) {
@@ -1654,5 +1793,56 @@ mod tests {
         );
         rig.handle.send(CpCmd::Close { id: 99 });
         drop(rig.handle);
+    }
+
+    #[tokio::test]
+    async fn a_wireless_session_closed_before_the_main_screen_restarts_over_bluetooth_once() {
+        // 2026-11-19 11:05:45: the phone closed before the main screen, its Bluetooth iAP2 link stayed and waited
+        let mut rig = Rig::new().await;
+        let (phone, id) = rig.phone("78:3F:4D:62:0F:84", "92:64:98:00:e5:07").await;
+        rig.until(|e| matches!(e, CpEvent::Presence { presence: Presence::Device { .. }, .. }))
+            .await;
+        drop(phone);
+        assert_eq!(
+            rig.until(|e| matches!(e, CpEvent::Disconnected { .. })).await,
+            CpEvent::Disconnected { id }
+        );
+        rig.helper.saw("start-bt 78:3f:4d:62:0f:84").await;
+        // nobody came: the link that heard the start goes, once
+        rig.helper.saw("drop-bt 78:3f:4d:62:0f:84 7").await;
+        tokio::time::sleep(BT_IGNORED_AFTER * 2).await;
+        assert_eq!(rig.helper.got("start-bt ").len(), 1);
+        assert_eq!(rig.helper.got("drop-bt ").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_phone_that_comes_back_after_the_start_keeps_its_bluetooth_link() {
+        let mut rig = Rig::new().await;
+        let (phone, _) = rig.phone("A1:A1", "aa:01").await;
+        rig.until(|e| matches!(e, CpEvent::Presence { presence: Presence::Device { .. }, .. }))
+            .await;
+        drop(phone);
+        rig.helper.saw("start-bt a1:a1").await;
+        let (_again, _) = rig.phone("A1:A1", "aa:01").await;
+        rig.until(|e| matches!(e, CpEvent::Presence { presence: Presence::Device { .. }, .. }))
+            .await;
+        tokio::time::sleep(BT_IGNORED_AFTER * 3).await;
+        assert!(rig.helper.got("drop-bt ").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_session_that_had_its_main_screen_does_not_restart_over_bluetooth() {
+        let mut rig = Rig::new().await;
+        let (mut phone, id) = rig.phone("B1:B1", "bb:01").await;
+        rig.screen(&mut phone).await;
+        rig.until(|e| matches!(e, CpEvent::Connected { .. })).await;
+        drop(phone);
+        assert_eq!(
+            rig.until(|e| matches!(e, CpEvent::Disconnected { .. })).await,
+            CpEvent::Disconnected { id }
+        );
+        tokio::time::sleep(BT_IGNORED_AFTER * 2).await;
+        assert!(rig.helper.got("start-bt ").is_empty());
+        assert!(rig.helper.got("drop-bt ").is_empty());
     }
 }

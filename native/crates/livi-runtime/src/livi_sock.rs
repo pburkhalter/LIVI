@@ -295,6 +295,38 @@ where
             println!("[cp-sock] drop-iap2: {n} wired session(s) end for a fresh start");
             reply(&mut stream, "{\"ok\":true}").await
         }
+        "start-bt" => {
+            let json = match state.start_bt_again(arg) {
+                Some(start) => {
+                    if start.offered {
+                        println!("[cp-sock] start-bt: {arg} hears the start once more over Bluetooth");
+                    } else {
+                        println!(
+                            "[cp-sock] start-bt: the Bluetooth iAP2 link to {arg} heard the start once more already"
+                        );
+                    }
+                    format!(
+                        "{{\"ok\":true,\"link\":{},\"again\":{}}}",
+                        start.link, start.offered
+                    )
+                }
+                None => err_json(&format!("no Bluetooth iAP2 link to {arg:?}")),
+            };
+            reply(&mut stream, &json).await
+        }
+        "drop-bt" => {
+            let (mac, link) = match arg.split_once(' ') {
+                Some((mac, link)) => (mac, link.trim().parse().ok()),
+                None => (arg, None),
+            };
+            let json = if state.close_bt(mac, link) {
+                println!("[cp-sock] drop-bt: the Bluetooth iAP2 link to {mac} shuts down");
+                "{\"ok\":true}".to_string()
+            } else {
+                err_json(&format!("no such Bluetooth iAP2 link to {mac:?}"))
+            };
+            reply(&mut stream, &json).await
+        }
         "start-wired" => {
             let json = if state.start_wired_again(arg) {
                 println!("[cp-sock] start-wired: {arg} offers CarPlay again");

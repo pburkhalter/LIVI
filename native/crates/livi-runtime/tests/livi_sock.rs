@@ -112,6 +112,44 @@ async fn a_wired_phone_hears_the_start_again_without_its_session_ending() {
 }
 
 #[tokio::test]
+async fn a_bluetooth_link_hears_the_start_once_more_once_then_it_can_be_shut() {
+    let path = std::env::temp_dir()
+        .join(format!("livi-sock-bt-{}", std::process::id()))
+        .to_string_lossy()
+        .to_string();
+    let state = Arc::new(HelperState::default());
+    let link = state.bt_link_started("78:3F:4D:62:0F:84");
+    let server = tokio::spawn(serve(
+        config(&path),
+        MockAuth,
+        no_bluez(),
+        Broadcaster::default(),
+        state.clone(),
+    ));
+    listening(&path).await;
+
+    let first = request(&path, "start-bt 78:3f:4d:62:0f:84").await;
+    assert_eq!(first, format!("{{\"ok\":true,\"link\":{},\"again\":true}}", link.id));
+    link.again.notified().await;
+    let second = request(&path, "start-bt 78:3f:4d:62:0f:84").await;
+    assert_eq!(second, format!("{{\"ok\":true,\"link\":{},\"again\":false}}", link.id));
+    let other = request(&path, "start-bt AA:BB:CC:DD:EE:FF").await;
+    assert!(other.contains("\"ok\":false"), "{other}");
+
+    let older = request(&path, &format!("drop-bt 78:3f:4d:62:0f:84 {}", link.id + 1)).await;
+    assert!(older.contains("\"ok\":false"), "{older}");
+    let shut = request(&path, &format!("drop-bt 78:3f:4d:62:0f:84 {}", link.id)).await;
+    assert!(shut.contains("\"ok\":true"), "{shut}");
+    link.close.notified().await;
+    state.bt_link_ended("78:3F:4D:62:0F:84", &link);
+    let gone = request(&path, "drop-bt 78:3f:4d:62:0f:84").await;
+    assert!(gone.contains("\"ok\":false"), "{gone}");
+
+    server.abort();
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn before_bluetooth_is_up_a_phone_cannot_be_dropped_but_the_socket_serves() {
     let path = std::env::temp_dir()
         .join(format!("livi-sock-no-bt-{}", std::process::id()))
