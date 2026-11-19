@@ -1604,7 +1604,7 @@ async fn event_commands(
 }
 
 #[tokio::test]
-async fn play_while_the_accessory_holds_the_main_audio_gives_it_back_first() {
+async fn play_is_the_key_press_alone_whoever_holds_the_main_audio() {
     let mut rig = Rig::new().await;
     let secret = rig.secret;
     rig.phone.verify(&secret, b"phone-1").await;
@@ -1656,45 +1656,20 @@ async fn play_while_the_accessory_holds_the_main_audio_gives_it_back_first() {
         cmds.send(StackCmd::Media(index)).unwrap();
     };
 
-    // the accessory holds the main audio: play and the toggle give it back to the phone first and ask for play
-    rig.phone.plist("POST", "/command", &modes(2, 2)).await;
-    for index in [hid::media_button::PLAY_PAUSE, hid::media_button::PLAY] {
-        press(&rig.cmds, index);
-        let sent = event_commands(&mut event, &mut cipher, &kinds, 3).await;
-        assert_eq!(sent[0].0, "changeModes");
-        let resources = sent[0]
-            .1
-            .get("params")
-            .and_then(|p| p.get("resources"))
-            .and_then(Value::as_array)
-            .unwrap();
-        assert_eq!(resources.len(), 1);
-        assert_eq!(int_of(&resources[0], "resourceID"), 2);
-        assert_eq!(int_of(&resources[0], "transferType"), 2);
-        assert_eq!(sent[1].0, "hidSendReport");
-        assert_eq!(report(&sent[1].1), [hid::media_button::PLAY]);
-        assert_eq!(report(&sent[2].1), [hid::media_button::NONE]);
+    // whoever holds the main audio, for good or borrowed: play and the toggle are the key press alone, no changeModes
+    // (an untake had no effect on the phone [measured] and may end a wireless session [reported by DiPlay-Lite])
+    for (audio, permanent) in [(2, 2), (1, 2), (1, 1)] {
+        rig.phone
+            .plist("POST", "/command", &modes(audio, permanent))
+            .await;
+        for index in [hid::media_button::PLAY_PAUSE, hid::media_button::PLAY] {
+            press(&rig.cmds, index);
+            let sent = event_commands(&mut event, &mut cipher, &kinds, 2).await;
+            assert_eq!(sent[0].0, "hidSendReport");
+            assert_eq!(report(&sent[0].1), [index]);
+            assert_eq!(report(&sent[1].1), [hid::media_button::NONE]);
+        }
     }
-    // pause and next leave the main audio where it is
-    for index in [hid::media_button::PAUSE, hid::media_button::NEXT] {
-        press(&rig.cmds, index);
-        let sent = event_commands(&mut event, &mut cipher, &kinds, 2).await;
-        assert_eq!(sent[0].0, "hidSendReport");
-        assert_eq!(report(&sent[0].1), [index]);
-    }
-    // borrowed by the phone (an announcement), still the accessory's for good: play gives it back as well
-    rig.phone.plist("POST", "/command", &modes(1, 2)).await;
-    press(&rig.cmds, hid::media_button::PLAY_PAUSE);
-    let sent = event_commands(&mut event, &mut cipher, &kinds, 3).await;
-    assert_eq!(sent[0].0, "changeModes");
-    assert_eq!(report(&sent[1].1), [hid::media_button::PLAY]);
-    // the phone holds the main audio: the key press alone, the toggle stays a toggle
-    rig.phone.plist("POST", "/command", &modes(1, 1)).await;
-    press(&rig.cmds, hid::media_button::PLAY_PAUSE);
-    let sent = event_commands(&mut event, &mut cipher, &kinds, 2).await;
-    assert_eq!(sent[0].0, "hidSendReport");
-    assert_eq!(report(&sent[0].1), [hid::media_button::PLAY_PAUSE]);
-    assert_eq!(report(&sent[1].1), [hid::media_button::NONE]);
 }
 
 #[tokio::test]

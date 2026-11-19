@@ -19,17 +19,25 @@ const CLUSTER_UID: &str = "b7e6c5a0-3333-4000-8000-000000000003";
 const RESOURCE_SCREEN: u64 = 1;
 const RESOURCE_AUDIO: u64 = 2;
 const TRANSFER_TAKE: u64 = 1;
-/// Gives a resource the accessory took back to the phone for good. Assumption: the transfer types count take, untake,
-/// borrow, unborrow from 1; take (1, the initial modes) and borrow/unborrow (3/4, video_playback) are what the phone
-/// accepts, untake in between is inferred from that order
-const TRANSFER_UNTAKE: u64 = 2;
 const PRIORITY_NICE_TO_HAVE: u64 = 100;
 const CONSTRAINT_ANYTIME: u64 = 100;
 
-/// Who holds a resource in the phone's modesChanged (entity, permanentEntity): the phone, or the accessory, which takes
-/// both resources in its initial modes. A phone call (appStates) is the phone's with 1 as well
+/// Who holds a resource in the phone's modesChanged (entity, permanentEntity) and in the initial modes
+/// (initialPermanentEntity): the phone (the controller), or the accessory. A phone call (appStates) is the phone's with 1
+/// as well
 pub const ENTITY_PHONE: u64 = 1;
 pub const ENTITY_ACCESSORY: u64 = 2;
+
+/// Who owns the main audio for good when a session starts, as /info's initial modes tell the phone. With the
+/// accessory's own source in front (its radio, say) that is the accessory; otherwise the phone, so a play key press
+/// resumes its music although it did not play by itself on connecting. Apple's "last user mode": what played when the
+/// session ended plays again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MainAudioOwner {
+    #[default]
+    Phone,
+    Accessory,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Insets {
@@ -80,6 +88,8 @@ pub struct InfoConfig {
     pub icons: Vec<Icon>,
     pub right_hand_drive: bool,
     pub theme_displays: Option<ThemeDisplays>,
+    /// Who owns the main audio when the session starts (initial modes)
+    pub main_audio_at_start: MainAudioOwner,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,38 +115,41 @@ fn resource(id: u64) -> Value {
     ])
 }
 
-fn modes() -> Value {
-    dict([
+/// The initial modes: the accessory takes the screen and the main audio, and the phone may take or borrow either at any
+/// time. Without more the phone counts the accessory as their owner for good (modesChanged: entity and permanentEntity
+/// 2), as if the accessory's own source played, and takes the main audio only when it plays by itself; a play key press
+/// alone then does nothing [measured]. With the phone as the main audio's owner at the start, `initialPermanentEntity`
+/// says so: [{resourceID 2, permanentEntity 1}]. The shape is that of open receivers, carcast
+/// (Sources/DrivingMode/Protocols/RTSPServer.swift, /info "modes") and catplay
+/// (carplay/catplay_carplay/src/modes/change_modes.rs, `ChangeModes::initial`, "granting all resources to the
+/// Controller"), which put it next to the take in "resources". Assumption: the phone accepts it and reports the main
+/// audio as its own from the start; Apple's published headers (AirPlayCommon.h) are older and do not name the key. The
+/// screen stays as it was: the phone takes it right away by itself.
+fn modes(main_audio_at_start: MainAudioOwner) -> Value {
+    let mut modes = vec![
         (
-            "resources",
+            "resources".to_string(),
             Value::Array(vec![resource(RESOURCE_SCREEN), resource(RESOURCE_AUDIO)]),
         ),
         (
-            "appStates",
+            "appStates".to_string(),
             Value::Array(vec![
                 dict([("appStateID", Value::Int(2)), ("state", Value::Bool(false))]),
                 dict([("appStateID", Value::Int(1)), ("speechMode", num(-1))]),
                 dict([("appStateID", Value::Int(3)), ("state", Value::Bool(false))]),
             ]),
         ),
-    ])
-}
-
-/// The changeModes that gives the main audio, which the initial modes take for the accessory, back to the phone
-pub fn untake_main_audio() -> Value {
-    dict([
-        ("type", Value::String("changeModes".into())),
-        (
-            "params",
-            dict([(
-                "resources",
-                Value::Array(vec![dict([
-                    ("resourceID", Value::Int(RESOURCE_AUDIO)),
-                    ("transferType", Value::Int(TRANSFER_UNTAKE)),
-                ])]),
-            )]),
-        ),
-    ])
+    ];
+    if main_audio_at_start == MainAudioOwner::Phone {
+        modes.push((
+            "initialPermanentEntity".to_string(),
+            Value::Array(vec![dict([
+                ("resourceID", Value::Int(RESOURCE_AUDIO)),
+                ("permanentEntity", Value::Int(ENTITY_PHONE)),
+            ])]),
+        ));
+    }
+    Value::Dict(modes)
 }
 
 /// Who holds the main audio for good in the phone's modesChanged: its permanentEntity, else its entity; None when the
@@ -383,7 +396,7 @@ pub fn build(cfg: &InfoConfig) -> Value {
         ),
         ("keepAliveLowPower".to_string(), Value::Bool(false)),
         ("keepAliveSendStatsAsBody".to_string(), Value::Bool(false)),
-        ("modes".to_string(), modes()),
+        ("modes".to_string(), modes(cfg.main_audio_at_start)),
     ];
     if !cfg.disable_audio_output {
         info.push(("audioLatencies".to_string(), audio_latencies()));
@@ -555,6 +568,7 @@ pub(crate) mod tests {
             icons: Vec::new(),
             right_hand_drive: false,
             theme_displays: None,
+            main_audio_at_start: MainAudioOwner::default(),
         }
     }
 
@@ -890,27 +904,39 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_main_audio_goes_back_to_the_phone_with_an_untake() {
-        let give = untake_main_audio();
+    fn the_initial_modes_give_the_main_audio_to_the_phone_unless_the_accessory_owns_it() {
+        let modes = |cfg: &InfoConfig| build(cfg).get("modes").cloned().unwrap();
+        let initial = |modes: &Value| {
+            modes
+                .get("initialPermanentEntity")
+                .and_then(Value::as_array)
+                .map(<[Value]>::to_vec)
+        };
+        // by default the phone owns the main audio at the start: the one entry, main audio to the phone
+        let phone = modes(&sample());
+        let entries = initial(&phone).expect("initialPermanentEntity");
+        assert_eq!(entries.len(), 1);
         assert_eq!(
-            give.get("type").and_then(Value::as_str),
-            Some("changeModes")
-        );
-        let resources = give
-            .get("params")
-            .and_then(|p| p.get("resources"))
-            .and_then(Value::as_array)
-            .unwrap();
-        assert_eq!(resources.len(), 1);
-        assert_eq!(
-            resources[0].get("resourceID").and_then(Value::as_int),
+            entries[0].get("resourceID").and_then(Value::as_int),
             Some(RESOURCE_AUDIO)
         );
         assert_eq!(
-            resources[0].get("transferType").and_then(Value::as_int),
-            Some(TRANSFER_UNTAKE)
+            entries[0].get("permanentEntity").and_then(Value::as_int),
+            Some(ENTITY_PHONE)
         );
-        assert!(resources[0].get("transferPriority").is_none());
+        // the takes stay as they were, the screen included
+        let resources = phone.get("resources").and_then(Value::as_array).unwrap();
+        assert_eq!(resources.len(), 2);
+        for r in resources {
+            assert_eq!(
+                r.get("transferType").and_then(Value::as_int),
+                Some(TRANSFER_TAKE)
+            );
+        }
+        // with the accessory's own source in front: no entry, as before
+        let mut cfg = sample();
+        cfg.main_audio_at_start = MainAudioOwner::Accessory;
+        assert_eq!(initial(&modes(&cfg)), None);
     }
 
     #[test]

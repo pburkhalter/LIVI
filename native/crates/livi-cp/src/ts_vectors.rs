@@ -7,7 +7,7 @@ use crate::crypto::{
 };
 use crate::hid::{Contact, KnobState, knob_report, touch_device, touch_report};
 use crate::identity::hex;
-use crate::info::{DisplayConfig, Icon, InfoConfig, Insets, build};
+use crate::info::{DisplayConfig, Icon, InfoConfig, Insets, MainAudioOwner, build};
 use crate::rtsp::{Response, build_response, parse};
 use crate::srp::SrpServer;
 use crate::tlv8;
@@ -76,6 +76,8 @@ fn info_config() -> InfoConfig {
         }],
         right_hand_drive: true,
         theme_displays: None,
+        // the vectors come from the TypeScript stack, whose initial modes leave the main audio with the accessory
+        main_audio_at_start: MainAudioOwner::Accessory,
     }
 }
 
