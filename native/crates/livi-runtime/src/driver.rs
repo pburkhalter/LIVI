@@ -2,9 +2,11 @@ use std::io;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::time::{Duration, Instant};
 
+use std::sync::Arc;
+
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 use iap2_link::{
     CONTROL_SESSION_ID, Event, FILE_TRANSFER_SESSION_ID, LinkConfig, LinkEngine, LinkState,
@@ -35,26 +37,65 @@ pub fn spawn_link(
     cfg: LinkConfig,
     initiate_negotiate: bool,
 ) -> (LinkChannel, ArtworkRx) {
+    spawn_pump(fd, cfg, initiate_negotiate, None)
+}
+
+/// `spawn_link`, whose socket shuts down when `close` is notified. A shutdown, not only a close: bluetoothd holds a copy
+/// of a profile's RFCOMM socket, which keeps the link up after the helper's copy is closed
+pub fn spawn_link_closable(
+    fd: OwnedFd,
+    cfg: LinkConfig,
+    initiate_negotiate: bool,
+    close: Arc<Notify>,
+) -> (LinkChannel, ArtworkRx) {
+    spawn_pump(fd, cfg, initiate_negotiate, Some(close))
+}
+
+fn spawn_pump(
+    fd: OwnedFd,
+    cfg: LinkConfig,
+    initiate_negotiate: bool,
+    close: Option<Arc<Notify>>,
+) -> (LinkChannel, ArtworkRx) {
     set_nonblocking(fd.as_raw_fd());
     let (out_tx, out_rx) = mpsc::unbounded_channel();
     let (in_tx, in_rx) = mpsc::unbounded_channel();
     let (art_tx, art_rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        if let Err(e) = pump(fd, cfg, initiate_negotiate, out_rx, in_tx, art_tx).await {
+        let ends = Ends {
+            out_rx,
+            in_tx,
+            art_tx,
+            close,
+        };
+        if let Err(e) = pump(fd, cfg, initiate_negotiate, ends).await {
             eprintln!("[link] pump ended: {e}");
         }
     });
     (LinkChannel { out_tx, in_rx }, art_rx)
 }
 
-async fn pump(
-    fd: OwnedFd,
-    cfg: LinkConfig,
-    initiate_negotiate: bool,
-    mut out_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+struct Ends {
+    out_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     in_tx: mpsc::UnboundedSender<Vec<u8>>,
     art_tx: mpsc::UnboundedSender<Vec<u8>>,
-) -> io::Result<()> {
+    close: Option<Arc<Notify>>,
+}
+
+async fn closed(close: Option<&Notify>) {
+    match close {
+        Some(close) => close.notified().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn pump(fd: OwnedFd, cfg: LinkConfig, initiate_negotiate: bool, ends: Ends) -> io::Result<()> {
+    let Ends {
+        mut out_rx,
+        in_tx,
+        art_tx,
+        close,
+    } = ends;
     let async_fd =
         unsafe { AsyncFd::register_with_interest(fd, Interest::READABLE | Interest::WRITABLE)? };
     let start = Instant::now();
@@ -98,6 +139,11 @@ async fn pump(
                 }
             }
             _ = tokio::time::sleep(sleep) => {}
+            _ = closed(close.as_deref()) => {
+                unsafe { libc::shutdown(async_fd.get_ref().as_raw_fd(), libc::SHUT_RDWR) };
+                println!("[link] closed on request");
+                return Ok(());
+            }
         }
 
         engine.advance_time(now());
@@ -301,5 +347,35 @@ fn write_fd(fd: RawFd, buf: &[u8]) -> io::Result<usize> {
         Err(io::Error::last_os_error())
     } else {
         Ok(n as usize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn a_closable_link_shuts_its_socket_down_for_every_copy() {
+        let (ours, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        // stands for the copy bluetoothd holds of a profile's socket
+        let copy = ours.try_clone().unwrap();
+        let close = Arc::new(Notify::new());
+        let (_ch, _art) = spawn_link_closable(
+            OwnedFd::from(ours),
+            LinkConfig::default(),
+            false,
+            close.clone(),
+        );
+        close.notify_one();
+        peer.set_nonblocking(true).unwrap();
+        let mut peer = tokio::net::UnixStream::from_std(peer).unwrap();
+        let mut buf = [0u8; 256];
+        let end = tokio::time::timeout(Duration::from_secs(5), async {
+            while peer.read(&mut buf).await.unwrap() > 0 {}
+        })
+        .await;
+        assert!(end.is_ok(), "the phone's side never saw the link end");
+        drop(copy);
     }
 }

@@ -208,10 +208,17 @@ where
                 err_json("disconnect requires a MAC")
             } else {
                 match bluez.as_ref() {
-                    Some(bluez) => match device_disconnect(&bluez.bus, &bluez.adapter, arg).await {
-                        Ok(()) => "{\"ok\":true}".to_string(),
-                        Err(e) => err_json(&e),
-                    },
+                    // the phone's disableBluetooth (LIVI's only use of it): crate::bredr
+                    Some(bluez) => {
+                        let classic = crate::bredr::BluezClassic {
+                            bus: &bluez.bus,
+                            adapter: &bluez.adapter,
+                        };
+                        match crate::bredr::after_disable_bluetooth(&classic, &state, arg).await {
+                            Ok(()) => "{\"ok\":true}".to_string(),
+                            Err(e) => err_json(&e),
+                        }
+                    }
                     None => match cfg.disconnect.clone() {
                         Some(drop) => {
                             let mac = arg.to_string();

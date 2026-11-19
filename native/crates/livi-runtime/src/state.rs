@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::livi_sock::SharedTag;
@@ -13,6 +14,20 @@ pub struct HelperState {
     vehicle: Vehicle,
     wired: Mutex<HashMap<String, Wired>>,
     redo: Mutex<HashSet<String>>,
+    bt: Mutex<HashMap<String, BtEntry>>,
+    bt_next: AtomicU64,
+}
+
+/// A Bluetooth iAP2 link of the helper's. `close`: the link's socket shuts down (driver `spawn_link_closable`). `id`
+/// tells it from a later link to the same phone
+#[derive(Clone, Default)]
+pub struct BtLink {
+    pub id: u64,
+    pub close: Arc<Notify>,
+}
+
+struct BtEntry {
+    link: BtLink,
 }
 
 struct Wired {
@@ -92,6 +107,41 @@ impl HelperState {
 
     pub fn link_active(&self, mac: &str) -> bool {
         self.links.lock().unwrap().contains(&mac.to_uppercase())
+    }
+
+    /// A Bluetooth iAP2 link to `mac` began; it stays known until `bt_link_ended` with it
+    pub fn bt_link_started(&self, mac: &str) -> BtLink {
+        let link = BtLink {
+            id: self.bt_next.fetch_add(1, Ordering::Relaxed) + 1,
+            ..Default::default()
+        };
+        self.bt.lock().unwrap().insert(
+            mac.to_uppercase(),
+            BtEntry { link: link.clone() },
+        );
+        link
+    }
+
+    /// The link ended; a later link to the same phone stays
+    pub fn bt_link_ended(&self, mac: &str, link: &BtLink) {
+        let mut bt = self.bt.lock().unwrap();
+        let key = mac.to_uppercase();
+        if bt.get(&key).is_some_and(|e| e.link.id == link.id) {
+            bt.remove(&key);
+        }
+    }
+
+    pub fn bt_link_active(&self, mac: &str) -> bool {
+        self.bt.lock().unwrap().contains_key(&mac.to_uppercase())
+    }
+
+    /// The Bluetooth iAP2 link to `mac` shuts down, only the one with `link` when named; false: there is none
+    pub fn close_bt(&self, mac: &str, link: Option<u64>) -> bool {
+        let bt = self.bt.lock().unwrap();
+        bt.get(&mac.to_uppercase())
+            .filter(|e| link.is_none_or(|id| id == e.link.id))
+            .inspect(|e| e.link.close.notify_one())
+            .is_some()
     }
 
     pub fn set_reconnect_targets(&self, targets: Vec<(String, Option<String>)>) {
@@ -216,6 +266,21 @@ mod tests {
 
         state.wired_ended("00008120");
         assert!(!state.reset_wired("00008120"));
+    }
+
+    #[tokio::test]
+    async fn only_the_link_named_is_shut_and_its_end_leaves_a_later_one() {
+        let state = HelperState::default();
+        let old = state.bt_link_started("AA:BB:CC:DD:EE:FF");
+        let new = state.bt_link_started("aa:bb:cc:dd:ee:ff");
+        state.bt_link_ended("AA:BB:CC:DD:EE:FF", &old);
+        assert!(state.bt_link_active("AA:BB:CC:DD:EE:FF"));
+        assert!(!state.close_bt("aa:bb:cc:dd:ee:ff", Some(old.id)));
+        assert!(state.close_bt("aa:bb:cc:dd:ee:ff", Some(new.id)));
+        new.close.notified().await;
+        assert!(state.close_bt("aa:bb:cc:dd:ee:ff", None));
+        state.bt_link_ended("AA:BB:CC:DD:EE:FF", &new);
+        assert!(!state.close_bt("AA:BB:CC:DD:EE:FF", None));
     }
 
     #[test]

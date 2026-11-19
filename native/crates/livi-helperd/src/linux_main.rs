@@ -7,7 +7,7 @@ use std::sync::Arc;
 use livi_runtime::bonjour::Bonjour;
 use livi_runtime::bringup::{AskOnAir, CpConfig, run_accessory};
 use livi_runtime::bt;
-use livi_runtime::driver::{spawn_link, spawn_link_stream};
+use livi_runtime::driver::{spawn_link_closable, spawn_link_stream};
 use livi_runtime::ident::{Identity, Theme, Transport};
 use livi_runtime::livi_sock::{
     self, Bluez, Broadcaster, LiviSockConfig, SharedTag, pump_artwork, pump_events_for,
@@ -597,13 +597,20 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
                     let cfg = LinkConfig { max_outgoing: 4, control_version: 2, ..LinkConfig::default() };
                     let (channel, art_rx) = spawn_link_stream(session.stream, cfg, false);
                     let (tx, rx) = tokio::sync::mpsc::channel(64);
+                    let mac = session.peer.to_string();
+                    // the helper may end the session (livi_runtime::bredr after disableBluetooth)
+                    let link = state.bt_link_started(&mac);
                     let cp = CpConfig { on_cable: Some(crate::link::dongle_on_cable(state.clone())), ..session_cp(&cp, dongle_ap) };
-                    let (accessory, mac) = (run_accessory(channel, auth, identity.clone(), cp, tx, state.vehicle_feed()), session.peer.to_string());
+                    let accessory = run_accessory(channel, auth, identity.clone(), cp, tx, state.vehicle_feed());
                     let links = state.clone();
                     tokio::spawn(async move {
                         links.link_up(&mac);
-                        accessory.await;
+                        tokio::select! {
+                            _ = accessory => {}
+                            _ = link.close.notified() => println!("[helperd] the iAP2 session of {mac} over the dongle ends on request"),
+                        }
                         links.link_down(&mac);
+                        links.bt_link_ended(&mac, &link);
                     });
                     let ident: SharedTag = Default::default();
                     tokio::spawn(pump_events_for(rx, bcast.clone(), "bt", None, ident.clone()));
@@ -619,15 +626,19 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
                     let auth = auth.clone();
                     println!("[helperd] phone connected mac={}", conn.peer_mac);
                     let cfg = LinkConfig { max_outgoing: 4, control_version: 2, ..LinkConfig::default() };
-                    let (channel, art_rx) = spawn_link(conn.fd, cfg, false);
+                    let mac = conn.peer_mac.clone();
+                    // the helper may shut the link (livi_runtime::bredr after disableBluetooth)
+                    let link = state.bt_link_started(&mac);
+                    let (channel, art_rx) = spawn_link_closable(conn.fd, cfg, false, link.close.clone());
                     let (tx, rx) = tokio::sync::mpsc::channel(64);
                     let cp = CpConfig { on_cable: Some(bt::on_cable(state.clone(), &bus, &adapter)), ..session_cp(&cp, dongle_ap) };
-                    let (accessory, mac) = (run_accessory(channel, auth, identity.clone(), cp, tx, state.vehicle_feed()), conn.peer_mac.clone());
+                    let accessory = run_accessory(channel, auth, identity.clone(), cp, tx, state.vehicle_feed());
                     let links = state.clone();
                     tokio::spawn(async move {
                         links.link_up(&mac);
                         accessory.await;
                         links.link_down(&mac);
+                        links.bt_link_ended(&mac, &link);
                     });
                     let ident: SharedTag = Default::default();
                     tokio::spawn(pump_events_for(rx, bcast.clone(), "bt", None, ident.clone()));
