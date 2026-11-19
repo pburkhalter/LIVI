@@ -106,6 +106,17 @@ impl<M: Media> Conn<M> {
     /// an app's announcement, does not bring the phone's picture to the front: the screen would jump to the phone and
     /// back for each of them. Within a turn that began with listening, speaking keeps it there (Siri's answer).
     pub(super) fn modes_changed(&mut self, params: &Value) {
+        if let Some(holder) = info::main_audio_holder(params) {
+            if self.main_audio_holder != Some(holder) {
+                let who = match holder {
+                    info::ENTITY_PHONE => "the phone",
+                    info::ENTITY_ACCESSORY => "the accessory",
+                    _ => "nobody",
+                };
+                println!("[cpStack] main audio now held by {who}");
+            }
+            self.main_audio_holder = Some(holder);
+        }
         let Some(states) = params.get("appStates").and_then(Value::as_array) else {
             return;
         };
@@ -142,6 +153,26 @@ impl<M: Media> Conn<M> {
             );
             self.emit(StackEvent::SpeechActive(active));
         }
+    }
+
+    /// Play while the accessory holds the main audio (its initial modes take it, and the phone keeps it there until it
+    /// plays by itself): a key press alone does not bring the phone's music back [assumption: in a session where the
+    /// phone reported the main audio as the accessory's, play had no effect]. The main audio goes back to the phone
+    /// first (changeModes, untake); then the press asks for play rather than a toggle, since the phone may resume as it
+    /// gets the main audio and a toggle after that would pause it again. Pause, next and previous stay as they are.
+    async fn play_with_the_main_audio(&mut self, index: u8) -> u8 {
+        let play = matches!(
+            index,
+            hid::media_button::PLAY | hid::media_button::PLAY_PAUSE
+        );
+        if !play || self.main_audio_holder != Some(info::ENTITY_ACCESSORY) {
+            return index;
+        }
+        println!(
+            "[cpStack] play while the accessory holds the main audio: giving it back to the phone first"
+        );
+        self.send_event_command(&info::untake_main_audio()).await;
+        hid::media_button::PLAY
     }
 
     pub(super) async fn on_cmd(&mut self, cmd: StackCmd) {
@@ -207,6 +238,7 @@ impl<M: Media> Conn<M> {
                     .await;
             }
             StackCmd::Media(index) => {
+                let index = self.play_with_the_main_audio(index).await;
                 self.send_hid(hid::MEDIA_HID_UID, &hid::media_report(index))
                     .await;
                 self.send_hid(hid::MEDIA_HID_UID, &hid::media_report(0))

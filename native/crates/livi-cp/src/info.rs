@@ -19,8 +19,17 @@ const CLUSTER_UID: &str = "b7e6c5a0-3333-4000-8000-000000000003";
 const RESOURCE_SCREEN: u64 = 1;
 const RESOURCE_AUDIO: u64 = 2;
 const TRANSFER_TAKE: u64 = 1;
+/// Gives a resource the accessory took back to the phone for good. Assumption: the transfer types count take, untake,
+/// borrow, unborrow from 1; take (1, the initial modes) and borrow/unborrow (3/4, video_playback) are what the phone
+/// accepts, untake in between is inferred from that order
+const TRANSFER_UNTAKE: u64 = 2;
 const PRIORITY_NICE_TO_HAVE: u64 = 100;
 const CONSTRAINT_ANYTIME: u64 = 100;
+
+/// Who holds a resource in the phone's modesChanged (entity, permanentEntity): the phone, or the accessory, which takes
+/// both resources in its initial modes. A phone call (appStates) is the phone's with 1 as well
+pub const ENTITY_PHONE: u64 = 1;
+pub const ENTITY_ACCESSORY: u64 = 2;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Insets {
@@ -111,6 +120,36 @@ fn modes() -> Value {
             ]),
         ),
     ])
+}
+
+/// The changeModes that gives the main audio, which the initial modes take for the accessory, back to the phone
+pub fn untake_main_audio() -> Value {
+    dict([
+        ("type", Value::String("changeModes".into())),
+        (
+            "params",
+            dict([(
+                "resources",
+                Value::Array(vec![dict([
+                    ("resourceID", Value::Int(RESOURCE_AUDIO)),
+                    ("transferType", Value::Int(TRANSFER_UNTAKE)),
+                ])]),
+            )]),
+        ),
+    ])
+}
+
+/// Who holds the main audio for good in the phone's modesChanged: its permanentEntity, else its entity; None when the
+/// phone does not say. Borrowed for an announcement, the main audio stays the permanent holder's
+pub fn main_audio_holder(params: &Value) -> Option<u64> {
+    let resources = params.get("resources")?.as_array()?;
+    let audio = resources
+        .iter()
+        .find(|r| r.get("resourceID").and_then(Value::as_int) == Some(RESOURCE_AUDIO))?;
+    audio
+        .get("permanentEntity")
+        .or_else(|| audio.get("entity"))
+        .and_then(Value::as_int)
 }
 
 fn audio_latencies() -> Value {
@@ -848,5 +887,69 @@ pub(crate) mod tests {
             .and_then(Value::as_array)
             .unwrap();
         assert_eq!(states[1].get("speechMode"), Some(&Value::Real(-1.0)));
+    }
+
+    #[test]
+    fn the_main_audio_goes_back_to_the_phone_with_an_untake() {
+        let give = untake_main_audio();
+        assert_eq!(
+            give.get("type").and_then(Value::as_str),
+            Some("changeModes")
+        );
+        let resources = give
+            .get("params")
+            .and_then(|p| p.get("resources"))
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(resources.len(), 1);
+        assert_eq!(
+            resources[0].get("resourceID").and_then(Value::as_int),
+            Some(RESOURCE_AUDIO)
+        );
+        assert_eq!(
+            resources[0].get("transferType").and_then(Value::as_int),
+            Some(TRANSFER_UNTAKE)
+        );
+        assert!(resources[0].get("transferPriority").is_none());
+    }
+
+    #[test]
+    fn the_main_audio_holder_is_read_from_the_phones_modes() {
+        let modes = |audio: Value| {
+            let screen = dict([
+                ("resourceID", Value::Int(RESOURCE_SCREEN)),
+                ("entity", Value::Int(ENTITY_PHONE)),
+                ("permanentEntity", Value::Int(ENTITY_PHONE)),
+            ]);
+            dict([("resources", Value::Array(vec![audio, screen]))])
+        };
+        let audio = |entity: u64, permanent: Option<u64>| {
+            let mut entries = vec![
+                ("resourceID".to_string(), Value::Int(RESOURCE_AUDIO)),
+                ("entity".to_string(), Value::Int(entity)),
+            ];
+            if let Some(p) = permanent {
+                entries.push(("permanentEntity".to_string(), Value::Int(p)));
+            }
+            Value::Dict(entries)
+        };
+        // as the phone reported it at the start of a session, and once it played
+        let accessory = audio(ENTITY_ACCESSORY, Some(ENTITY_ACCESSORY));
+        assert_eq!(main_audio_holder(&modes(accessory)), Some(ENTITY_ACCESSORY));
+        let phone = audio(ENTITY_PHONE, Some(ENTITY_PHONE));
+        assert_eq!(main_audio_holder(&modes(phone)), Some(ENTITY_PHONE));
+        // borrowed by the phone for an announcement: still the accessory's for good
+        let borrowed = audio(ENTITY_PHONE, Some(ENTITY_ACCESSORY));
+        assert_eq!(main_audio_holder(&modes(borrowed)), Some(ENTITY_ACCESSORY));
+        let current_only = audio(ENTITY_PHONE, None);
+        assert_eq!(main_audio_holder(&modes(current_only)), Some(ENTITY_PHONE));
+        // app states only, or no main audio among the resources: unknown
+        let states = dict([("appStates", Value::Array(Vec::new()))]);
+        assert_eq!(main_audio_holder(&states), None);
+        let screen_only = dict([(
+            "resources",
+            Value::Array(vec![dict([("resourceID", Value::Int(RESOURCE_SCREEN))])]),
+        )]);
+        assert_eq!(main_audio_holder(&screen_only), None);
     }
 }
