@@ -11,7 +11,9 @@ use livi_core_proto::icon::{
 };
 use livi_core_proto::state::State;
 use livi_core_proto::theme::{DisplayKind, Theme};
-use livi_cp::info::{DisplayConfig, Icon, InfoConfig, Insets, ThemeDisplays, mm_at_dpi};
+use livi_cp::info::{
+    DisplayConfig, Icon, InfoConfig, Insets, MainAudioOwner, ThemeDisplays, mm_at_dpi,
+};
 use livi_cp::media::{AudioCodec, AudioRequest, AudioStream, Media, MicRequest, VideoStatus};
 use livi_cp::stack::StackConfig;
 use livi_cp::vehicle_state::{Engines, Rpm};
@@ -450,6 +452,9 @@ pub fn stack_config(
                 44100
             },
             disable_audio_output: cfg.disable_audio_output,
+            // the phone owns the main audio at the start, so a play key press resumes its music even when it did not
+            // play by itself on connecting
+            main_audio_at_start: MainAudioOwner::Phone,
         },
         audio_device: cfg.audio_output_device.clone().unwrap_or_default(),
         audio_input_device: cfg.audio_input_device.clone().unwrap_or_default(),

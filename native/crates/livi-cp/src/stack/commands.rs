@@ -106,6 +106,17 @@ impl<M: Media> Conn<M> {
     /// an app's announcement, does not bring the phone's picture to the front: the screen would jump to the phone and
     /// back for each of them. Within a turn that began with listening, speaking keeps it there (Siri's answer).
     pub(super) fn modes_changed(&mut self, params: &Value) {
+        if let Some(holder) = info::main_audio_holder(params) {
+            if self.main_audio_holder != Some(holder) {
+                let who = match holder {
+                    info::ENTITY_PHONE => "the phone",
+                    info::ENTITY_ACCESSORY => "the accessory",
+                    _ => "nobody",
+                };
+                println!("[cpStack] main audio now held by {who}");
+            }
+            self.main_audio_holder = Some(holder);
+        }
         let Some(states) = params.get("appStates").and_then(Value::as_array) else {
             return;
         };

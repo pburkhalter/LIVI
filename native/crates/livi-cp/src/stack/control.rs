@@ -204,6 +204,7 @@ impl<M: Media> Conn<M> {
                     .and_then(Value::as_array)
                     .map_or(0, <[Value]>::len)
             };
+            println!("[cpStack] /info modes: {:?}", info.get("modes"));
             println!(
                 "[cpStack] /info audio: disableAudioOutput={} audioFormats={} audioLatencies={}",
                 cfg.disable_audio_output,

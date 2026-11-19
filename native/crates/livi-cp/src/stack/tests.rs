@@ -1567,3 +1567,145 @@ async fn stop_ends_the_session_quietly() {
     rig.cmds.send(StackCmd::Stop).unwrap();
     assert_eq!(rig.event().await, StackEvent::Closed { was_active: false });
 }
+
+/// The event commands LIVI sends to the phone, as (type, body), until `n` of the kinds in `kinds` arrived
+async fn event_commands(
+    event: &mut TcpStream,
+    cipher: &mut ControlCipher,
+    kinds: &[&str],
+    n: usize,
+) -> Vec<(String, Value)> {
+    let (mut sealed, mut plain, mut chunk) = (Vec::new(), Vec::new(), vec![0u8; 16 * 1024]);
+    let mut found = Vec::new();
+    while found.len() < n {
+        let read = tokio::time::timeout(Duration::from_secs(5), event.read(&mut chunk))
+            .await
+            .unwrap()
+            .unwrap();
+        sealed.extend_from_slice(&chunk[..read]);
+        let (data, rest) = cipher.decrypt(&sealed).unwrap();
+        sealed = rest;
+        plain.extend(data);
+        let (msgs, rest) = rtsp::parse(&plain);
+        plain = rest;
+        for m in msgs {
+            let body = bplist::decode(&m.body).unwrap();
+            let kind = body
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if kinds.contains(&kind.as_str()) {
+                found.push((kind, body));
+            }
+        }
+    }
+    found
+}
+
+#[tokio::test]
+async fn play_is_the_key_press_alone_whoever_holds_the_main_audio() {
+    let mut rig = Rig::new().await;
+    let secret = rig.secret;
+    rig.phone.verify(&secret, b"phone-1").await;
+    let session = dict([
+        ("name", Value::String("iPhone".into())),
+        ("deviceID", Value::String("AA:BB".into())),
+        ("timingPort", Value::Int(9)),
+    ]);
+    let resp = rig.phone.plist("SETUP", "/s", &session).await;
+    let _ = rig.event().await;
+    let mut event = TcpStream::connect(("127.0.0.1", int_of(&resp, "eventPort") as u16))
+        .await
+        .unwrap();
+    let shared = rig.phone.shared;
+    let mut cipher = ControlCipher::new(
+        hkdf_sha512(&shared, b"Events-Salt", b"Events-Write-Encryption-Key"),
+        hkdf_sha512(&shared, b"Events-Salt", b"Events-Read-Encryption-Key"),
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // the resources as the phone reports them: main audio (2) and screen (1), each with its current and its
+    // permanent holder (1 the phone, 2 the accessory)
+    let modes = |audio: u64, audio_permanent: u64| {
+        let resource = |id: u64, entity: u64, permanent: u64| {
+            dict([
+                ("resourceID", Value::Int(id)),
+                ("entity", Value::Int(entity)),
+                ("permanentEntity", Value::Int(permanent)),
+            ])
+        };
+        dict([
+            ("type", Value::String("modesChanged".into())),
+            (
+                "params",
+                dict([(
+                    "resources",
+                    Value::Array(vec![resource(2, audio, audio_permanent), resource(1, 1, 1)]),
+                )]),
+            ),
+        ])
+    };
+    let kinds = ["changeModes", "hidSendReport"];
+    let report = |body: &Value| {
+        body.get("hidReport")
+            .and_then(Value::as_data)
+            .unwrap()
+            .to_vec()
+    };
+    let press = |cmds: &mpsc::UnboundedSender<StackCmd>, index: u8| {
+        cmds.send(StackCmd::Media(index)).unwrap();
+    };
+
+    // whoever holds the main audio, for good or borrowed: play and the toggle are the key press alone, no changeModes
+    // (an untake had no effect on the phone [measured] and may end a wireless session [reported by DiPlay-Lite])
+    for (audio, permanent) in [(2, 2), (1, 2), (1, 1)] {
+        rig.phone
+            .plist("POST", "/command", &modes(audio, permanent))
+            .await;
+        for index in [hid::media_button::PLAY_PAUSE, hid::media_button::PLAY] {
+            press(&rig.cmds, index);
+            let sent = event_commands(&mut event, &mut cipher, &kinds, 2).await;
+            assert_eq!(sent[0].0, "hidSendReport");
+            assert_eq!(report(&sent[0].1), [index]);
+            assert_eq!(report(&sent[1].1), [hid::media_button::NONE]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn play_before_the_phone_reports_its_modes_is_the_key_press_alone() {
+    let mut rig = Rig::new().await;
+    let secret = rig.secret;
+    rig.phone.verify(&secret, b"phone-1").await;
+    let session = dict([
+        ("name", Value::String("iPhone".into())),
+        ("deviceID", Value::String("AA:BB".into())),
+        ("timingPort", Value::Int(9)),
+    ]);
+    let resp = rig.phone.plist("SETUP", "/s", &session).await;
+    let _ = rig.event().await;
+    let mut event = TcpStream::connect(("127.0.0.1", int_of(&resp, "eventPort") as u16))
+        .await
+        .unwrap();
+    let shared = rig.phone.shared;
+    let mut cipher = ControlCipher::new(
+        hkdf_sha512(&shared, b"Events-Salt", b"Events-Write-Encryption-Key"),
+        hkdf_sha512(&shared, b"Events-Salt", b"Events-Read-Encryption-Key"),
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    rig.cmds
+        .send(StackCmd::Media(hid::media_button::PLAY_PAUSE))
+        .unwrap();
+    let sent = event_commands(
+        &mut event,
+        &mut cipher,
+        &["changeModes", "hidSendReport"],
+        2,
+    )
+    .await;
+    assert_eq!(sent[0].0, "hidSendReport");
+    assert_eq!(
+        sent[0].1.get("hidReport").and_then(Value::as_data),
+        Some(&[hid::media_button::PLAY_PAUSE][..])
+    );
+}
