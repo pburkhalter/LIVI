@@ -414,10 +414,7 @@ fn run_tunnel<A>(
     };
     let (channel, art_rx) = spawn_link(fd, link_cfg, true);
     let (tx, rx) = mpsc::channel(64);
-    let cp = match &cfg.cp_live {
-        Some(resolve) => resolve(),
-        None => cfg.cp,
-    };
+    let cp = tunnel_cp(cfg.cp_live.as_ref(), cfg.cp);
     tokio::spawn(run_accessory(channel, auth, cfg.identity, cp, tx, vehicle));
     let ident: SharedTag = Arc::new(Mutex::new(events::EventTag {
         cid: (!cid.is_empty()).then_some(cid),
@@ -431,6 +428,19 @@ fn run_tunnel<A>(
         ident.clone(),
     ));
     tokio::spawn(pump_artwork(art_rx, bcast, ident));
+}
+
+/// The tunnel exists only inside a running CarPlay session with the phone, so its link is marked as such: it
+/// answers the phone's CarPlayAvailability without a second CarPlayStartSession (crate::bringup)
+fn tunnel_cp(live: Option<&CpFactory>, cp: CpConfig) -> CpConfig {
+    let cp = match live {
+        Some(resolve) => resolve(),
+        None => cp,
+    };
+    CpConfig {
+        in_session: true,
+        ..cp
+    }
 }
 
 pub async fn pump_artwork(
@@ -527,4 +537,46 @@ pub async fn device_disconnect(
     .await
     .map(|_| ())
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ident::Transport;
+
+    fn base() -> CpConfig {
+        CpConfig {
+            device_id: None,
+            ap_mac: None,
+            ap_on_air: None,
+            wifi_iface: "none0".into(),
+            ssid: "LIVI".into(),
+            passphrase: "12345678".into(),
+            channel: livi_wifi::Channel::of_number(36),
+            airplay_port: 7000,
+            source_version: "950.7.1".into(),
+            public_key: String::new(),
+            transport: Transport::Wireless,
+            av_iface: None,
+            av_iface_late: None,
+            available_current_ma: 500,
+            on_cable: None,
+            start_again: None,
+            in_session: false,
+            theme: None,
+            calls: false,
+        }
+    }
+
+    #[test]
+    fn the_tunnel_link_runs_inside_the_session() {
+        assert!(tunnel_cp(None, base()).in_session);
+        let live: CpFactory = Arc::new(|| CpConfig {
+            ssid: "on air".into(),
+            ..base()
+        });
+        let cp = tunnel_cp(Some(&live), base());
+        assert!(cp.in_session, "the live values keep the mark");
+        assert_eq!(cp.ssid, "on air");
+    }
 }

@@ -97,6 +97,7 @@ fn cp_config() -> CpConfig {
         available_current_ma: 500,
         on_cable: None,
         start_again: None,
+        in_session: false,
         theme: None,
         calls: false,
     }
@@ -250,6 +251,76 @@ async fn a_bluetooth_session_ends_without_a_start_once_the_cable_has_the_phone()
             Some(_) => {}
         }
     }
+}
+
+/// Brings a wireless link up to the phone's CarPlayAvailability and tells whether LIVI tried to start a
+/// session on it. The test machine has no link-local address on the Wi-Fi interface, so a start that is tried
+/// ends in Failed instead of a CarPlayStartSession frame; one that is not tried leaves both out
+async fn tries_a_start_on_the_offer(in_session: bool) -> bool {
+    let (accessory, mut phone) = pair();
+    let (tx, mut rx) = mpsc::channel(32);
+    let cp = CpConfig {
+        in_session,
+        ..cp_config()
+    };
+    tokio::spawn(run_accessory(
+        accessory,
+        MockAuth { cert: vec![0x01] },
+        identity(),
+        cp,
+        tx,
+        VehicleFeed::quiet(),
+    ));
+    phone.send(StartIdentification {}.encode()).await.unwrap();
+    phone.expect(0x1D01).await;
+    phone
+        .send(IdentificationAccepted {}.encode())
+        .await
+        .unwrap();
+    phone
+        .send(AuthenticationSucceeded {}.encode())
+        .await
+        .unwrap();
+    while rx.recv().await != Some(BringupEvent::Subscribed) {}
+    while phone.rx.try_recv().is_ok() {}
+
+    let offer = CarPlayAvailability {
+        wired_attributes: None,
+        wireless_attributes: Some(CarPlayAvailabilityWirelessAttributes {
+            available: Some(true),
+            bluetooth_transport_identifier: Some("0c:6a:c4:4e:f3:2a".into()),
+        }),
+    };
+    phone.send(offer.encode()).await.unwrap();
+    let mut tried = false;
+    loop {
+        match rx.recv().await {
+            Some(BringupEvent::Failed(_) | BringupEvent::CarPlayStartSent { .. }) => tried = true,
+            Some(BringupEvent::Incoming { msg_id: 0x4300, .. }) => break,
+            Some(_) => {}
+            None => panic!("the link ended before the offer was passed on"),
+        }
+    }
+    if let Ok(frame) = phone.rx.try_recv() {
+        assert_ne!(
+            frame_msg_id(&frame),
+            Some(0x4301),
+            "a CarPlayStartSession went out"
+        );
+    }
+    tried
+}
+
+#[tokio::test]
+async fn the_tunnel_of_a_running_session_answers_the_offer_without_a_second_start() {
+    assert!(
+        tries_a_start_on_the_offer(false).await,
+        "the link that starts the session answers the offer with a start"
+    );
+    assert!(
+        !tries_a_start_on_the_offer(true).await,
+        "the link inside the running session starts it a second time"
+    );
 }
 
 #[tokio::test]
