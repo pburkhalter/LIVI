@@ -275,6 +275,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         ap_on_air: dongle_ap.then_some(livi_link_host::ap::on_air as AskOnAir),
         on_cable: None,
         start_again: None,
+        in_session: false,
         theme: Theme::parse(&std::env::var("LIVI_CP_THEME").unwrap_or_default()),
         calls: livi_runtime::calls::enabled(),
     };

@@ -68,6 +68,7 @@ fn cp_config() -> (CpConfig, Identity) {
         available_current_ma: 500,
         on_cable: None,
         start_again: None,
+        in_session: false,
         theme: Theme::parse(&env_s("LIVI_CP_THEME", "")),
         calls: livi_runtime::calls::enabled(),
     };

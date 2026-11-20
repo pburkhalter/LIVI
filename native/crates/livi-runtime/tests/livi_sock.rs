@@ -55,6 +55,7 @@ fn config(path: &str) -> LiviSockConfig {
             available_current_ma: 500,
             on_cable: None,
             start_again: None,
+            in_session: false,
             theme: None,
             calls: false,
         },

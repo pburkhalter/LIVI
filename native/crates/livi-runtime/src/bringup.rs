@@ -40,6 +40,10 @@ pub struct CpConfig {
     pub ap_on_air: Option<AskOnAir>,
     pub on_cable: Option<OnCable>,
     pub start_again: Option<Arc<Notify>>,
+    /// The link runs inside a CarPlay session: the iAP2 tunnel the session opens to the phone. The phone's
+    /// CarPlayAvailability there gets no CarPlayStartSession, the session it would start is the running one
+    /// that carries the link. One start per session, over the link that started it
+    pub in_session: bool,
     pub theme: Option<Theme>,
     /// Take part in calls (crate::calls, LIVI_CP_CALLS=1 as the helper read it): name their messages in the
     /// identification, ask for the lists, take orders. Off: everything as before calls
@@ -615,6 +619,11 @@ pub async fn run_accessory<C: ControlChannel, A: AsyncAuth>(
                 }
                 let _ = events.send(BringupEvent::WifiConfigSent).await;
             }
+            0x4300 if cp.in_session => {
+                println!(
+                    "[cp] CarPlayAvailability inside the running session, no second CarPlayStartSession"
+                );
+            }
             0x4300 => {
                 if let Some(phone) = on_cable(&cp, &frame) {
                     println!("[cp] {phone} runs iAP2 over the cable, no start over Bluetooth");
@@ -881,6 +890,7 @@ mod tests {
             ap_on_air: Some(ask),
             on_cable: None,
             start_again: None,
+            in_session: false,
             theme: None,
             calls: false,
         }
