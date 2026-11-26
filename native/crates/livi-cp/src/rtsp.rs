@@ -5,6 +5,8 @@ pub struct Request {
     pub method: String,
     pub path: String,
     pub protocol: String,
+    /// The first line as it came: for an answer its whole status line, reason included
+    pub line: String,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
 }
@@ -33,7 +35,8 @@ pub fn parse(buf: &[u8]) -> (Vec<Request>, Vec<u8>) {
             .map(|&b| char::from(b & 0x7f))
             .collect();
         let mut lines = head.split("\r\n");
-        let mut request_line = lines.next().unwrap_or("").split(' ');
+        let line = lines.next().unwrap_or("");
+        let mut request_line = line.split(' ');
         let method = request_line.next().unwrap_or("").to_string();
         let path = request_line.next().unwrap_or("").to_string();
         let protocol = request_line.next().unwrap_or("RTSP/1.0").to_string();
@@ -54,6 +57,7 @@ pub fn parse(buf: &[u8]) -> (Vec<Request>, Vec<u8>) {
             method,
             path,
             protocol,
+            line: line.to_string(),
             headers,
             body: buf[body_start..body_end].to_vec(),
         });
@@ -135,6 +139,15 @@ mod tests {
         assert_eq!(reqs[0].protocol, "RTSP/1.0");
         let (reqs, _) = parse(b"OPTIONS\r\n\r\n");
         assert_eq!(reqs[0].path, "");
+    }
+
+    #[test]
+    fn an_answer_keeps_its_whole_status_line() {
+        let (msgs, _) = parse(b"RTSP/1.0 408 Request Timeout\r\nContent-Length: 0\r\n\r\n");
+        assert_eq!(msgs[0].method, "RTSP/1.0");
+        assert_eq!(msgs[0].path, "408");
+        assert_eq!(msgs[0].protocol, "Request");
+        assert_eq!(msgs[0].line, "RTSP/1.0 408 Request Timeout");
     }
 
     #[test]

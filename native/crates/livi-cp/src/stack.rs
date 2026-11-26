@@ -260,8 +260,10 @@ struct EventConn {
     sealed: Vec<u8>,
     plain: Vec<u8>,
     cseq: u32,
-    /// What went out under which CSeq and has no answer yet, so that a refusal can say what it refuses
-    sent: std::collections::VecDeque<(u32, String)>,
+    /// What went out under which CSeq and when and has no answer yet, so that a refusal can say what it refuses
+    sent: std::collections::VecDeque<events::Sent>,
+    /// Lines this channel printed about late, lost and unsent commands, so that they stay few
+    notes: u32,
 }
 
 struct Conn<M: Media> {
@@ -317,6 +319,8 @@ struct Conn<M: Media> {
     video_tunnel: Option<VideoRun>,
     event_listener: Option<TcpListener>,
     event: Option<EventConn>,
+    /// Commands dropped because there was no event channel, so that their lines stay few
+    event_dropped: u32,
     live: bool,
     night_mode: Option<bool>,
     cluster_night_mode: Option<bool>,
@@ -594,6 +598,7 @@ pub async fn run<M: Media>(
         video_tunnel: None,
         event_listener: None,
         event: None,
+        event_dropped: 0,
         live: false,
         night_mode: None,
         cluster_night_mode: None,
@@ -665,6 +670,7 @@ pub async fn run<M: Media>(
             read = read_event(&mut conn.event, &mut event_buf) => match read {
                 Ok(0) | Err(_) => {
                     println!("[cpStack] event channel closed");
+                    conn.report_unanswered("when the channel closes");
                     conn.event = None;
                 }
                 Ok(n) => {
@@ -713,6 +719,7 @@ pub async fn run<M: Media>(
         }
     }
     println!("[cpStack] control connection closed {peer}");
+    conn.report_unanswered("when the session ends");
     conn.teardown();
     let was_active = conn.live && !stopped;
     let _ = conn.events.send(StackEvent::Closed { was_active });
